@@ -7,7 +7,7 @@
     <FileVersion>2.0.0.0</FileVersion>
     <Authors>ComposeSharp Contributors</Authors>
     <Company>ComposeSharp</Company>
-    <Description>Managed Docker Compose SDK for .NET, backed by Docker.DotNet.</Description>
+    <Description>In-process Docker Compose project loader and Docker Engine orchestration SDK for .NET.</Description>
     <PackageTags>docker;docker-compose;compose;containers;orchestration</PackageTags>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/GaTTGeng/ComposeSharp</RepositoryUrl>
