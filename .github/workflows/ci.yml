@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CONFIGURATION: Release
+
+jobs:
+  build-test-pack:
+    name: Build, test, and pack
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Build.props', '**/Directory.Packages.props', 'NuGet.config') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore ComposeSharp.sln
+
+      - name: Build
+        run: dotnet build ComposeSharp.sln --configuration ${{ env.CONFIGURATION }} --no-restore
+
+      - name: Test
+        run: >
+          dotnet test ComposeSharp.sln
+          --configuration ${{ env.CONFIGURATION }}
+          --no-build
+          --no-restore
+          --logger trx
+          --results-directory TestResults
+
+      - name: Pack
+        run: >
+          dotnet pack ComposeSharp.sln
+          --configuration ${{ env.CONFIGURATION }}
+          --no-build
+          --no-restore
+          --output artifacts/packages
+          -p:RepositoryUrl=${{ github.server_url }}/${{ github.repository }}
+          -p:RepositoryBranch=${{ github.ref_name }}
+          -p:RepositoryCommit=${{ github.sha }}
+
+      - name: Validate packaged README
+        shell: pwsh
+        run: ./scripts/VerifyPackageReadme.ps1
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: TestResults/*.trx
+          if-no-files-found: ignore
+
+      - name: Upload NuGet packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: nuget-packages
+          path: |
+            artifacts/packages/*.nupkg
+            artifacts/packages/*.snupkg
+          if-no-files-found: error

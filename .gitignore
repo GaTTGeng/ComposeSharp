@@ -1,0 +1,26 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+artifacts/
+TestResults/
+
+# IDE and user-specific files
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Test and coverage output
+coverage/
+coverage.*
+*.coverage
+*.coveragexml
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+secrets.json
+appsettings.Development.json

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ComposeSharp.Api\ComposeSharp.Api.csproj" />
+    <ProjectReference Include="..\ComposeSharp.Engine\ComposeSharp.Engine.csproj" />
+  </ItemGroup>
+
+</Project>

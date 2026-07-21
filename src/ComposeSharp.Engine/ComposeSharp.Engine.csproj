@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Docker.DotNet" Version="3.125.15" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ComposeSharp.Api\ComposeSharp.Api.csproj" />
+    <ProjectReference Include="..\ComposeSharp.Loader\ComposeSharp.Loader.csproj" />
+  </ItemGroup>
+
+</Project>
