@@ -2,7 +2,7 @@ name: loader-conformance
 
 services:
   app:
-    image: ${APP_IMAGE}
+    image: ${LOADER_CONFORMANCE_APP_IMAGE}
     build:
       context: ./app
       dockerfile: Dockerfile.test
