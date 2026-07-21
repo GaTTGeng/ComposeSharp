@@ -1,0 +1,40 @@
+name: Compose Compatibility Gap
+description: Report Compose behavior that differs from Docker Compose
+labels: ["compatibility"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: ComposeSharp Version
+      placeholder: "2.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: docker-version
+    attributes:
+      label: Docker Engine and Docker Compose Versions
+    validations:
+      required: true
+
+  - type: textarea
+    id: compose-file
+    attributes:
+      label: Minimal Compose file
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Docker Compose behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual ComposeSharp behavior
+    validations:
+      required: true
