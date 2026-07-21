@@ -4,7 +4,7 @@ This roadmap is a statement of engineering priorities, not a promise that every 
 
 ## Completed: 2.0 — Public baseline
 
-The first public release established the package boundary (`Api`, `Loader`, `Engine`, and `DependencyInjection`), .NET 8–10 targets, package documentation, CI, source packages, and NuGet Trusted Publishing. It also established the current label-based project model and Windows named-pipe default endpoint.
+The first public release established the package boundary (`Api`, `Loader`, `Engine`, and `DependencyInjection`), .NET 8–10 targets, package documentation, CI, source packages, and the Trusted Publishing workflow and maintainer guidance. NuGet package ownership and each repository's Trusted Publishing policy remain release prerequisites; see [the maintainer release guide](maintainer-release.md). It also established the current label-based project model and Windows named-pipe default endpoint.
 
 This is a usable baseline, not a compatibility certification.
 
