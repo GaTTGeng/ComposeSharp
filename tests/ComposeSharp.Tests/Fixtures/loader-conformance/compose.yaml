@@ -1,0 +1,66 @@
+name: loader-conformance
+
+services:
+  app:
+    image: ${LOADER_CONFORMANCE_APP_IMAGE}
+    build:
+      context: ./app
+      dockerfile: Dockerfile.test
+      args:
+        BUILD_MODE: test
+      target: runtime
+      tags:
+        - example/app:test
+      labels:
+        build.label: enabled
+      platforms:
+        - linux/amd64
+      pull: true
+      no_cache: true
+    command: ["dotnet", "ComposeSharp.dll"]
+    entrypoint: ["/bin/sh", "-c"]
+    env_file: app.env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Testing
+      FEATURE_FLAG: enabled
+    ports:
+      - "127.0.0.1:8080:8081/tcp"
+      - "9090:9091/udp"
+    volumes:
+      - app-data:/var/lib/app
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8081/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      com.example.component: api
+    restart: on-failure:4
+    profiles: ["debug", "tests"]
+    secrets:
+      - app-secret
+    configs:
+      - app-config
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+          cpus: 2
+        reservations:
+          memory: 128M
+
+volumes:
+  app-data:
+
+networks:
+  frontend:
+
+secrets:
+  app-secret:
+
+configs:
+  app-config:
