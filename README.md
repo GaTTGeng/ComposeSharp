@@ -89,6 +89,10 @@ Resolve `IComposeService` from the container. `ComposeProjectContext` stays expl
 
 The loader is intentionally useful even when you do not start containers. It reads `.env` and per-service `env_file` files, expands variables in YAML, and returns strongly typed services. It recognizes common service configuration including images, build definitions, commands, entrypoints, environment, ports, volumes, networks, health checks, restart policy, profiles, labels, logging, Linux capabilities, resource hints, secrets, configs, and selected `deploy` fields.
 
+### Variable interpolation
+
+When expanding YAML, ComposeSharp uses the process environment first and then the project `.env` file. A service's `env_file` contributes only to that container's environment; it is not an interpolation source. Unset variables expand to an empty value unless a `-`/`:-` default or `?`/`:?` required-value form is used. `$$` produces a literal `$`. Required-variable errors name both the variable and the Compose file.
+
 `ComposeFileLoader.LoadMerged` accepts several files, but its current merge rule is simple: a service in a later file replaces the service with the same name; top-level resources come from the later file when present. It is not Docker Compose's complete merge algorithm.
 
 ## What the engine does today
