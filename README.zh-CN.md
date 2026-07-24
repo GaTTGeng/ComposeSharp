@@ -33,6 +33,10 @@ compose.yml / .env / env_file
 
 Loader 会寻找 `docker-compose.yml`、`compose.yml`、`compose.yaml` 或 `docker-compose.yaml`，读取 `.env` 和服务的 `env_file`，再展开 YAML 中的变量。解析结果包含镜像、build、命令、环境、端口、卷、网络、健康检查、重启策略、profiles、labels、logging、capabilities、资源限制以及部分 `deploy` 字段。
 
+### 变量插值
+
+展开 YAML 时，ComposeSharp 优先使用进程环境变量，其次使用项目的 `.env`。服务的 `env_file` 只会写入该容器的环境，不作为插值来源。未设置的变量会展开为空；可使用 `-`/`:-` 指定默认值，或使用 `?`/`:?` 强制要求变量存在。`$$` 会生成字面量 `$`；必需变量缺失时，错误会同时指出变量名和 Compose 文件。
+
 ## 快速体验
 
 ```powershell

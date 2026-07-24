@@ -4,18 +4,27 @@ namespace ComposeSharp.Loader.Interpolation;
 
 public static partial class VariableInterpolator
 {
-    [GeneratedRegex(@"\$\$\{(?<name>[^}]+)\}")]
-    private static partial Regex EscapedDollarPattern();
-
     [GeneratedRegex(@"\$\{(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:(?<op>:\?|:\+|:-|\+|-|\?)(?<default>[^}]*))?\}")]
     private static partial Regex BracedVariablePattern();
 
     [GeneratedRegex(@"\$(?<name>[A-Za-z_][A-Za-z0-9_]*)")]
     private static partial Regex ShellVariablePattern();
 
-    public static string Expand(string text, IReadOnlyDictionary<string, string> dotenv, bool strict = false)
+    /// <summary>
+    /// Expands Compose-style variables in YAML text.
+    /// Process environment variables take precedence over values from the project's <c>.env</c> file.
+    /// Per-service <c>env_file</c> entries are container environment inputs and are deliberately not
+    /// interpolation sources.
+    /// </summary>
+    public static string Expand(
+        string text,
+        IReadOnlyDictionary<string, string> dotenv,
+        bool strict = false)
     {
-        var result = EscapedDollarPattern().Replace(text, m => "${" + m.Groups["name"].Value + "}");
+        // Preserve a literal dollar until all interpolation has completed; otherwise $${NAME}
+        // would become ${NAME} and be expanded by the next regex pass.
+        const string escapedDollar = "\uE000";
+        var result = text.Replace("$$", escapedDollar, StringComparison.Ordinal);
 
         result = BracedVariablePattern().Replace(result, match =>
         {
@@ -29,8 +38,8 @@ public static partial class VariableInterpolator
             {
                 ":-" => string.IsNullOrEmpty(value) ? defaultValue : value,
                 "-" => value is null ? defaultValue : value,
-                ":?" => string.IsNullOrEmpty(value) ? throw new InvalidOperationException($"Variable '{name}' is not set: {defaultValue}") : value,
-                "?" => value is null ? throw new InvalidOperationException($"Variable '{name}' is not set: {defaultValue}") : value,
+                ":?" => string.IsNullOrEmpty(value) ? ThrowRequiredVariable(name, defaultValue) : value,
+                "?" => value is null ? ThrowRequiredVariable(name, defaultValue) : value,
                 ":+" => string.IsNullOrEmpty(value) ? "" : defaultValue,
                 "+" => value is null ? "" : defaultValue,
                 _ => value ?? ""
@@ -43,11 +52,15 @@ public static partial class VariableInterpolator
             return ResolveVariable(name, dotenv) ?? "";
         });
 
-        return result;
+        return result.Replace(escapedDollar, "$", StringComparison.Ordinal);
     }
+
+    private static string ThrowRequiredVariable(string name, string message)
+        => throw new InvalidOperationException($"Variable '{name}' is required{(string.IsNullOrWhiteSpace(message) ? string.Empty : $": {message}")}");
 
     private static string? ResolveVariable(string name, IReadOnlyDictionary<string, string> dotenv)
     {
+        // This precedence is intentionally centralized so all ${NAME} and $NAME forms behave alike.
         var value = Environment.GetEnvironmentVariable(name);
         if (value is not null) return value;
         return dotenv.TryGetValue(name, out var dotEnvValue) ? dotEnvValue : null;
