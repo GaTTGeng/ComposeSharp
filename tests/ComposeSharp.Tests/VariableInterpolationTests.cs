@@ -72,6 +72,25 @@ public sealed class VariableInterpolationTests
     }
 
     [Fact]
+    public void Expand_ExpandsVariablesInSelectedFallbackValues()
+    {
+        const string image = "COMPOSESHARP_IMAGE_FOR_FALLBACK";
+        const string defaultImage = "COMPOSESHARP_DEFAULT_IMAGE_FOR_FALLBACK";
+
+        WithEnvironmentVariable(image, null, () =>
+        {
+            WithEnvironmentVariable(defaultImage, null, () =>
+            {
+                var result = VariableInterpolator.Expand(
+                    $"${{{image}:-${defaultImage}}}",
+                    new Dictionary<string, string> { [defaultImage] = "example/image:1.2.3" });
+
+                Assert.Equal("example/image:1.2.3", result);
+            });
+        });
+    }
+
+    [Fact]
     public void Load_RequiredVariableFailureNamesVariableAndComposeFile()
     {
         WithFixture(

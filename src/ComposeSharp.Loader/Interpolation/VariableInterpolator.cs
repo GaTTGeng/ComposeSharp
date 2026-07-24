@@ -33,12 +33,12 @@ public static partial class VariableInterpolator
 
             return op switch
             {
-                ":-" => string.IsNullOrEmpty(value) ? defaultValue : value,
-                "-" => value is null ? defaultValue : value,
+                ":-" => string.IsNullOrEmpty(value) ? Expand(defaultValue, dotenv) : value,
+                "-" => value is null ? Expand(defaultValue, dotenv) : value,
                 ":?" => string.IsNullOrEmpty(value) ? ThrowRequiredVariable(name, defaultValue) : value,
                 "?" => value is null ? ThrowRequiredVariable(name, defaultValue) : value,
-                ":+" => string.IsNullOrEmpty(value) ? "" : defaultValue,
-                "+" => value is null ? "" : defaultValue,
+                ":+" => string.IsNullOrEmpty(value) ? "" : Expand(defaultValue, dotenv),
+                "+" => value is null ? "" : Expand(defaultValue, dotenv),
                 _ => value ?? ""
             };
         });
