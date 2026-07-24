@@ -4,11 +4,8 @@ namespace ComposeSharp.Loader.Interpolation;
 
 public static partial class VariableInterpolator
 {
-    [GeneratedRegex(@"\$\{(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:(?<op>:\?|:\+|:-|\+|-|\?)(?<default>[^}]*))?\}")]
-    private static partial Regex BracedVariablePattern();
-
-    [GeneratedRegex(@"\$(?<name>[A-Za-z_][A-Za-z0-9_]*)")]
-    private static partial Regex ShellVariablePattern();
+    [GeneratedRegex(@"\$\$|\$\{(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:(?<op>:\?|:\+|:-|\+|-|\?)(?<default>[^}]*))?\}|\$(?<shellName>[A-Za-z_][A-Za-z0-9_]*)")]
+    private static partial Regex VariablePattern();
 
     /// <summary>
     /// Expands Compose-style variables in YAML text.
@@ -21,13 +18,13 @@ public static partial class VariableInterpolator
         IReadOnlyDictionary<string, string> dotenv,
         bool strict = false)
     {
-        // Preserve a literal dollar until all interpolation has completed; otherwise $${NAME}
-        // would become ${NAME} and be expanded by the next regex pass.
-        const string escapedDollar = "\uE000";
-        var result = text.Replace("$$", escapedDollar, StringComparison.Ordinal);
-
-        result = BracedVariablePattern().Replace(result, match =>
+        return VariablePattern().Replace(text, match =>
         {
+            if (match.Value == "$$") return "$";
+
+            if (match.Groups["shellName"].Success)
+                return ResolveVariable(match.Groups["shellName"].Value, dotenv) ?? "";
+
             var name = match.Groups["name"].Value;
             var op = match.Groups["op"].Success ? match.Groups["op"].Value : "";
             var defaultValue = match.Groups["default"].Success ? match.Groups["default"].Value : "";
@@ -45,14 +42,6 @@ public static partial class VariableInterpolator
                 _ => value ?? ""
             };
         });
-
-        result = ShellVariablePattern().Replace(result, match =>
-        {
-            var name = match.Groups["name"].Value;
-            return ResolveVariable(name, dotenv) ?? "";
-        });
-
-        return result.Replace(escapedDollar, "$", StringComparison.Ordinal);
     }
 
     private static string ThrowRequiredVariable(string name, string message)

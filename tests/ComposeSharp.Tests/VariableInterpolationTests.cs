@@ -60,6 +60,18 @@ public sealed class VariableInterpolationTests
     }
 
     [Fact]
+    public void Expand_PreservesPrivateUseCharactersInVariableValues()
+    {
+        const string name = "COMPOSESHARP_PRIVATE_USE_VALUE";
+        const string value = "\uE000";
+
+        WithEnvironmentVariable(name, value, () =>
+        {
+            Assert.Equal(value, VariableInterpolator.Expand($"${{{name}}}", new Dictionary<string, string>()));
+        });
+    }
+
+    [Fact]
     public void Load_RequiredVariableFailureNamesVariableAndComposeFile()
     {
         WithFixture(
