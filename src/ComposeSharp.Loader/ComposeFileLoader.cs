@@ -12,7 +12,17 @@ public sealed class ComposeFileLoader
         var composePath = ResolveComposePath(workingDirectory, composeFileName);
         var env = LoadDotEnv(Path.Combine(Path.GetDirectoryName(composePath)!, ".env"));
         var raw = File.ReadAllText(composePath);
-        var expanded = VariableInterpolator.Expand(raw, env);
+        string expanded;
+        try
+        {
+            expanded = VariableInterpolator.Expand(raw, env);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new InvalidOperationException(
+                $"Failed to interpolate Compose file '{composePath}': {exception.Message}",
+                exception);
+        }
         var deserializer = new DeserializerBuilder().Build();
         var root = deserializer.Deserialize<Dictionary<object, object?>>(expanded)
                    ?? throw new InvalidOperationException("Compose file is empty.");
@@ -364,13 +374,26 @@ public sealed class ComposeFileLoader
         {
             var line = rawLine.Trim();
             if (line.Length == 0 || line.StartsWith('#')) continue;
+            if (line.StartsWith("export ", StringComparison.Ordinal)) line = line[7..].TrimStart();
             var idx = line.IndexOf('=');
             if (idx <= 0) continue;
             var key = line[..idx].Trim();
-            var value = line[(idx + 1)..].Trim().Trim('"').Trim('\'');
+            var value = ParseDotEnvValue(line[(idx + 1)..]);
             result[key] = value;
         }
         return result;
+    }
+
+    private static string ParseDotEnvValue(string rawValue)
+    {
+        var value = rawValue.Trim();
+        if (value.Length >= 2 && value[0] == '"' && value[^1] == '"')
+            return value[1..^1].Replace("\\\"", "\"", StringComparison.Ordinal);
+        if (value.Length >= 2 && value[0] == '\'' && value[^1] == '\'')
+            return value[1..^1];
+
+        var commentIndex = value.IndexOf(" #", StringComparison.Ordinal);
+        return commentIndex >= 0 ? value[..commentIndex].TrimEnd() : value;
     }
 
     private static List<string> ReadEnvironment(Dictionary<object, object?> map)
