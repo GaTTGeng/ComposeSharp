@@ -131,4 +131,61 @@ public sealed class ComposeLoaderConformanceTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    [Fact]
+    public void LoadMerged_ReplacesWindowsBindMountByContainerTarget()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"compose-merge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+                services:
+                  app:
+                    image: example/app
+                    volumes:
+                      - 'C:\base:/data:ro'
+                """);
+            File.WriteAllText(Path.Combine(directory, "compose.override.yaml"), """
+                services:
+                  app:
+                    volumes:
+                      - 'D:\override:/data:rw'
+                """);
+
+            var project = new ComposeFileLoader().LoadMerged(directory, ["compose.yaml", "compose.override.yaml"]);
+
+            Assert.Equal(["D:\\override:/data:rw"], Assert.Single(project.Services).Volumes);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Load_AllowsMergeTagTextInCommentsAndBlockScalars()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"compose-merge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+                # ports: !reset []
+                services:
+                  app:
+                    image: example/app
+                    command: |
+                      echo !override
+                """);
+
+            var project = new ComposeFileLoader().Load(directory, "compose.yaml");
+
+            Assert.Single(project.Services);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 }

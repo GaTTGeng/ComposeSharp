@@ -1,6 +1,8 @@
 using System.Text.RegularExpressions;
 using ComposeSharp.Loader.Interpolation;
 using ComposeSharp.Loader.Models;
+using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 
 namespace ComposeSharp.Loader;
@@ -47,7 +49,6 @@ public sealed class ComposeFileLoader
     {
         var env = LoadDotEnv(Path.Combine(Path.GetDirectoryName(composePath)!, ".env"));
         var raw = File.ReadAllText(composePath);
-        RejectUnsupportedMergeTags(raw, composePath);
         string expanded;
         try
         {
@@ -59,6 +60,7 @@ public sealed class ComposeFileLoader
                 $"Failed to interpolate Compose file '{composePath}': {exception.Message}",
                 exception);
         }
+        RejectUnsupportedMergeTags(expanded, composePath);
         var deserializer = new DeserializerBuilder().Build();
         var root = deserializer.Deserialize<Dictionary<object, object?>>(expanded)
                    ?? throw new InvalidOperationException("Compose file is empty.");
@@ -202,12 +204,31 @@ public sealed class ComposeFileLoader
             if (item is Dictionary<object, object?> map && TryGetValue(map, "target", out var target))
                 return target?.ToString() ?? text;
 
-            var parts = text.Split(':');
-            if (parts.Length >= 2)
-                return parts[1];
+            var shortSyntaxTarget = GetShortSyntaxTarget(text);
+            if (shortSyntaxTarget is not null)
+                return shortSyntaxTarget;
         }
 
         return text;
+    }
+
+    private static string? GetShortSyntaxTarget(string value)
+    {
+        var firstSeparator = value.IndexOf(':');
+        if (firstSeparator < 0)
+            return null;
+
+        if (firstSeparator == 1 && char.IsLetter(value[0]) && value.Length > 2 &&
+            (value[2] == '\\' || value[2] == '/'))
+        {
+            firstSeparator = value.IndexOf(':', firstSeparator + 1);
+            if (firstSeparator < 0)
+                return null;
+        }
+
+        var targetStart = firstSeparator + 1;
+        var modeSeparator = value.IndexOf(':', targetStart);
+        return modeSeparator < 0 ? value[targetStart..] : value[targetStart..modeSeparator];
     }
 
     private static string GetLeaf(string path)
@@ -244,13 +265,18 @@ public sealed class ComposeFileLoader
         _ => value
     };
 
-    private static void RejectUnsupportedMergeTags(string raw, string composePath)
+    private static void RejectUnsupportedMergeTags(string yaml, string composePath)
     {
-        var tag = Regex.Match(raw, @"(?m)(?:^|:\s*|-\s*)(!(?:reset|override)\b)");
-        if (tag.Success)
+        var parser = new Parser(new StringReader(yaml));
+        while (parser.MoveNext())
+        {
+            if (parser.Current is not NodeEvent node || node.Tag.ToString() is not ("!reset" or "!override"))
+                continue;
+
             throw new NotSupportedException(
-                $"Compose merge tag '{tag.Groups[1].Value}' in '{composePath}' is not supported. " +
+                $"Compose merge tag '{node.Tag}' in '{composePath}' is not supported. " +
                 "Use the documented scalar, mapping, and list merge rules instead.");
+        }
     }
 
     private ServiceDefinition ParseService(
