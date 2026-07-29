@@ -329,4 +329,70 @@ public sealed class ComposeLoaderConformanceTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    [Fact]
+    public void LoadMerged_KeepsDistinctTargetOnlyWindowsVolumes()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"compose-merge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+                services:
+                  app:
+                    image: example/app
+                    volumes:
+                      - 'C:\data'
+                """);
+            File.WriteAllText(Path.Combine(directory, "compose.override.yaml"), """
+                services:
+                  app:
+                    volumes:
+                      - 'D:\data'
+                """);
+
+            var project = new ComposeFileLoader().LoadMerged(directory, ["compose.yaml", "compose.override.yaml"]);
+
+            Assert.Equal(["C:\\data", "D:\\data"], Assert.Single(project.Services).Volumes);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LoadMerged_ReplacesColonFormBuildExtraHostByHostname()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"compose-merge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+                services:
+                  app:
+                    build:
+                      context: .
+                      extra_hosts:
+                        - db:10.0.0.1
+                """);
+            File.WriteAllText(Path.Combine(directory, "compose.override.yaml"), """
+                services:
+                  app:
+                    build:
+                      extra_hosts:
+                        - db:10.0.0.2
+                """);
+
+            var app = Assert.Single(new ComposeFileLoader()
+                .LoadMerged(directory, ["compose.yaml", "compose.override.yaml"])
+                .Services);
+
+            Assert.Equal("10.0.0.2", app.Build!.ExtraHosts!["db"]);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 }

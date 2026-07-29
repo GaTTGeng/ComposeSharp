@@ -196,7 +196,7 @@ public sealed class ComposeFileLoader
         if ((leaf is "environment" or "labels" or "sysctls" or "args" or "extra_hosts" or "annotations") &&
             item is not Dictionary<object, object?>)
         {
-            var separator = text.IndexOf('=');
+            var separator = GetDictionaryEntrySeparator(text, leaf == "extra_hosts");
             return separator < 0 ? text : text[..separator];
         }
 
@@ -225,6 +225,8 @@ public sealed class ComposeFileLoader
             var drivePathSeparator = value.IndexOf(':', firstSeparator + 1);
             if (drivePathSeparator >= 0)
                 firstSeparator = drivePathSeparator;
+            else if (value[2] == '\\')
+                return value;
         }
 
         var targetStart = firstSeparator + 1;
@@ -235,6 +237,12 @@ public sealed class ComposeFileLoader
             modeSeparator = value.IndexOf(':', modeSeparator + 1);
         }
         return modeSeparator < 0 ? value[targetStart..] : value[targetStart..modeSeparator];
+    }
+
+    private static int GetDictionaryEntrySeparator(string value, bool allowColonSeparator)
+    {
+        var separator = value.IndexOf('=');
+        return separator >= 0 || !allowColonSeparator ? separator : value.IndexOf(':');
     }
 
     private static string GetLeaf(string path)
@@ -738,7 +746,7 @@ public sealed class ComposeFileLoader
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Select(item =>
                 {
-                    var separator = item.IndexOf('=');
+                    var separator = GetDictionaryEntrySeparator(item, key == "extra_hosts");
                     return separator < 0
                         ? new KeyValuePair<string, string>(item, string.Empty)
                         : new KeyValuePair<string, string>(item[..separator], item[(separator + 1)..]);
