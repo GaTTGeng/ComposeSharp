@@ -93,7 +93,7 @@ The loader is intentionally useful even when you do not start containers. It rea
 
 When expanding YAML, ComposeSharp uses the process environment first and then the project `.env` file. A service's `env_file` contributes only to that container's environment; it is not an interpolation source. Unset variables expand to an empty value unless a `-`/`:-` default or `?`/`:?` required-value form is used. `$$` produces a literal `$`. Required-variable errors name both the variable and the Compose file.
 
-`ComposeFileLoader.LoadMerged` accepts several files, but its current merge rule is simple: a service in a later file replaces the service with the same name; top-level resources come from the later file when present. It is not Docker Compose's complete merge algorithm.
+`ComposeFileLoader.LoadMerged` accepts several files and applies an incremental, field-level merge: later scalars replace earlier values, mappings merge recursively, and lists append with focused replacement rules for service resources, `command`, and `entrypoint`. It is not Docker Compose's complete merge algorithm; see [the merge semantics](docs/merge-semantics.md) for the exact supported rules and unsupported YAML tags.
 
 ## What the engine does today
 

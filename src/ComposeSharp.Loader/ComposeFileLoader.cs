@@ -1,6 +1,8 @@
 using System.Text.RegularExpressions;
 using ComposeSharp.Loader.Interpolation;
 using ComposeSharp.Loader.Models;
+using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 
 namespace ComposeSharp.Loader;
@@ -10,6 +12,41 @@ public sealed class ComposeFileLoader
     public ComposeProject Load(string workingDirectory, string composeFileName)
     {
         var composePath = ResolveComposePath(workingDirectory, composeFileName);
+        var (root, env) = LoadDocument(composePath);
+        return ParseProject(composePath, root, env);
+    }
+
+    public ComposeProject LoadMerged(string workingDirectory, IReadOnlyList<string> composeFiles)
+    {
+        if (composeFiles.Count == 0)
+            throw new ArgumentException("At least one compose file is required.");
+        if (composeFiles.Count == 1)
+            return Load(workingDirectory, composeFiles[0]);
+
+        Dictionary<object, object?>? mergedRoot = null;
+        string? primaryComposePath = null;
+        IReadOnlyDictionary<string, string>? primaryEnvironment = null;
+        foreach (var file in composeFiles)
+        {
+            var composePath = ResolveComposePath(workingDirectory, file);
+            var (root, environment) = LoadDocument(composePath);
+            if (mergedRoot is null)
+            {
+                mergedRoot = root;
+                primaryComposePath = composePath;
+                primaryEnvironment = environment;
+            }
+            else
+            {
+                mergedRoot = MergeDocuments(mergedRoot, root, composePath);
+            }
+        }
+
+        return ParseProject(primaryComposePath!, mergedRoot!, primaryEnvironment!);
+    }
+
+    private static (Dictionary<object, object?> Root, IReadOnlyDictionary<string, string> Environment) LoadDocument(string composePath)
+    {
         var env = LoadDotEnv(Path.Combine(Path.GetDirectoryName(composePath)!, ".env"));
         var raw = File.ReadAllText(composePath);
         string expanded;
@@ -23,9 +60,19 @@ public sealed class ComposeFileLoader
                 $"Failed to interpolate Compose file '{composePath}': {exception.Message}",
                 exception);
         }
+        RejectUnsupportedMergeTags(expanded, composePath);
         var deserializer = new DeserializerBuilder().Build();
         var root = deserializer.Deserialize<Dictionary<object, object?>>(expanded)
                    ?? throw new InvalidOperationException("Compose file is empty.");
+
+        return (root, env);
+    }
+
+    private ComposeProject ParseProject(
+        string composePath,
+        Dictionary<object, object?> root,
+        IReadOnlyDictionary<string, string> env)
+    {
 
         var servicesMap = GetMap(root, "services")
                           ?? throw new NotSupportedException("Compose file must contain a services map.");
@@ -56,22 +103,6 @@ public sealed class ComposeFileLoader
             extensions);
     }
 
-    public ComposeProject LoadMerged(string workingDirectory, IReadOnlyList<string> composeFiles)
-    {
-        if (composeFiles.Count == 0)
-            throw new ArgumentException("At least one compose file is required.");
-        if (composeFiles.Count == 1)
-            return Load(workingDirectory, composeFiles[0]);
-
-        ComposeProject? merged = null;
-        foreach (var file in composeFiles)
-        {
-            var project = Load(workingDirectory, file);
-            merged = merged is null ? project : MergeProjects(merged, project);
-        }
-        return merged!;
-    }
-
     private static string ResolveComposePath(string workingDirectory, string composeFileName)
     {
         var composePath = Path.Combine(workingDirectory, composeFileName);
@@ -87,26 +118,179 @@ public sealed class ComposeFileLoader
         throw new FileNotFoundException("Compose file was not found.", composePath);
     }
 
-    private static ComposeProject MergeProjects(ComposeProject baseProject, ComposeProject overlay)
+    private static readonly HashSet<string> ReplacementListFields = new(StringComparer.Ordinal)
     {
-        var services = new List<ServiceDefinition>(baseProject.Services);
-        foreach (var overlayService in overlay.Services)
+        "command",
+        "entrypoint"
+    };
+
+    private static Dictionary<object, object?> MergeDocuments(
+        Dictionary<object, object?> baseDocument,
+        Dictionary<object, object?> overlay,
+        string overlayPath)
+    {
+        return MergeMap(baseDocument, overlay, "", overlayPath);
+    }
+
+    private static Dictionary<object, object?> MergeMap(
+        Dictionary<object, object?> baseMap,
+        Dictionary<object, object?> overlay,
+        string path,
+        string overlayPath)
+    {
+        var merged = CloneMap(baseMap);
+        foreach (var (keyObject, overlayValue) in overlay)
         {
-            var existingIdx = services.FindIndex(s => s.Name == overlayService.Name);
-            if (existingIdx >= 0)
-                services[existingIdx] = overlayService;
-            else
-                services.Add(overlayService);
+            var key = keyObject.ToString() ?? throw new NotSupportedException(
+                $"Compose map keys in '{overlayPath}' must be strings.");
+            var memberPath = string.IsNullOrEmpty(path) ? key : $"{path}.{key}";
+
+            if (!TryGetValue(merged, key, out var baseValue))
+            {
+                merged[key] = CloneNode(overlayValue);
+                continue;
+            }
+
+            merged[key] = MergeNode(baseValue, overlayValue, memberPath, overlayPath);
         }
 
-        return new ComposeProject(
-            overlay.WorkingDirectory,
-            services,
-            overlay.Volumes.Count > 0 ? overlay.Volumes : baseProject.Volumes,
-            overlay.Networks.Count > 0 ? overlay.Networks : baseProject.Networks,
-            overlay.Secrets.Count > 0 ? overlay.Secrets : baseProject.Secrets,
-            overlay.Configs.Count > 0 ? overlay.Configs : baseProject.Configs,
-            overlay.Extensions.Count > 0 ? overlay.Extensions : baseProject.Extensions);
+        return merged;
+    }
+
+    private static object? MergeNode(object? baseValue, object? overlayValue, string path, string overlayPath)
+    {
+        if (baseValue is Dictionary<object, object?> baseMap && overlayValue is Dictionary<object, object?> overlayMap)
+            return MergeMap(baseMap, overlayMap, path, overlayPath);
+
+        if (baseValue is List<object?> baseList && overlayValue is List<object?> overlayList)
+            return MergeList(baseList, overlayList, path);
+
+        // Scalars, null values, and changes between YAML shapes deliberately replace the earlier value.
+        return CloneNode(overlayValue);
+    }
+
+    private static List<object?> MergeList(List<object?> baseList, List<object?> overlayList, string path)
+    {
+        if (ReplacementListFields.Contains(GetLeaf(path)) || path.EndsWith(".healthcheck.test", StringComparison.Ordinal))
+            return CloneList(overlayList);
+
+        var merged = CloneList(baseList);
+        foreach (var item in overlayList)
+        {
+            var key = GetListMergeKey(item, path);
+            var existingIndex = merged.FindIndex(existing =>
+                string.Equals(GetListMergeKey(existing, path), key, StringComparison.Ordinal));
+            if (existingIndex >= 0)
+                merged[existingIndex] = CloneNode(item);
+            else
+                merged.Add(CloneNode(item));
+        }
+
+        return merged;
+    }
+
+    private static string GetListMergeKey(object? item, string path)
+    {
+        var text = item?.ToString() ?? string.Empty;
+        var leaf = GetLeaf(path);
+        if ((leaf is "environment" or "labels" or "sysctls" or "args" or "extra_hosts" or "annotations") &&
+            item is not Dictionary<object, object?>)
+        {
+            var separator = GetDictionaryEntrySeparator(text, leaf == "extra_hosts");
+            return separator < 0 ? text : text[..separator];
+        }
+
+        if (leaf is "volumes" or "secrets" or "configs")
+        {
+            if (item is Dictionary<object, object?> map && TryGetValue(map, "target", out var target))
+                return target?.ToString() ?? text;
+
+            var shortSyntaxTarget = GetShortSyntaxTarget(text);
+            if (shortSyntaxTarget is not null)
+                return shortSyntaxTarget;
+        }
+
+        return text;
+    }
+
+    private static string? GetShortSyntaxTarget(string value)
+    {
+        var firstSeparator = value.IndexOf(':');
+        if (firstSeparator < 0)
+            return null;
+
+        if (firstSeparator == 1 && char.IsLetter(value[0]) && value.Length > 2 &&
+            (value[2] == '\\' || value[2] == '/'))
+        {
+            var drivePathSeparator = value.IndexOf(':', firstSeparator + 1);
+            if (drivePathSeparator >= 0)
+                firstSeparator = drivePathSeparator;
+            else if (value[2] == '\\')
+                return value;
+        }
+
+        var targetStart = firstSeparator + 1;
+        var modeSeparator = value.IndexOf(':', targetStart);
+        if (modeSeparator == targetStart + 1 && char.IsLetter(value[targetStart]) && modeSeparator + 1 < value.Length &&
+            (value[modeSeparator + 1] == '\\' || value[modeSeparator + 1] == '/'))
+        {
+            modeSeparator = value.IndexOf(':', modeSeparator + 1);
+        }
+        return modeSeparator < 0 ? value[targetStart..] : value[targetStart..modeSeparator];
+    }
+
+    private static int GetDictionaryEntrySeparator(string value, bool allowColonSeparator)
+    {
+        var separator = value.IndexOf('=');
+        return separator >= 0 || !allowColonSeparator ? separator : value.IndexOf(':');
+    }
+
+    private static string GetLeaf(string path)
+    {
+        var separator = path.LastIndexOf('.');
+        return separator < 0 ? path : path[(separator + 1)..];
+    }
+
+    private static bool TryGetValue(Dictionary<object, object?> map, string key, out object? value)
+    {
+        foreach (var (candidate, candidateValue) in map)
+        {
+            if (string.Equals(candidate.ToString(), key, StringComparison.Ordinal))
+            {
+                value = candidateValue;
+                return true;
+            }
+        }
+
+        value = null;
+        return false;
+    }
+
+    private static Dictionary<object, object?> CloneMap(Dictionary<object, object?> map)
+        => map.ToDictionary(pair => pair.Key, pair => CloneNode(pair.Value));
+
+    private static List<object?> CloneList(List<object?> list)
+        => list.Select(CloneNode).ToList();
+
+    private static object? CloneNode(object? value) => value switch
+    {
+        Dictionary<object, object?> map => CloneMap(map),
+        List<object?> list => CloneList(list),
+        _ => value
+    };
+
+    private static void RejectUnsupportedMergeTags(string yaml, string composePath)
+    {
+        var parser = new Parser(new StringReader(yaml));
+        while (parser.MoveNext())
+        {
+            if (parser.Current is not NodeEvent node || node.Tag.ToString() is not ("!reset" or "!override"))
+                continue;
+
+            throw new NotSupportedException(
+                $"Compose merge tag '{node.Tag}' in '{composePath}' is not supported. " +
+                "Use the documented scalar, mapping, and list merge rules instead.");
+        }
     }
 
     private ServiceDefinition ParseService(
@@ -554,6 +738,21 @@ public sealed class ComposeFileLoader
 
         if (value is Dictionary<object, object?> dict)
             return dict.ToDictionary(kv => kv.Key.ToString()!, kv => kv.Value?.ToString() ?? "");
+
+        if (value is List<object?> list)
+        {
+            return list
+                .Select(item => item?.ToString() ?? string.Empty)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item =>
+                {
+                    var separator = GetDictionaryEntrySeparator(item, key == "extra_hosts");
+                    return separator < 0
+                        ? new KeyValuePair<string, string>(item, string.Empty)
+                        : new KeyValuePair<string, string>(item[..separator], item[(separator + 1)..]);
+                })
+                .ToDictionary(pair => pair.Key, pair => pair.Value);
+        }
 
         return new Dictionary<string, string>();
     }
