@@ -78,4 +78,57 @@ public sealed class ComposeLoaderConformanceTests
         Assert.Equal(2, app.Deploy.Resources.Limits.CpuCount);
         Assert.Equal(128L * 1024 * 1024, app.Deploy.Resources.Reservations!.Memory);
     }
+
+    [Fact]
+    public void LoadMerged_Fixture_AppliesDocumentedFieldRules()
+    {
+        var fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "Fixtures", "merged-loader");
+        var project = new ComposeFileLoader().LoadMerged(fixtureDirectory,
+            ["compose.yaml", "compose.override.yaml"]);
+
+        var app = project.Services.Single(service => service.Name == "app");
+        Assert.Equal("example/app:override", app.Image);
+        Assert.Equal(["run", "--verbose"], app.Command);
+        Assert.Equal(["/bin/app"], app.Entrypoint);
+        Assert.Equal(["BASE_ONLY=base", "SHARED=override", "OVERLAY_ONLY=overlay"], app.Environment);
+        Assert.Equal("frontend", app.Labels["com.example.tier"]);
+        Assert.Equal("api", app.Labels["com.example.component"]);
+        Assert.Equal("override", app.Labels["com.example.shared"]);
+        Assert.Equal(
+            [new ComposePort("8080", "80/tcp", "tcp"), new ComposePort("9090", "81/tcp", "tcp")],
+            app.Ports);
+        Assert.Equal(["override-data:/var/lib/app", "cache:/cache", "logs:/var/log/app"], app.Volumes);
+        Assert.Equal(["frontend", "backend"], app.Networks);
+        Assert.Equal(["app-config", "app-config-override"], app.Configs);
+        Assert.Equal(["app-secret", "app-secret-override"], app.Secrets);
+
+        Assert.Contains(project.Services, service => service.Name == "worker");
+        Assert.Equal(["app-data", "cache", "override-data", "logs"], project.Volumes);
+        Assert.Equal(["frontend", "backend"], project.Networks);
+        Assert.Equal(["app-config", "app-config-override"], project.Configs);
+        Assert.Equal(["app-secret", "app-secret-override"], project.Secrets);
+    }
+
+    [Fact]
+    public void LoadMerged_RejectsUnsupportedMergeTagWithSourceFile()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"compose-merge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "compose.yaml"), "services:\n  app:\n    image: example/app\n");
+            var overridePath = Path.Combine(directory, "compose.override.yaml");
+            File.WriteAllText(overridePath, "services:\n  app:\n    ports: !reset []\n");
+
+            var exception = Assert.Throws<NotSupportedException>(() => new ComposeFileLoader().LoadMerged(directory,
+                ["compose.yaml", "compose.override.yaml"]));
+
+            Assert.Contains("!reset", exception.Message);
+            Assert.Contains(overridePath, exception.Message);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 }
