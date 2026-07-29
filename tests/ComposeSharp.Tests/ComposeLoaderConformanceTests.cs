@@ -253,4 +253,80 @@ public sealed class ComposeLoaderConformanceTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    [Fact]
+    public void LoadMerged_MergesListFormDictionaryFieldsBySettingName()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"compose-merge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+                services:
+                  app:
+                    build:
+                      context: .
+                      args:
+                        - MODE=debug
+                      extra_hosts:
+                        - host=base
+                    annotations:
+                      - com.example.mode=base
+                """);
+            File.WriteAllText(Path.Combine(directory, "compose.override.yaml"), """
+                services:
+                  app:
+                    build:
+                      args:
+                        - MODE=release
+                      extra_hosts:
+                        - host=overlay
+                    annotations:
+                      - com.example.mode=overlay
+                """);
+
+            var app = Assert.Single(new ComposeFileLoader()
+                .LoadMerged(directory, ["compose.yaml", "compose.override.yaml"])
+                .Services);
+
+            Assert.Equal("release", app.Build!.Args!["MODE"]);
+            Assert.Equal("overlay", app.Build.ExtraHosts!["host"]);
+            Assert.Equal("overlay", app.Annotations["com.example.mode"]);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LoadMerged_KeepsDistinctWindowsContainerTargets()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"compose-merge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+                services:
+                  app:
+                    image: example/app
+                    volumes:
+                      - 'data:C:\app'
+                """);
+            File.WriteAllText(Path.Combine(directory, "compose.override.yaml"), """
+                services:
+                  app:
+                    volumes:
+                      - 'logs:C:\logs'
+                """);
+
+            var project = new ComposeFileLoader().LoadMerged(directory, ["compose.yaml", "compose.override.yaml"]);
+
+            Assert.Equal(["data:C:\\app", "logs:C:\\logs"], Assert.Single(project.Services).Volumes);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 }
