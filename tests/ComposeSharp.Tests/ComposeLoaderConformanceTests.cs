@@ -188,4 +188,69 @@ public sealed class ComposeLoaderConformanceTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    [Fact]
+    public void LoadMerged_ReplacesListFormSysctlsBySettingName()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"compose-merge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+                services:
+                  app:
+                    image: example/app
+                    sysctls:
+                      - net.core.somaxconn=1024
+                """);
+            File.WriteAllText(Path.Combine(directory, "compose.override.yaml"), """
+                services:
+                  app:
+                    sysctls:
+                      - net.core.somaxconn=2048
+                      - net.ipv4.ip_forward=1
+                """);
+
+            var project = new ComposeFileLoader().LoadMerged(directory, ["compose.yaml", "compose.override.yaml"]);
+
+            var sysctls = Assert.Single(project.Services).Sysctls;
+            Assert.Equal("2048", sysctls["net.core.somaxconn"]);
+            Assert.Equal("1", sysctls["net.ipv4.ip_forward"]);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LoadMerged_ReplacesSingleLetterNamedVolumeByContainerTarget()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"compose-merge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+                services:
+                  app:
+                    image: example/app
+                    volumes:
+                      - a:/data
+                """);
+            File.WriteAllText(Path.Combine(directory, "compose.override.yaml"), """
+                services:
+                  app:
+                    volumes:
+                      - b:/data
+                """);
+
+            var project = new ComposeFileLoader().LoadMerged(directory, ["compose.yaml", "compose.override.yaml"]);
+
+            Assert.Equal(["b:/data"], Assert.Single(project.Services).Volumes);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 }

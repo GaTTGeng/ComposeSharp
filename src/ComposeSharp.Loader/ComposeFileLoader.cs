@@ -193,7 +193,7 @@ public sealed class ComposeFileLoader
     {
         var text = item?.ToString() ?? string.Empty;
         var leaf = GetLeaf(path);
-        if ((leaf is "environment" or "labels") && item is not Dictionary<object, object?>)
+        if ((leaf is "environment" or "labels" or "sysctls") && item is not Dictionary<object, object?>)
         {
             var separator = text.IndexOf('=');
             return separator < 0 ? text : text[..separator];
@@ -221,9 +221,9 @@ public sealed class ComposeFileLoader
         if (firstSeparator == 1 && char.IsLetter(value[0]) && value.Length > 2 &&
             (value[2] == '\\' || value[2] == '/'))
         {
-            firstSeparator = value.IndexOf(':', firstSeparator + 1);
-            if (firstSeparator < 0)
-                return null;
+            var drivePathSeparator = value.IndexOf(':', firstSeparator + 1);
+            if (drivePathSeparator >= 0)
+                firstSeparator = drivePathSeparator;
         }
 
         var targetStart = firstSeparator + 1;
