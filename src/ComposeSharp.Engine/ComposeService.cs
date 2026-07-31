@@ -22,9 +22,10 @@ public sealed class ComposeService : IComposeService
     public async Task BuildAsync(ComposeProjectContext context, ComposeBuildOptions? options = null, CancellationToken cancellationToken = default)
     {
         var project = LoadProjectInternal(context);
-        var targetServices = options?.Services is { Count: > 0 }
-            ? project.Services.Where(s => options.Services.Contains(s.Name) && s.Build is not null).ToList()
-            : project.Services.Where(s => s.Build is not null).ToList();
+        var targetServices = ProfileServiceSelector
+            .Select(project, context.Profiles, options?.Services)
+            .Where(service => service.Build is not null)
+            .ToList();
 
         foreach (var service in targetServices)
         {
@@ -52,7 +53,7 @@ public sealed class ComposeService : IComposeService
 
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
 
-        var targetServices = GetOrderedServices(project, options?.Services);
+        var targetServices = GetOrderedServices(project, context.Profiles, options?.Services);
 
         foreach (var service in targetServices)
         {
@@ -113,7 +114,7 @@ public sealed class ComposeService : IComposeService
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
 
-        var targetServices = GetOrderedServices(project, options?.Services);
+        var targetServices = GetOrderedServices(project, context.Profiles, options?.Services);
         foreach (var service in targetServices)
         {
             var replicas = 1;
@@ -158,16 +159,15 @@ public sealed class ComposeService : IComposeService
     {
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        await _images.PullImagesAsync(client, project, context.RegistryAuth, options?.Services, cancellationToken);
+        var targetServices = ProfileServiceSelector.Select(project, context.Profiles, options?.Services);
+        await _images.PullImagesAsync(client, targetServices, context.RegistryAuth, cancellationToken);
     }
 
     public async Task PushAsync(ComposeProjectContext context, ComposePushOptions? options = null, CancellationToken cancellationToken = default)
     {
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        var targetServices = options?.Services is { Count: > 0 }
-            ? project.Services.Where(s => options.Services.Contains(s.Name))
-            : project.Services;
+        var targetServices = ProfileServiceSelector.Select(project, context.Profiles, options?.Services);
 
         foreach (var service in targetServices)
         {
@@ -188,7 +188,7 @@ public sealed class ComposeService : IComposeService
     public async Task<string> RunAsync(ComposeProjectContext context, string serviceName, ComposeRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         var project = LoadProjectInternal(context);
-        var service = project.Services.FirstOrDefault(s => s.Name == serviceName)
+        var service = ProfileServiceSelector.Select(project, context.Profiles, [serviceName]).SingleOrDefault()
             ?? throw new InvalidOperationException($"Service '{serviceName}' not found.");
 
         using var client = _clientFactory.CreateClient(context.SocketPath);
@@ -426,7 +426,7 @@ public sealed class ComposeService : IComposeService
         var result = new List<ServiceStatus>();
         foreach (var (serviceName, replicas) in options.Services)
         {
-            var service = project.Services.FirstOrDefault(s => s.Name == serviceName)
+            var service = ProfileServiceSelector.Select(project, context.Profiles, [serviceName]).SingleOrDefault()
                 ?? throw new InvalidOperationException($"Service '{serviceName}' not found.");
 
             await foreach (var _ in _containers.ReconcileServiceAsync(
@@ -470,9 +470,7 @@ public sealed class ComposeService : IComposeService
     public async IAsyncEnumerable<WatchEvent> WatchAsync(ComposeProjectContext context, ComposeWatchOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var project = LoadProjectInternal(context);
-        var targetServices = options?.Services is { Count: > 0 }
-            ? project.Services.Where(s => options.Services.Contains(s.Name)).ToList()
-            : project.Services;
+        var targetServices = ProfileServiceSelector.Select(project, context.Profiles, options?.Services);
 
         foreach (var service in targetServices)
         {
@@ -534,7 +532,7 @@ public sealed class ComposeService : IComposeService
         var sb = new StringBuilder();
         sb.AppendLine($"digraph {context.ProjectName} {{");
         sb.AppendLine("  rankdir=LR;");
-        foreach (var service in project.Services)
+        foreach (var service in ProfileServiceSelector.Select(project, context.Profiles))
         {
             sb.AppendLine($"  \"{service.Name}\" [label=\"{service.Name}\\n{service.Image ?? "build"}\"];");
             foreach (var dep in service.DependsOn)
@@ -577,7 +575,7 @@ public sealed class ComposeService : IComposeService
             Name = context.ProjectName,
             WorkingDirectory = context.WorkingDirectory,
             ConfigFiles = [context.ComposeFileName],
-            Services = project.Services.Select(s => s.Name).ToList(),
+            Services = ProfileServiceSelector.Select(project, context.Profiles).Select(service => service.Name).ToList(),
             Networks = project.Networks.ToList(),
             Volumes = project.Volumes.ToList(),
             Secrets = project.Secrets.ToList(),
@@ -590,7 +588,7 @@ public sealed class ComposeService : IComposeService
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
 
-        foreach (var service in project.Services)
+        foreach (var service in ProfileServiceSelector.Select(project, context.Profiles))
         {
             if (service.Image is not null)
             {
@@ -608,13 +606,12 @@ public sealed class ComposeService : IComposeService
         return _loader.Load(context.WorkingDirectory, context.ComposeFileName);
     }
 
-    private static IReadOnlyList<ServiceDefinition> GetOrderedServices(ComposeProject project, IReadOnlyList<string>? services)
+    private static IReadOnlyList<ServiceDefinition> GetOrderedServices(
+        ComposeProject project,
+        IReadOnlyList<string>? profiles,
+        IReadOnlyList<string>? services)
     {
-        var filtered = services is { Count: > 0 }
-            ? project.Services.Where(s => services.Contains(s.Name)).ToList()
-            : project.Services.ToList();
-
-        return OrderServices(filtered);
+        return OrderServices(ProfileServiceSelector.Select(project, profiles, services));
     }
 
     private static IReadOnlyList<ServiceDefinition> OrderServices(IReadOnlyList<ServiceDefinition> services)

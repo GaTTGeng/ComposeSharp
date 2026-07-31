@@ -95,6 +95,8 @@ When expanding YAML, ComposeSharp uses the process environment first and then th
 
 `ComposeFileLoader.LoadMerged` accepts several files and applies an incremental, field-level merge: later scalars replace earlier values, mappings merge recursively, and lists append with focused replacement rules for service resources, `command`, and `entrypoint`. It is not Docker Compose's complete merge algorithm; see [the merge semantics](docs/merge-semantics.md) for the exact supported rules and unsupported YAML tags.
 
+`ComposeProjectContext.Profiles` selects services consistently for project loading and operations that load the Compose file. Services without `profiles` are always selected; a profiled service is selected when any of its profiles is active. An operation that explicitly names a service can select it even when its profile is not active.
+
 ## What the engine does today
 
 | Area | Current behavior |
