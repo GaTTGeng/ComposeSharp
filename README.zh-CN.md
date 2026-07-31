@@ -91,6 +91,7 @@ builder.Services.AddComposeSharp();
 - `GenerateAsync` 返回读取到的项目摘要，并不会生成新的 Compose 文件。
 - `PublishAsync` 只为服务镜像打 tag，不会把镜像推送到 registry。
 - `LoadMerged` 按字段逐步合并后置文件：标量由后置值覆盖，映射递归合并，列表追加；服务资源、`command` 和 `entrypoint` 有明确的替换规则。它仍不是 Docker Compose 的完整合并算法；精确规则和不支持的 YAML 标签见[合并语义](docs/merge-semantics.md)。
+- `ComposeProjectContext.Profiles` 会在加载项目以及加载 Compose 文件的操作中统一选择服务：未配置 `profiles` 的服务始终会被选择；配置了 profile 的服务会在任一 profile 被激活时被选择。显式指定服务的操作即使未激活该服务的 profile，也可以选择它。
 - `depends_on` 已被读取并能体现在依赖图中，但尚未实现完整的启动排序和健康就绪调度。
 
 默认端点在 Windows 是 `npipe://./pipe/docker_engine`，Unix 是 `unix:///var/run/docker.sock`；也可以通过 `SocketPath` 显式指定。
