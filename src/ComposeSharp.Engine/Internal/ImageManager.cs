@@ -19,13 +19,9 @@ internal sealed class ImageManager
             ct);
     }
 
-    public async Task PullImagesAsync(DockerClient client, ComposeProject project, DockerRegistryAuth? auth, IReadOnlyList<string>? services, CancellationToken ct)
+    public async Task PullImagesAsync(DockerClient client, IReadOnlyList<ServiceDefinition> services, DockerRegistryAuth? auth, CancellationToken ct)
     {
-        var targetServices = services is { Count: > 0 }
-            ? project.Services.Where(s => services.Contains(s.Name)).ToList()
-            : project.Services;
-
-        foreach (var service in targetServices)
+        foreach (var service in services)
         {
             if (service.Image is not null)
                 await PullImageAsync(client, auth, service.Image, ct);

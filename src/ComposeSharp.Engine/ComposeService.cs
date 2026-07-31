@@ -160,7 +160,7 @@ public sealed class ComposeService : IComposeService
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var targetServices = ProfileServiceSelector.Select(project, context.Profiles, options?.Services);
-        await _images.PullImagesAsync(client, project, context.RegistryAuth, targetServices.Select(service => service.Name).ToList(), cancellationToken);
+        await _images.PullImagesAsync(client, targetServices, context.RegistryAuth, cancellationToken);
     }
 
     public async Task PushAsync(ComposeProjectContext context, ComposePushOptions? options = null, CancellationToken cancellationToken = default)

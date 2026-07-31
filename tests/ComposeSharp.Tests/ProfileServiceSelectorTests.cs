@@ -8,6 +8,12 @@ namespace ComposeSharp.Tests;
 public sealed class ProfileServiceSelectorTests
 {
     [Fact]
+    public async Task PullImagesAsync_EmptyServiceSelectionDoesNotAttemptPull()
+    {
+        await new ImageManager().PullImagesAsync(null!, [], auth: null, CancellationToken.None);
+    }
+
+    [Fact]
     public void LoadProject_AppliesProfilesFromContext()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"compose-profiles-{Guid.NewGuid():N}");
