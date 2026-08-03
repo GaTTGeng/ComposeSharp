@@ -27,12 +27,12 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `ports` | `Ports` | Partial | Short `HOST:CONTAINER` string syntax is parsed and creates port bindings. Container-only entries expose the port but do not create a host binding. Long syntax, host IP, ranges, and other per-port options are not modeled. |
 | `volumes` | `Volumes` | Partial | Short POSIX bind and named-volume strings are resolved and passed as binds. Long syntax, Windows drive-letter binds, and top-level volume driver/options are not applied. |
 | `restart` | `Restart`, `RestartMaxRetries` | Partial | Docker restart policy name is applied. An `on-failure` retry count is parsed but not sent. |
-| `healthcheck` | `Healthcheck` | Partial | Disable flag, list-form tests, interval, timeout, retries, and start period are sent in the create-container request. A scalar `test` command is not converted to `CMD-SHELL`. |
+| `healthcheck` | `Healthcheck` | Partial | Disable flag, list-form tests, supported interval/timeout/start-period values, and retries are sent in the create-container request. Durations accept .NET `TimeSpan` syntax or a single whole-number `ms`, `s`, `m`, or `h` unit; fractional and multi-component Compose durations are not accepted. A scalar `test` command is not converted to `CMD-SHELL`. |
 | `depends_on` | `DependsOn` | Partial / [planned](https://github.com/GaTTGeng/ComposeSharp/issues/19) | The engine makes a best-effort ordering pass. It does not detect cycles or wait for dependency conditions or health readiness. |
 | `networks` | `Networks` | Partial | The first declared service network becomes the container network mode. Per-network configuration and multi-network attachment are not applied. |
 | `extra_hosts` | `ExtraHosts` | Partial | Short list entries are passed to Docker as host entries. Mapping syntax loses the host address during loading and is not supported. |
 | `privileged` | `Privileged` | Applied | Passed in the host configuration. |
-| `network_mode`, `ipc`, `shm_size` | `NetworkMode`, `Ipc`, `ShmSize` | Partial | Direct Docker modes and `shm_size` are passed in the host configuration. `network_mode: service:<name>` and `ipc: service:<name>` are not resolved to a service container. `network_mode` takes precedence over the generated project network. |
+| `network_mode`, `ipc`, `shm_size` | `NetworkMode`, `Ipc`, `ShmSize` | Partial | Direct Docker modes and integer/K/M/G `shm_size` values are passed in the host configuration. Decimal byte values are not accepted. `network_mode: service:<name>` and `ipc: service:<name>` are not resolved to a service container. `network_mode` takes precedence over the generated project network. |
 | `profiles` | `Profiles` | Applied | Service selection uses `ComposeProjectContext.Profiles`; unprofiled services remain selected, and explicitly requested services are selectable. |
 | `deploy` | `Deploy` | Partial | Only `deploy.replicas` affects `UpAsync`; resource memory and literal `nano_cpus` values, placement, restart policy, update/rollback settings, labels, and mode are parsed only. Standard `deploy.resources.*.cpus` values are not retained, and scalar `endpoint_mode` is not retained. |
 | `secrets`, `configs` | `Secrets`, `Configs` | Unsupported | Short string entries are parsed and surfaced, but no secret or config is provisioned or mounted. Long syntax is not retained correctly. |
@@ -55,7 +55,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `cpu_shares`, `cpuset` | `CpuShares`, `Cpuset` | Applied | Converted to Docker CPU shares and CPU set host settings. |
 | `cpu_quota` | `CpuQuota` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `mem_limit`, `memswap_limit`, `mem_reservation` | `Memory`, `MemorySwap`, `MemoryReservation` | Partial | Integer byte values, K/M/G units, and `memswap_limit: -1` are converted and passed in the host configuration. Decimal and other Compose byte formats are not accepted. |
-| `oom_kill_disable`, `oom_score_adj` | `OomKillDisable`, `OomScoreAdj` | Parsed only | Exposed by the loader but not passed to Docker. |
+| `oom_kill_disable`, `oom_score_adj` | `OomKillDisable`, `OomScoreAdj` | Parsed only | Values are not passed to Docker. `oom_score_adj` is retained, while `oom_kill_disable` is retained only when `true`; an explicit `false` is indistinguishable from omission. |
 | `group_add` | `GroupAdd` | Applied | Passed as supplemental groups in the host configuration. |
 | `annotations` | `Annotations` | Parsed only | Exposed by the loader but not sent to Docker. |
 
