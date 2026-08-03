@@ -24,7 +24,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `container_name` | `ContainerName` | Applied | Used for a single replica; scaled services retain project-generated names. |
 | `command`, `entrypoint` | `Command`, `Entrypoint` | Partial | List syntax is passed to Docker's create-container request. Scalar values are passed as one argument rather than split into a command and arguments. |
 | `environment`, `env_file` | `Environment`, `EnvFile` | Partial | Inline environment and values read from `env_file` are passed to the container. The original `env_file` path is retained for inspection; advanced Compose environment semantics are not implemented. |
-| `ports` | `Ports` | Partial | Short string syntax is parsed and port bindings are created. Long syntax, host IP, ranges, and other per-port options are not modeled. |
+| `ports` | `Ports` | Partial | Short `HOST:CONTAINER` string syntax is parsed and creates port bindings. Container-only entries expose the port but do not create a host binding. Long syntax, host IP, ranges, and other per-port options are not modeled. |
 | `volumes` | `Volumes` | Partial | Short POSIX bind and named-volume strings are resolved and passed as binds. Long syntax, Windows drive-letter binds, and top-level volume driver/options are not applied. |
 | `restart` | `Restart`, `RestartMaxRetries` | Partial | Docker restart policy name is applied. An `on-failure` retry count is parsed but not sent. |
 | `healthcheck` | `Healthcheck` | Partial | Disable flag, list-form tests, interval, timeout, retries, and start period are sent in the create-container request. A scalar `test` command is not converted to `CMD-SHELL`. |
@@ -34,7 +34,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `privileged` | `Privileged` | Applied | Passed in the host configuration. |
 | `network_mode`, `ipc`, `shm_size` | `NetworkMode`, `Ipc`, `ShmSize` | Partial | Direct Docker modes and `shm_size` are passed in the host configuration. `network_mode: service:<name>` and `ipc: service:<name>` are not resolved to a service container. `network_mode` takes precedence over the generated project network. |
 | `profiles` | `Profiles` | Applied | Service selection uses `ComposeProjectContext.Profiles`; unprofiled services remain selected, and explicitly requested services are selectable. |
-| `deploy` | `Deploy` | Partial | Only `deploy.replicas` affects `UpAsync`; resources, placement, restart policy, update/rollback settings, labels, and mode are parsed only. The standard scalar `endpoint_mode` value is not retained. |
+| `deploy` | `Deploy` | Partial | Only `deploy.replicas` affects `UpAsync`; resource memory and literal `nano_cpus` values, placement, restart policy, update/rollback settings, labels, and mode are parsed only. Standard `deploy.resources.*.cpus` values are not retained, and scalar `endpoint_mode` is not retained. |
 | `secrets`, `configs` | `Secrets`, `Configs` | Unsupported | Short string entries are parsed and surfaced, but no secret or config is provisioned or mounted. Long syntax is not retained correctly. |
 | `labels` | `Labels` | Applied | Merged into the labels applied to service containers. |
 | `logging` | `Logging` | Parsed only | Driver and options are exposed but not sent to Docker. |
