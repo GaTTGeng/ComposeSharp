@@ -22,20 +22,20 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `image` | `Image` | Applied | Used to create and pull container images. |
 | `build` | `Build` | Parsed only / [planned](https://github.com/GaTTGeng/ComposeSharp/issues/14) | Build settings are parsed, but `BuildAsync` currently combines `Arguments` with `ArgumentList`; a non-null build context causes process startup to fail before Docker receives the settings. |
 | `container_name` | `ContainerName` | Applied | Used for a single replica; scaled services retain project-generated names. |
-| `command`, `entrypoint` | `Command`, `Entrypoint` | Applied | Passed to Docker's create-container request. |
+| `command`, `entrypoint` | `Command`, `Entrypoint` | Partial | List syntax is passed to Docker's create-container request. Scalar values are passed as one argument rather than split into a command and arguments. |
 | `environment`, `env_file` | `Environment`, `EnvFile` | Partial | Inline environment and values read from `env_file` are passed to the container. The original `env_file` path is retained for inspection; advanced Compose environment semantics are not implemented. |
 | `ports` | `Ports` | Partial | Short string syntax is parsed and port bindings are created. Long syntax, host IP, ranges, and other per-port options are not modeled. |
-| `volumes` | `Volumes` | Partial | Short bind and named-volume strings are resolved and passed as binds. Long syntax and top-level volume driver/options are not applied. |
+| `volumes` | `Volumes` | Partial | Short POSIX bind and named-volume strings are resolved and passed as binds. Long syntax, Windows drive-letter binds, and top-level volume driver/options are not applied. |
 | `restart` | `Restart`, `RestartMaxRetries` | Partial | Docker restart policy name is applied. An `on-failure` retry count is parsed but not sent. |
 | `healthcheck` | `Healthcheck` | Partial | Disable flag, list-form tests, interval, timeout, retries, and start period are sent in the create-container request. A scalar `test` command is not converted to `CMD-SHELL`. |
 | `depends_on` | `DependsOn` | Partial / [planned](https://github.com/GaTTGeng/ComposeSharp/issues/19) | The engine makes a best-effort ordering pass. It does not detect cycles or wait for dependency conditions or health readiness. |
 | `networks` | `Networks` | Partial | The first declared service network becomes the container network mode. Per-network configuration and multi-network attachment are not applied. |
 | `extra_hosts` | `ExtraHosts` | Partial | Short list entries are passed to Docker as host entries. Mapping syntax loses the host address during loading and is not supported. |
 | `privileged` | `Privileged` | Applied | Passed in the host configuration. |
-| `network_mode`, `ipc`, `shm_size` | `NetworkMode`, `Ipc`, `ShmSize` | Applied | Passed in the host configuration. `network_mode` takes precedence over the generated project network. |
+| `network_mode`, `ipc`, `shm_size` | `NetworkMode`, `Ipc`, `ShmSize` | Partial | Direct Docker modes and `shm_size` are passed in the host configuration. `network_mode: service:<name>` and `ipc: service:<name>` are not resolved to a service container. `network_mode` takes precedence over the generated project network. |
 | `profiles` | `Profiles` | Applied | Service selection uses `ComposeProjectContext.Profiles`; unprofiled services remain selected, and explicitly requested services are selectable. |
 | `deploy` | `Deploy` | Partial | Only `deploy.replicas` affects `UpAsync`; resources, placement, restart policy, update/rollback settings, labels, mode, and endpoint mode are parsed only. |
-| `secrets`, `configs` | `Secrets`, `Configs` | Unsupported | Names are parsed and surfaced, but no secret or config is provisioned or mounted. |
+| `secrets`, `configs` | `Secrets`, `Configs` | Unsupported | Short string entries are parsed and surfaced, but no secret or config is provisioned or mounted. Long syntax is not retained correctly. |
 | `labels` | `Labels` | Applied | Merged into the labels applied to service containers. |
 | `logging` | `Logging` | Parsed only | Driver and options are exposed but not sent to Docker. |
 | `hostname`, `domainname`, `user`, `working_dir` | `Hostname`, `Domainname`, `User`, `WorkingDir` | Applied | Passed to Docker's create-container request. |
@@ -54,7 +54,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `links` | `Links` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `cpu_shares`, `cpuset` | `CpuShares`, `Cpuset` | Applied | Converted to Docker CPU shares and CPU set host settings. |
 | `cpu_quota` | `CpuQuota` | Parsed only | Exposed by the loader but not passed to Docker. |
-| `mem_limit`, `memswap_limit`, `mem_reservation` | `Memory`, `MemorySwap`, `MemoryReservation` | Applied | Converted to bytes and passed in the host configuration. |
+| `mem_limit`, `memswap_limit`, `mem_reservation` | `Memory`, `MemorySwap`, `MemoryReservation` | Partial | Positive byte values are converted and passed in the host configuration. The unlimited `memswap_limit: -1` value is not supported. |
 | `oom_kill_disable`, `oom_score_adj` | `OomKillDisable`, `OomScoreAdj` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `group_add` | `GroupAdd` | Applied | Passed as supplemental groups in the host configuration. |
 | `annotations` | `Annotations` | Parsed only | Exposed by the loader but not sent to Docker. |
