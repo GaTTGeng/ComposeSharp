@@ -3,11 +3,16 @@
 [Oo]bj/
 artifacts/
 TestResults/
+*.nupkg
+*.snupkg
 
 # IDE and user-specific files
 .vs/
 .idea/
+_ReSharper*/
+*.DotSettings.user
 *.user
+*.csproj.user
 *.suo
 *.userosscache
 *.sln.docstates
@@ -17,10 +22,19 @@ coverage/
 coverage.*
 *.coverage
 *.coveragexml
+*.trx
+BenchmarkDotNet.Artifacts/
 
 # Local environment and secrets
+AGENTS.md
 .env
 .env.*
 !.env.example
+.envrc
 secrets.json
 appsettings.Development.json
+
+# Local diagnostics and temporary files
+*.log
+*.tmp
+*.bak
