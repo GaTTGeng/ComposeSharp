@@ -18,7 +18,7 @@ This is a usable baseline, not a compatibility certification.
 - A documented and test-backed multi-file merge policy, with incremental movement toward Compose Specification semantics where practical.
 - Profile selection applied consistently from `ComposeProjectContext`.
 - Validation messages that name the relevant source file, service, and property.
-- Documentation that distinguishes parsed fields from fields actually applied to Docker Engine.
+- Documentation that distinguishes parsed fields from fields actually applied to Docker Engine; see the [Compose field support matrix](compose-field-matrix.md).
 
 ### Not a goal
 

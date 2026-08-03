@@ -1,0 +1,78 @@
+# Compose field support matrix
+
+ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loader deliberately retains more Compose-shaped data than the engine currently sends to Docker. This matrix records that distinction for the fields exposed by `ServiceDefinition` and `ComposeProject`.
+
+## Status definitions
+
+| Status | Meaning |
+| --- | --- |
+| Applied | The loader reads the field and the engine uses it when it creates or operates on resources. |
+| Partial | The loader reads the field and the engine uses a documented subset of its value or semantics. |
+| Parsed only | The loader exposes the field, but the engine does not currently apply it. |
+| Unsupported | The field is exposed for inspection but has no operational behavior. |
+| Planned | A related operational change has a tracked issue. It does not imply current support. |
+
+"Applied" describes the SDK's implementation, not full Docker Compose Specification parity. Explicit operation options can override an applied service value where the API allows it.
+
+## Service fields
+
+| Compose field(s) | Model member(s) | Status | Current behavior |
+| --- | --- | --- | --- |
+| Service key | `Name` | Applied | Identifies the service in resource names and project labels. |
+| `image` | `Image` | Applied | Used to create and pull container images. |
+| `build` | `Build` | Partial / [planned](https://github.com/GaTTGeng/ComposeSharp/issues/14) | `BuildAsync` currently passes `context`, `dockerfile`, `target`, and `no_cache` to `docker build`; other build settings are only parsed. |
+| `container_name` | `ContainerName` | Applied | Used for a single replica; scaled services retain project-generated names. |
+| `command`, `entrypoint` | `Command`, `Entrypoint` | Applied | Passed to Docker's create-container request. |
+| `environment`, `env_file` | `Environment`, `EnvFile` | Partial | Inline environment and values read from `env_file` are passed to the container. The original `env_file` path is retained for inspection; advanced Compose environment semantics are not implemented. |
+| `ports` | `Ports` | Partial | Short string syntax is parsed and port bindings are created. Long syntax, host IP, ranges, and other per-port options are not modeled. |
+| `volumes` | `Volumes` | Partial | Short bind and named-volume strings are resolved and passed as binds. Long syntax and top-level volume driver/options are not applied. |
+| `restart` | `Restart`, `RestartMaxRetries` | Partial | Docker restart policy name is applied. An `on-failure` retry count is parsed but not sent. |
+| `healthcheck` | `Healthcheck` | Applied | Test, disable flag, interval, timeout, retries, and start period are sent in the create-container request. |
+| `depends_on` | `DependsOn` | Partial / [planned](https://github.com/GaTTGeng/ComposeSharp/issues/19) | The engine makes a best-effort ordering pass. It does not detect cycles or wait for dependency conditions or health readiness. |
+| `networks` | `Networks` | Partial | The first declared service network becomes the container network mode. Per-network configuration and multi-network attachment are not applied. |
+| `extra_hosts` | `ExtraHosts` | Applied | Passed to Docker as host entries. |
+| `privileged` | `Privileged` | Applied | Passed in the host configuration. |
+| `network_mode`, `ipc`, `shm_size` | `NetworkMode`, `Ipc`, `ShmSize` | Applied | Passed in the host configuration. `network_mode` takes precedence over the generated project network. |
+| `profiles` | `Profiles` | Applied | Service selection uses `ComposeProjectContext.Profiles`; unprofiled services remain selected, and explicitly requested services are selectable. |
+| `deploy` | `Deploy` | Partial | Only `deploy.replicas` affects `UpAsync`; resources, placement, restart policy, update/rollback settings, labels, mode, and endpoint mode are parsed only. |
+| `secrets`, `configs` | `Secrets`, `Configs` | Unsupported | Names are parsed and surfaced, but no secret or config is provisioned or mounted. |
+| `labels` | `Labels` | Applied | Merged into the labels applied to service containers. |
+| `logging` | `Logging` | Parsed only | Driver and options are exposed but not sent to Docker. |
+| `hostname`, `domainname`, `user`, `working_dir` | `Hostname`, `Domainname`, `User`, `WorkingDir` | Applied | Passed to Docker's create-container request. |
+| `tty`, `stdin_open` | `Tty`, `StdinOpen` | Applied | Passed to Docker's create-container request. |
+| `stop_signal`, `stop_grace_period` | `StopSignal`, `StopGracePeriod` | Parsed only | Exposed by the loader; the container create and stop paths do not apply them. |
+| `read_only`, `tmpfs` | `ReadOnly`, `Tmpfs` | Applied | Passed in the host configuration. |
+| `cap_add`, `cap_drop`, `devices`, `security_opt` | `CapAdd`, `CapDrop`, `Devices`, `SecurityOpt` | Applied | Passed in the host configuration. Device mappings use the short string form. |
+| `sysctls` | `Sysctls` | Parsed only | Exposed by the loader but not passed to Docker. |
+| `init` | `Init` | Applied | Enables Docker init when the value is `true`. |
+| `platform`, `pull_policy` | `Platform`, `PullPolicy` | Parsed only | Exposed by the loader; platform is not passed to create or build, and pull behavior is controlled by operation options. |
+| `dns`, `dns_search` | `Dns`, `DnsSearch` | Parsed only | Exposed by the loader but not passed to Docker. |
+| `pid`, `mac_address`, `cgroup_parent` | `Pid`, `MacAddress`, `CgroupParent` | Applied | Passed to Docker's create-container or host configuration. |
+| `extends` | `ExtendsService`, `ExtendsFile` | Unsupported | The loader records the reference but does not resolve or merge it. |
+| `develop` | `Develop` | Parsed only | Exposed by the loader. `WatchAsync` observes build contexts only and does not interpret this field. |
+| `links` | `Links` | Parsed only | Exposed by the loader but not passed to Docker. |
+| `cpu_shares`, `cpuset` | `CpuShares`, `Cpuset` | Applied | Converted to Docker CPU shares and CPU set host settings. |
+| `cpu_quota` | `CpuQuota` | Parsed only | Exposed by the loader but not passed to Docker. |
+| `mem_limit`, `memswap_limit`, `mem_reservation` | `Memory`, `MemorySwap`, `MemoryReservation` | Applied | Converted to bytes and passed in the host configuration. |
+| `oom_kill_disable`, `oom_score_adj` | `OomKillDisable`, `OomScoreAdj` | Parsed only | Exposed by the loader but not passed to Docker. |
+| `group_add` | `GroupAdd` | Applied | Passed as supplemental groups in the host configuration. |
+| `annotations` | `Annotations` | Parsed only | Exposed by the loader but not sent to Docker. |
+
+## Top-level project fields
+
+| Compose field(s) | Model member(s) | Status | Current behavior |
+| --- | --- | --- | --- |
+| Compose file directory | `WorkingDirectory` | Applied | Resolves Compose-relative paths and bind mounts. |
+| `services` | `Services` | Applied | Provides service definitions used by project operations. |
+| `volumes` | `Volumes` | Partial | Project-scoped volumes are created with a generated name and project label. Driver, labels, and options are not represented. |
+| `networks` | `Networks` | Partial | Project-scoped bridge networks are created with generated names and project labels. Driver, IPAM, labels, external networks, and options are not represented. |
+| `secrets`, `configs` | `Secrets`, `Configs` | Unsupported | Names are loaded and reported by `LoadProject`, but are not provisioned or mounted. |
+| `x-*` extensions | `Extensions` | Parsed only | String-valued extensions are retained for inspection and have no engine behavior. |
+
+## Related work
+
+- [Issue #14](https://github.com/GaTTGeng/ComposeSharp/issues/14) will replace the process-backed build path with Docker Engine APIs.
+- [Issue #19](https://github.com/GaTTGeng/ComposeSharp/issues/19) will make dependency ordering and readiness deliberate and testable.
+- [Issue #23](https://github.com/GaTTGeng/ComposeSharp/issues/23) tracks a broader matrix of tested Compose constructs and environments.
+
+For the loader's multi-file merge rules, see [merge semantics](merge-semantics.md). For planned work and non-goals, see the [roadmap](roadmap.md).
