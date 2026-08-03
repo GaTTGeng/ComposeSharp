@@ -20,7 +20,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | --- | --- | --- | --- |
 | Service key | `Name` | Applied | Identifies the service in resource names and project labels. |
 | `image` | `Image` | Applied | Used to create and pull container images. |
-| `build` | `Build` | Partial / [planned](https://github.com/GaTTGeng/ComposeSharp/issues/14) | `BuildAsync` currently passes `context`, `dockerfile`, `target`, and `no_cache` to `docker build`; other build settings are only parsed. |
+| `build` | `Build` | Parsed only / [planned](https://github.com/GaTTGeng/ComposeSharp/issues/14) | Build settings are parsed, but `BuildAsync` currently combines `Arguments` with `ArgumentList`; a non-null build context causes process startup to fail before Docker receives the settings. |
 | `container_name` | `ContainerName` | Applied | Used for a single replica; scaled services retain project-generated names. |
 | `command`, `entrypoint` | `Command`, `Entrypoint` | Applied | Passed to Docker's create-container request. |
 | `environment`, `env_file` | `Environment`, `EnvFile` | Partial | Inline environment and values read from `env_file` are passed to the container. The original `env_file` path is retained for inspection; advanced Compose environment semantics are not implemented. |
@@ -42,7 +42,8 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `tty`, `stdin_open` | `Tty`, `StdinOpen` | Applied | Passed to Docker's create-container request. |
 | `stop_signal`, `stop_grace_period` | `StopSignal`, `StopGracePeriod` | Parsed only | Exposed by the loader; the container create and stop paths do not apply them. |
 | `read_only`, `tmpfs` | `ReadOnly`, `Tmpfs` | Applied | Passed in the host configuration. |
-| `cap_add`, `cap_drop`, `devices`, `security_opt` | `CapAdd`, `CapDrop`, `Devices`, `SecurityOpt` | Applied | Passed in the host configuration. Device mappings use the short string form. |
+| `cap_add`, `cap_drop`, `security_opt` | `CapAdd`, `CapDrop`, `SecurityOpt` | Applied | Passed in the host configuration. |
+| `devices` | `Devices` | Partial | Two-segment short mappings are passed in the host configuration. Permission-bearing mappings such as `/dev/sda:/dev/xvdc:rwm` are parsed incorrectly and are not supported. |
 | `sysctls` | `Sysctls` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `init` | `Init` | Applied | Enables Docker init when the value is `true`. |
 | `platform`, `pull_policy` | `Platform`, `PullPolicy` | Parsed only | Exposed by the loader; platform is not passed to create or build, and pull behavior is controlled by operation options. |
