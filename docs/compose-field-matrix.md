@@ -34,7 +34,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `privileged` | `Privileged` | Applied | Passed in the host configuration. |
 | `network_mode`, `ipc`, `shm_size` | `NetworkMode`, `Ipc`, `ShmSize` | Partial | Direct Docker modes and `shm_size` are passed in the host configuration. `network_mode: service:<name>` and `ipc: service:<name>` are not resolved to a service container. `network_mode` takes precedence over the generated project network. |
 | `profiles` | `Profiles` | Applied | Service selection uses `ComposeProjectContext.Profiles`; unprofiled services remain selected, and explicitly requested services are selectable. |
-| `deploy` | `Deploy` | Partial | Only `deploy.replicas` affects `UpAsync`; resources, placement, restart policy, update/rollback settings, labels, mode, and endpoint mode are parsed only. |
+| `deploy` | `Deploy` | Partial | Only `deploy.replicas` affects `UpAsync`; resources, placement, restart policy, update/rollback settings, labels, and mode are parsed only. The standard scalar `endpoint_mode` value is not retained. |
 | `secrets`, `configs` | `Secrets`, `Configs` | Unsupported | Short string entries are parsed and surfaced, but no secret or config is provisioned or mounted. Long syntax is not retained correctly. |
 | `labels` | `Labels` | Applied | Merged into the labels applied to service containers. |
 | `logging` | `Logging` | Parsed only | Driver and options are exposed but not sent to Docker. |
@@ -48,13 +48,13 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `init` | `Init` | Applied | Enables Docker init when the value is `true`. |
 | `platform`, `pull_policy` | `Platform`, `PullPolicy` | Parsed only | Exposed by the loader; platform is not passed to create or build, and pull behavior is controlled by operation options. |
 | `dns`, `dns_search` | `Dns`, `DnsSearch` | Parsed only | Exposed by the loader but not passed to Docker. |
-| `pid`, `mac_address`, `cgroup_parent` | `Pid`, `MacAddress`, `CgroupParent` | Applied | Passed to Docker's create-container or host configuration. |
+| `pid`, `mac_address`, `cgroup_parent` | `Pid`, `MacAddress`, `CgroupParent` | Partial | Direct Docker PID modes, MAC address, and cgroup parent are passed to Docker. `pid: service:<name>` is not resolved to a service container. |
 | `extends` | `ExtendsService`, `ExtendsFile` | Unsupported | The loader records the reference but does not resolve or merge it. |
 | `develop` | `Develop` | Unsupported | Mapping-shaped values are not retained as watch configuration. `WatchAsync` observes build contexts only and does not interpret this field. |
 | `links` | `Links` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `cpu_shares`, `cpuset` | `CpuShares`, `Cpuset` | Applied | Converted to Docker CPU shares and CPU set host settings. |
 | `cpu_quota` | `CpuQuota` | Parsed only | Exposed by the loader but not passed to Docker. |
-| `mem_limit`, `memswap_limit`, `mem_reservation` | `Memory`, `MemorySwap`, `MemoryReservation` | Partial | Positive byte values are converted and passed in the host configuration. The unlimited `memswap_limit: -1` value is not supported. |
+| `mem_limit`, `memswap_limit`, `mem_reservation` | `Memory`, `MemorySwap`, `MemoryReservation` | Partial | Integer byte values, K/M/G units, and `memswap_limit: -1` are converted and passed in the host configuration. Decimal and other Compose byte formats are not accepted. |
 | `oom_kill_disable`, `oom_score_adj` | `OomKillDisable`, `OomScoreAdj` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `group_add` | `GroupAdd` | Applied | Passed as supplemental groups in the host configuration. |
 | `annotations` | `Annotations` | Parsed only | Exposed by the loader but not sent to Docker. |
