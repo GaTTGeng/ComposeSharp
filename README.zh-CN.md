@@ -92,6 +92,7 @@ builder.Services.AddComposeSharp();
 - `PublishAsync` 只为服务镜像打 tag，不会把镜像推送到 registry。
 - `LoadMerged` 按字段逐步合并后置文件：标量由后置值覆盖，映射递归合并，列表追加；服务资源、`command` 和 `entrypoint` 有明确的替换规则。它仍不是 Docker Compose 的完整合并算法；精确规则和不支持的 YAML 标签见[合并语义](docs/merge-semantics.md)。
 - `ComposeProjectContext.Profiles` 会在加载项目以及加载 Compose 文件的操作中统一选择服务：未配置 `profiles` 的服务始终会被选择；配置了 profile 的服务会在任一 profile 被激活时被选择。显式指定服务的操作即使未激活该服务的 profile，也可以选择它。
+- 加载器可以保留引擎尚未应用的字段。在运行时依赖某个 Compose 属性之前，请查阅 [Compose 字段支持矩阵](docs/compose-field-matrix.md)。
 - `depends_on` 已被读取并能体现在依赖图中，但尚未实现完整的启动排序和健康就绪调度。
 
 默认端点在 Windows 是 `npipe://./pipe/docker_engine`，Unix 是 `unix:///var/run/docker.sock`；也可以通过 `SocketPath` 显式指定。
@@ -113,7 +114,7 @@ builder.Services.AddComposeSharp();
 2. **2.2：Docker Engine 覆盖度** — 替换进程式 build/copy/export/commit，实现真实 top、Docker 事件流，以及有意义的 generate/publish 行为。
 3. **3.0：可靠编排** — 依赖与健康就绪、保守的 reconcile 策略、诊断信息，以及 Windows/Linux Docker 集成测试。
 
-每个阶段的验收标准与明确不做的事项见 [docs/roadmap.md](docs/roadmap.md)；实现任务见 [GitHub Milestones](https://github.com/GaTTGeng/ComposeSharp/milestones)。欢迎用最小 Compose 文件提交 [兼容性问题](https://github.com/GaTTGeng/ComposeSharp/issues/new?template=compose_compatibility_gap.yml)。
+每个阶段的验收标准与明确不做的事项见 [docs/roadmap.md](docs/roadmap.md)；[Compose 字段支持矩阵](docs/compose-field-matrix.md)记录了解析与实际应用的行为；实现任务见 [GitHub Milestones](https://github.com/GaTTGeng/ComposeSharp/milestones)。欢迎用最小 Compose 文件提交 [兼容性问题](https://github.com/GaTTGeng/ComposeSharp/issues/new?template=compose_compatibility_gap.yml)。
 
 ## 构建与参与
 

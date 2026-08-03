@@ -97,6 +97,8 @@ When expanding YAML, ComposeSharp uses the process environment first and then th
 
 `ComposeProjectContext.Profiles` selects services consistently for project loading and operations that load the Compose file. Services without `profiles` are always selected; a profiled service is selected when any of its profiles is active. An operation that explicitly names a service can select it even when its profile is not active.
 
+The loader can retain fields that the engine does not yet apply. Consult the [Compose field support matrix](docs/compose-field-matrix.md) before relying on a Compose property at runtime.
+
 ## What the engine does today
 
 | Area | Current behavior |
@@ -139,7 +141,7 @@ The roadmap is organized around implementation honesty rather than pretending ev
 2. **2.2 — Docker Engine coverage.** Replace process-backed build/copy/export/commit paths, implement real `top`, Docker event streaming, and meaningful project generation/publishing behavior.
 3. **3.0 — dependable orchestration.** Dependency ordering and readiness, safer reconciliation, richer diagnostics, and integration coverage across Linux and Windows Docker environments.
 
-Details, acceptance criteria, and non-goals live in [docs/roadmap.md](docs/roadmap.md). Work is tracked in [GitHub milestones](https://github.com/GaTTGeng/ComposeSharp/milestones).
+Details, acceptance criteria, and non-goals live in [docs/roadmap.md](docs/roadmap.md). The [Compose field support matrix](docs/compose-field-matrix.md) records parsed versus applied behavior. Work is tracked in [GitHub milestones](https://github.com/GaTTGeng/ComposeSharp/milestones).
 
 ## Build the repository
 
