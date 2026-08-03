@@ -23,7 +23,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `build` | `Build` | Parsed only / [planned](https://github.com/GaTTGeng/ComposeSharp/issues/14) | Build settings are parsed, but `BuildAsync` currently combines `Arguments` with `ArgumentList`; a non-null build context causes process startup to fail before Docker receives the settings. |
 | `container_name` | `ContainerName` | Applied | Used for a single replica; scaled services retain project-generated names. |
 | `command`, `entrypoint` | `Command`, `Entrypoint` | Partial | List syntax is passed to Docker's create-container request. Scalar values are passed as one argument rather than split into a command and arguments. |
-| `environment`, `env_file` | `Environment`, `EnvFile` | Partial | Inline environment and values read from `env_file` are passed to the container. The original `env_file` path is retained for inspection; advanced Compose environment semantics are not implemented. |
+| `environment`, `env_file` | `Environment`, `EnvFile` | Partial | Inline environment and values read from scalar or list-of-string `env_file` entries are passed to the container, and their original paths are retained for inspection. Long `env_file` syntax and advanced Compose environment semantics are not implemented. |
 | `ports` | `Ports` | Partial | Short `HOST:CONTAINER` string syntax is parsed and creates port bindings. Container-only entries expose the port but do not create a host binding. Long syntax, host IP, ranges, and other per-port options are not modeled. |
 | `volumes` | `Volumes` | Partial | Short POSIX bind and named-volume strings are resolved and passed as binds. Long syntax, Windows drive-letter binds, and top-level volume driver/options are not applied. |
 | `restart` | `Restart`, `RestartMaxRetries` | Partial | Docker restart policy name is applied. An `on-failure` retry count is parsed but not sent. |
@@ -49,7 +49,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `platform`, `pull_policy` | `Platform`, `PullPolicy` | Parsed only | Exposed by the loader; platform is not passed to create or build, and pull behavior is controlled by operation options. |
 | `dns`, `dns_search` | `Dns`, `DnsSearch` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `pid`, `mac_address`, `cgroup_parent` | `Pid`, `MacAddress`, `CgroupParent` | Partial | Direct Docker PID modes, MAC address, and cgroup parent are passed to Docker. `pid: service:<name>` is not resolved to a service container. |
-| `extends` | `ExtendsService`, `ExtendsFile` | Unsupported | The loader records the reference but does not resolve or merge it. |
+| `extends` | `ExtendsService`, `ExtendsFile` | Unsupported | The loader records the reference but does not resolve or merge it. A service that declares only `extends`, without its own `image` or `build`, is rejected during loading. |
 | `develop` | `Develop` | Unsupported | Mapping-shaped values are not retained as watch configuration. `WatchAsync` observes build contexts only and does not interpret this field. |
 | `links` | `Links` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `cpu_shares`, `cpuset` | `CpuShares`, `Cpuset` | Applied | Converted to Docker CPU shares and CPU set host settings. |
@@ -65,7 +65,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | --- | --- | --- | --- |
 | Compose file directory | `WorkingDirectory` | Applied | Resolves Compose-relative paths and bind mounts. |
 | `services` | `Services` | Applied | Provides service definitions used by project operations. |
-| `volumes` | `Volumes` | Partial | Project-scoped volumes are created with a generated name and project label. Driver, labels, and options are not represented. |
+| `volumes` | `Volumes` | Partial | Project-scoped volumes are created with a generated name and project label. Driver, labels, options, and external volumes are not represented; external volume names are rewritten to project-scoped names. |
 | `networks` | `Networks` | Partial | Project-scoped bridge networks are created with generated names and project labels. Driver, IPAM, labels, external networks, and options are not represented. |
 | `secrets`, `configs` | `Secrets`, `Configs` | Unsupported | Names are loaded and reported by `LoadProject`, but are not provisioned or mounted. |
 | `x-*` extensions | `Extensions` | Parsed only | String-valued extensions are retained for inspection and have no engine behavior. |
