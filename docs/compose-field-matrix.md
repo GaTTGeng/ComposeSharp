@@ -27,10 +27,10 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `ports` | `Ports` | Partial | Short string syntax is parsed and port bindings are created. Long syntax, host IP, ranges, and other per-port options are not modeled. |
 | `volumes` | `Volumes` | Partial | Short bind and named-volume strings are resolved and passed as binds. Long syntax and top-level volume driver/options are not applied. |
 | `restart` | `Restart`, `RestartMaxRetries` | Partial | Docker restart policy name is applied. An `on-failure` retry count is parsed but not sent. |
-| `healthcheck` | `Healthcheck` | Applied | Test, disable flag, interval, timeout, retries, and start period are sent in the create-container request. |
+| `healthcheck` | `Healthcheck` | Partial | Disable flag, list-form tests, interval, timeout, retries, and start period are sent in the create-container request. A scalar `test` command is not converted to `CMD-SHELL`. |
 | `depends_on` | `DependsOn` | Partial / [planned](https://github.com/GaTTGeng/ComposeSharp/issues/19) | The engine makes a best-effort ordering pass. It does not detect cycles or wait for dependency conditions or health readiness. |
 | `networks` | `Networks` | Partial | The first declared service network becomes the container network mode. Per-network configuration and multi-network attachment are not applied. |
-| `extra_hosts` | `ExtraHosts` | Applied | Passed to Docker as host entries. |
+| `extra_hosts` | `ExtraHosts` | Partial | Short list entries are passed to Docker as host entries. Mapping syntax loses the host address during loading and is not supported. |
 | `privileged` | `Privileged` | Applied | Passed in the host configuration. |
 | `network_mode`, `ipc`, `shm_size` | `NetworkMode`, `Ipc`, `ShmSize` | Applied | Passed in the host configuration. `network_mode` takes precedence over the generated project network. |
 | `profiles` | `Profiles` | Applied | Service selection uses `ComposeProjectContext.Profiles`; unprofiled services remain selected, and explicitly requested services are selectable. |
@@ -50,7 +50,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `dns`, `dns_search` | `Dns`, `DnsSearch` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `pid`, `mac_address`, `cgroup_parent` | `Pid`, `MacAddress`, `CgroupParent` | Applied | Passed to Docker's create-container or host configuration. |
 | `extends` | `ExtendsService`, `ExtendsFile` | Unsupported | The loader records the reference but does not resolve or merge it. |
-| `develop` | `Develop` | Parsed only | Exposed by the loader. `WatchAsync` observes build contexts only and does not interpret this field. |
+| `develop` | `Develop` | Unsupported | Mapping-shaped values are not retained as watch configuration. `WatchAsync` observes build contexts only and does not interpret this field. |
 | `links` | `Links` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `cpu_shares`, `cpuset` | `CpuShares`, `Cpuset` | Applied | Converted to Docker CPU shares and CPU set host settings. |
 | `cpu_quota` | `CpuQuota` | Parsed only | Exposed by the loader but not passed to Docker. |
