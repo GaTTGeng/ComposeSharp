@@ -6,38 +6,49 @@ namespace ComposeSharp.Engine.Internal;
 
 internal static class DockerBuildContextArchive
 {
-    public static Stream Create(string directory, string? dockerfile = null)
+    private const string ExternalDockerfileArchivePath = "__external_dockerfile__";
+
+    public static Stream Create(string directory, string? dockerfile = null, CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(directory))
             throw new DirectoryNotFoundException($"Build context directory '{directory}' does not exist.");
 
-        var selectedDockerfile = NormalizeArchivePath(dockerfile ?? "Dockerfile");
-        var ignoreRules = DockerIgnoreRule.Read(directory, selectedDockerfile);
+        cancellationToken.ThrowIfCancellationRequested();
+        var dockerfileSourcePath = GetDockerfileSourcePath(directory, dockerfile);
+        var dockerfileArchivePath = GetDockerfileArchivePath(directory, dockerfile);
+        var isExternalDockerfile = string.Equals(dockerfileArchivePath, ExternalDockerfileArchivePath, StringComparison.Ordinal);
+        if (isExternalDockerfile && !File.Exists(dockerfileSourcePath))
+            throw new FileNotFoundException($"Dockerfile '{dockerfile}' does not exist.", dockerfileSourcePath);
+        var ignoreRules = DockerIgnoreRule.Read(directory, dockerfileSourcePath);
         var archive = CreateTemporaryArchive();
         try
         {
             using (var writer = new TarWriter(archive, leaveOpen: true))
             {
-                foreach (var path in EnumerateEntries(directory).OrderBy(path => path, StringComparer.Ordinal))
+                foreach (var path in EnumerateEntries(directory, cancellationToken).OrderBy(path => path, StringComparer.Ordinal))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var relativePath = ToArchivePath(directory, path);
                     var attributes = File.GetAttributes(path);
                     var isDirectory = attributes.HasFlag(FileAttributes.Directory);
-                    if (!string.Equals(relativePath, selectedDockerfile, StringComparison.Ordinal) &&
+                    if (!string.Equals(relativePath, dockerfileArchivePath, StringComparison.Ordinal) &&
                         DockerIgnoreRule.IsIgnored(relativePath, isDirectory, ignoreRules))
                         continue;
 
                     if (attributes.HasFlag(FileAttributes.ReparsePoint))
                     {
-                        WriteSymbolicLink(writer, path, relativePath, isDirectory);
+                        WriteSymbolicLink(writer, path, relativePath, isDirectory, cancellationToken);
                         continue;
                     }
 
                     if (isDirectory)
                         writer.WriteEntry(new PaxTarEntry(TarEntryType.Directory, relativePath));
                     else
-                        writer.WriteEntry(path, relativePath);
+                        WriteFile(writer, path, relativePath, cancellationToken);
                 }
+
+                if (isExternalDockerfile)
+                    WriteFile(writer, dockerfileSourcePath, dockerfileArchivePath, cancellationToken);
             }
 
             archive.Position = 0;
@@ -50,23 +61,44 @@ internal static class DockerBuildContextArchive
         }
     }
 
-    private static IEnumerable<string> EnumerateEntries(string directory)
+    public static string GetDockerfileArchivePath(string directory, string? dockerfile)
+    {
+        var dockerfileSourcePath = GetDockerfileSourcePath(directory, dockerfile);
+        return IsWithinDirectory(directory, dockerfileSourcePath)
+            ? ToArchivePath(directory, dockerfileSourcePath)
+            : ExternalDockerfileArchivePath;
+    }
+
+    private static IEnumerable<string> EnumerateEntries(string directory, CancellationToken cancellationToken)
     {
         foreach (var path in Directory.EnumerateFileSystemEntries(directory))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             yield return path;
 
             var attributes = File.GetAttributes(path);
             if (attributes.HasFlag(FileAttributes.Directory) && !attributes.HasFlag(FileAttributes.ReparsePoint))
             {
-                foreach (var descendant in EnumerateEntries(path))
+                foreach (var descendant in EnumerateEntries(path, cancellationToken))
                     yield return descendant;
             }
         }
     }
 
-    private static void WriteSymbolicLink(TarWriter writer, string path, string relativePath, bool isDirectory)
+    private static void WriteFile(TarWriter writer, string path, string archivePath, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var input = File.OpenRead(path);
+        writer.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, archivePath)
+        {
+            DataStream = new CancellationAwareReadStream(input, cancellationToken)
+        });
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    private static void WriteSymbolicLink(TarWriter writer, string path, string relativePath, bool isDirectory, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         var linkTarget = isDirectory
             ? new DirectoryInfo(path).LinkTarget
             : new FileInfo(path).LinkTarget;
@@ -74,6 +106,17 @@ internal static class DockerBuildContextArchive
             throw new IOException($"Unable to read symbolic link target for '{path}'.");
 
         writer.WriteEntry(new PaxTarEntry(TarEntryType.SymbolicLink, relativePath) { LinkName = linkTarget });
+    }
+
+    private static string GetDockerfileSourcePath(string directory, string? dockerfile)
+        => Path.GetFullPath(Path.Combine(directory, dockerfile ?? "Dockerfile"));
+
+    private static bool IsWithinDirectory(string directory, string path)
+    {
+        var relativePath = Path.GetRelativePath(directory, path);
+        return relativePath != ".." &&
+               !relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+               !Path.IsPathRooted(relativePath);
     }
 
     private static string ToArchivePath(string root, string path)
@@ -88,9 +131,9 @@ internal static class DockerBuildContextArchive
 
     private sealed class DockerIgnoreRule(bool include, Regex pattern)
     {
-        public static IReadOnlyList<DockerIgnoreRule> Read(string directory, string dockerfile)
+        public static IReadOnlyList<DockerIgnoreRule> Read(string directory, string dockerfileSourcePath)
         {
-            var dockerfileIgnorePath = Path.Combine(directory, dockerfile.Replace('/', Path.DirectorySeparatorChar) + ".dockerignore");
+            var dockerfileIgnorePath = dockerfileSourcePath + ".dockerignore";
             var path = File.Exists(dockerfileIgnorePath)
                 ? dockerfileIgnorePath
                 : Path.Combine(directory, ".dockerignore");
@@ -134,15 +177,7 @@ internal static class DockerBuildContextArchive
         private Regex Pattern { get; } = pattern;
 
         private bool Matches(string relativePath, bool isDirectory)
-        {
-            if (Pattern.IsMatch(relativePath))
-                return true;
-
-            if (isDirectory)
-                return Pattern.IsMatch(relativePath + "/");
-
-            return false;
-        }
+            => Pattern.IsMatch(relativePath) || (isDirectory && Pattern.IsMatch(relativePath + "/"));
 
         private static string ToExpression(string pattern)
         {
@@ -171,6 +206,9 @@ internal static class DockerBuildContextArchive
                 {
                     expression.Append("[^/]");
                 }
+                else if (character == '[' && TryAppendCharacterClass(pattern, ref index, expression))
+                {
+                }
                 else
                 {
                     expression.Append(Regex.Escape(character.ToString()));
@@ -178,13 +216,63 @@ internal static class DockerBuildContextArchive
             }
             return expression.ToString();
         }
+
+        private static bool TryAppendCharacterClass(string pattern, ref int index, StringBuilder expression)
+        {
+            var end = pattern.IndexOf(']', index + 1);
+            if (end < 0 || end == index + 1)
+                return false;
+
+            var content = pattern[(index + 1)..end];
+            expression.Append('[');
+            if (content[0] is '!' or '^')
+            {
+                expression.Append('^');
+                content = content[1..];
+            }
+
+            foreach (var character in content)
+            {
+                if (character is '\\' or ']')
+                    expression.Append('\\');
+                expression.Append(character);
+            }
+            expression.Append(']');
+            index = end;
+            return true;
+        }
     }
 
-    private static string NormalizeArchivePath(string path)
+    private sealed class CancellationAwareReadStream(Stream inner, CancellationToken cancellationToken) : Stream
     {
-        var normalized = path.Replace('\\', '/');
-        while (normalized.StartsWith("./", StringComparison.Ordinal))
-            normalized = normalized[2..];
-        return normalized;
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() => inner.Flush();
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return inner.Read(buffer, offset, count);
+        }
+        public override int Read(Span<byte> buffer)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return inner.Read(buffer);
+        }
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken token)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return inner.ReadAsync(buffer, offset, count, cancellationToken);
+        }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return inner.ReadAsync(buffer, cancellationToken);
+        }
     }
 }

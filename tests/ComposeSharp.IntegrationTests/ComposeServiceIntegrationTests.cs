@@ -91,7 +91,7 @@ public class ComposeServiceIntegrationTests
         var alternateTag = $"managed-build-{suffix}:alternate";
         var projectName = $"managed-build-{suffix}";
         var composeDirectory = Path.Combine(directory, "deploy");
-        Directory.CreateDirectory(composeDirectory);
+        Directory.CreateDirectory(Path.Combine(composeDirectory, "app"));
         File.WriteAllText(Path.Combine(composeDirectory, "Containerfile"), """
             FROM busybox:1.36 AS build
             ARG MESSAGE
@@ -107,8 +107,8 @@ public class ComposeServiceIntegrationTests
               app:
                 image: {{image}}
                 build:
-                  context: .
-                  dockerfile: Containerfile
+                  context: app
+                  dockerfile: ../Containerfile
                   args:
                     MESSAGE: configured
                   target: runtime

@@ -104,9 +104,10 @@ public sealed class DockerBuildParametersFactoryTests
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
         Directory.CreateDirectory(Path.Combine(directory, "private"));
-        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "*.log\n!keep.log\nprivate/\n");
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "*.log\n[0-9].secret\n!keep.log\nprivate/\n");
         File.WriteAllText(Path.Combine(directory, "ignored.log"), "ignored");
         File.WriteAllText(Path.Combine(directory, "keep.log"), "included");
+        File.WriteAllText(Path.Combine(directory, "1.secret"), "ignored");
         File.WriteAllText(Path.Combine(directory, "private", "secret.txt"), "secret");
 
         try
@@ -115,6 +116,7 @@ public sealed class DockerBuildParametersFactoryTests
 
             Assert.Contains("keep.log", entries);
             Assert.DoesNotContain("ignored.log", entries);
+            Assert.DoesNotContain("1.secret", entries);
             Assert.DoesNotContain("private", entries);
             Assert.DoesNotContain("private/secret.txt", entries);
         }
@@ -143,6 +145,49 @@ public sealed class DockerBuildParametersFactoryTests
             Assert.Contains("docker/Containerfile", entries);
             Assert.Contains("root-only.txt", entries);
             Assert.DoesNotContain("custom-secret.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_StagesDockerfileOutsideTheContext()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var contextDirectory = Path.Combine(directory, "app");
+        Directory.CreateDirectory(contextDirectory);
+        File.WriteAllText(Path.Combine(directory, "Containerfile"), "FROM scratch");
+        File.WriteAllText(Path.Combine(contextDirectory, "app.txt"), "content");
+
+        try
+        {
+            var archivePath = DockerBuildContextArchive.GetDockerfileArchivePath(contextDirectory, "../Containerfile");
+            var entries = ReadArchiveEntries(contextDirectory, "../Containerfile");
+
+            Assert.Equal("__external_dockerfile__", archivePath);
+            Assert.Contains(archivePath, entries);
+            Assert.Contains("app.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_ThrowsWhenCancellationIsRequested()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "Dockerfile"), "FROM scratch");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        try
+        {
+            Assert.Throws<OperationCanceledException>(() => DockerBuildContextArchive.Create(directory, cancellationToken: cancellation.Token));
         }
         finally
         {
