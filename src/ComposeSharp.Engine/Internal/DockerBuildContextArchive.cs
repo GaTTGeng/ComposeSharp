@@ -176,8 +176,7 @@ internal static class DockerBuildContextArchive
         private static DockerIgnoreRule Create(string line)
         {
             var include = line.StartsWith('!');
-            var pattern = include ? line[1..] : line;
-            pattern = pattern.TrimStart('/').TrimEnd('/');
+            var pattern = NormalizePattern(include ? line[1..] : line);
             if (pattern is "." or "")
                 return new DockerIgnoreRule(include, pattern, new Regex("(?!)", RegexOptions.CultureInvariant));
 
@@ -186,6 +185,25 @@ internal static class DockerBuildContextArchive
                 expression = $"(?:.*/)?{expression}";
 
             return new DockerIgnoreRule(include, pattern, new Regex($"^{expression}(?:/.*)?$", RegexOptions.CultureInvariant));
+        }
+
+        private static string NormalizePattern(string pattern)
+        {
+            var segments = new List<string>();
+            foreach (var segment in pattern.Replace('\\', '/').Split('/'))
+            {
+                if (segment is "" or ".")
+                    continue;
+                if (segment == ".." && segments.Count > 0 && segments[^1] != "..")
+                {
+                    segments.RemoveAt(segments.Count - 1);
+                    continue;
+                }
+
+                segments.Add(segment);
+            }
+
+            return string.Join('/', segments);
         }
 
         private bool Include { get; } = include;
@@ -202,15 +220,19 @@ internal static class DockerBuildContextArchive
             if (!PatternText.Contains('/'))
                 return true;
 
-            var wildcardIndex = PatternText.IndexOfAny(['*', '?', '[']);
-            var fixedPrefix = wildcardIndex < 0 ? PatternText : PatternText[..wildcardIndex];
-            fixedPrefix = fixedPrefix.TrimEnd('/');
-            if (fixedPrefix.Length == 0)
+            if (PatternText.Contains("**", StringComparison.Ordinal))
                 return true;
 
-            return fixedPrefix.StartsWith(relativePath + "/", StringComparison.Ordinal) ||
-                   relativePath.StartsWith(fixedPrefix + "/", StringComparison.Ordinal) ||
-                   string.Equals(relativePath, fixedPrefix, StringComparison.Ordinal);
+            var patternSegments = PatternText.Split('/');
+            var pathSegments = relativePath.Split('/');
+            for (var index = 0; index < Math.Min(patternSegments.Length, pathSegments.Length); index++)
+            {
+                var expression = ToExpression(patternSegments[index]);
+                if (!Regex.IsMatch(pathSegments[index], $"^{expression}$", RegexOptions.CultureInvariant))
+                    return false;
+            }
+
+            return true;
         }
 
         private static string ToExpression(string pattern)

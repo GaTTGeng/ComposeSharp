@@ -155,6 +155,26 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_NormalizesDockerIgnorePaths()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "./secrets.env\n");
+        File.WriteAllText(Path.Combine(directory, "secrets.env"), "secret");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain("secrets.env", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_SkipsIgnoredDirectoryUnlessAnIncludeRuleCanRestoreEntries()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
@@ -171,6 +191,29 @@ public sealed class DockerBuildParametersFactoryTests
 
             Assert.DoesNotContain("ignored/skip.txt", entries);
             Assert.Contains("ignored/keep.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_TraversesIgnoredWildcardDirectoryForIncludedDescendant()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var cacheDirectory = Path.Combine(directory, "cache1");
+        Directory.CreateDirectory(cacheDirectory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "cache*/\n!cache*/keep.txt\n");
+        File.WriteAllText(Path.Combine(cacheDirectory, "skip.txt"), "skip");
+        File.WriteAllText(Path.Combine(cacheDirectory, "keep.txt"), "keep");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain("cache1/skip.txt", entries);
+            Assert.Contains("cache1/keep.txt", entries);
         }
         finally
         {
