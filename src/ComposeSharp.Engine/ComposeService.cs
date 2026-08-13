@@ -31,7 +31,7 @@ public sealed class ComposeService : IComposeService
         foreach (var service in targetServices)
         {
             var build = service.Build!;
-            var contextDirectory = Path.GetFullPath(Path.Combine(context.WorkingDirectory, build.Context ?? build.ContextDirectory ?? "."));
+            var contextDirectory = Path.GetFullPath(Path.Combine(project.WorkingDirectory, build.Context ?? build.ContextDirectory ?? "."));
             await using var archive = DockerBuildContextArchive.Create(contextDirectory);
             var parameters = DockerBuildParametersFactory.Create(service, options);
             var progress = new BuildProgress(service.Name, options?.LogConsumer);
@@ -46,6 +46,7 @@ public sealed class ComposeService : IComposeService
                 null,
                 progress,
                 cancellationToken);
+            progress.ThrowIfFailed();
         }
     }
 
@@ -642,11 +643,23 @@ public sealed class ComposeService : IComposeService
 
     private sealed class BuildProgress(string serviceName, ILogConsumer? consumer) : IProgress<JSONMessage>
     {
+        private string? _error;
+
         public void Report(JSONMessage value)
         {
             var message = value.ErrorMessage ?? value.Error?.Message ?? value.Stream ?? value.ProgressMessage ?? value.Status;
+            if (!string.IsNullOrWhiteSpace(value.ErrorMessage ?? value.Error?.Message))
+                Interlocked.CompareExchange(ref _error, message, null);
+
             if (!string.IsNullOrWhiteSpace(message))
                 consumer?.OnStatus(serviceName, message.TrimEnd());
+        }
+
+        public void ThrowIfFailed()
+        {
+            var error = Volatile.Read(ref _error);
+            if (error is not null)
+                throw new InvalidOperationException($"Docker build for service '{serviceName}' failed: {error}");
         }
     }
 }

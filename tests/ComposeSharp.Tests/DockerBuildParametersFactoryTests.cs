@@ -99,6 +99,86 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 
+    [Fact]
+    public void CreateArchive_AppliesDockerIgnoreRules()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(directory, "private"));
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "*.log\n!keep.log\nprivate/\n");
+        File.WriteAllText(Path.Combine(directory, "ignored.log"), "ignored");
+        File.WriteAllText(Path.Combine(directory, "keep.log"), "included");
+        File.WriteAllText(Path.Combine(directory, "private", "secret.txt"), "secret");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.Contains("keep.log", entries);
+            Assert.DoesNotContain("ignored.log", entries);
+            Assert.DoesNotContain("private", entries);
+            Assert.DoesNotContain("private/secret.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_PreservesSymbolicLinks()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "target.txt"), "content");
+        try
+        {
+            File.CreateSymbolicLink(Path.Combine(directory, "linked.txt"), "target.txt");
+        }
+        catch (IOException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+
+        try
+        {
+            using var archive = DockerBuildContextArchive.Create(directory);
+            using var reader = new TarReader(archive);
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry()) is not null)
+            {
+                if (entry.Name != "linked.txt")
+                    continue;
+
+                Assert.Equal(TarEntryType.SymbolicLink, entry.EntryType);
+                Assert.Equal("target.txt", entry.LinkName);
+                return;
+            }
+
+            Assert.Fail("The symbolic link was not included in the build context archive.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static IReadOnlyList<string> ReadArchiveEntries(string directory)
+    {
+        using var archive = DockerBuildContextArchive.Create(directory);
+        using var reader = new TarReader(archive);
+        var entries = new List<string>();
+        TarEntry? entry;
+        while ((entry = reader.GetNextEntry()) is not null)
+            entries.Add(entry.Name);
+        return entries;
+    }
+
     private static ComposeSharp.Loader.Models.ServiceDefinition LoadService(string compose)
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-parameters-{Guid.NewGuid():N}");

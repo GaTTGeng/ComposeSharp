@@ -90,8 +90,9 @@ public class ComposeServiceIntegrationTests
         var image = $"managed-build-{suffix}:latest";
         var alternateTag = $"managed-build-{suffix}:alternate";
         var projectName = $"managed-build-{suffix}";
-        Directory.CreateDirectory(directory);
-        File.WriteAllText(Path.Combine(directory, "Containerfile"), """
+        var composeDirectory = Path.Combine(directory, "deploy");
+        Directory.CreateDirectory(composeDirectory);
+        File.WriteAllText(Path.Combine(composeDirectory, "Containerfile"), """
             FROM busybox:1.36 AS build
             ARG MESSAGE
             RUN printf '%s\n' "$MESSAGE" > /message
@@ -100,7 +101,7 @@ public class ComposeServiceIntegrationTests
             COPY --from=build /message /message
             CMD ["cat", "/message"]
             """);
-        File.WriteAllText(Path.Combine(directory, "compose.yaml"), $$"""
+        File.WriteAllText(Path.Combine(composeDirectory, "compose.yaml"), $$"""
             services:
               app:
                 image: {{image}}
@@ -117,7 +118,7 @@ public class ComposeServiceIntegrationTests
         {
             ProjectName = projectName,
             WorkingDirectory = directory,
-            ComposeFileName = "compose.yaml"
+            ComposeFileName = "deploy/compose.yaml"
         };
         var service = new ComposeService();
         var buildLogs = new TestLogConsumer();
@@ -156,6 +157,43 @@ public class ComposeServiceIntegrationTests
                 catch (DockerImageNotFoundException) { }
                 Directory.Delete(directory, recursive: true);
             }
+        }
+    }
+
+    [Fact]
+    public async Task BuildAsync_Throws_WhenDockerBuildReportsAnError()
+    {
+        if (!DockerAvailable) return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"managed-build-failure-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "Containerfile"), "FROM busybox:1.36\nRUN exit 42\n");
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: managed-build-failure
+                build:
+                  context: .
+                  dockerfile: Containerfile
+            """);
+
+        try
+        {
+            var service = new ComposeService();
+            var context = new ComposeProjectContext
+            {
+                ProjectName = "managed-build-failure",
+                WorkingDirectory = directory,
+                ComposeFileName = "compose.yaml"
+            };
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.BuildAsync(context));
+
+            Assert.Contains("Docker build", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
         }
     }
 
