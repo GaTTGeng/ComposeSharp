@@ -1,4 +1,5 @@
 using System.Formats.Tar;
+using System.Text;
 using ComposeSharp.Api;
 using ComposeSharp.Engine.Internal;
 using ComposeSharp.Loader;
@@ -178,6 +179,47 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_RetainsDockerfileNestedInIgnoredDirectory()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var dockerDirectory = Path.Combine(directory, "docker");
+        Directory.CreateDirectory(dockerDirectory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "docker/\n");
+        File.WriteAllText(Path.Combine(dockerDirectory, "Dockerfile"), "FROM scratch");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory, "docker/Dockerfile");
+
+            Assert.Contains("docker/Dockerfile", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_AppliesFirstDockerIgnoreRuleWhenFileHasUtf8Bom()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "secrets.env\n", new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        File.WriteAllText(Path.Combine(directory, "secrets.env"), "secret");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain("secrets.env", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_PreservesUnixExecutablePermissions()
     {
         if (OperatingSystem.IsWindows())
@@ -207,6 +249,40 @@ public sealed class DockerBuildParametersFactoryTests
             }
 
             Assert.Fail("The executable file was not included in the build context archive.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_PreservesUnixDirectoryPermissions()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var privateDirectory = Path.Combine(directory, "private");
+        Directory.CreateDirectory(privateDirectory);
+        File.WriteAllText(Path.Combine(directory, "Dockerfile"), "FROM scratch");
+        File.SetUnixFileMode(privateDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        try
+        {
+            using var archive = DockerBuildContextArchive.Create(directory);
+            using var reader = new TarReader(archive);
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry()) is not null)
+            {
+                if (entry.Name != "private")
+                    continue;
+
+                Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, entry.Mode);
+                return;
+            }
+
+            Assert.Fail("The directory was not included in the build context archive.");
         }
         finally
         {

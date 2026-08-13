@@ -68,7 +68,9 @@ internal static class DockerBuildContextArchive
                             DockerIgnoreRule.IsIgnored(relativePath, isDirectory, ignoreRules);
             if (isIgnored)
             {
-                if (isDirectory && !isSymbolicLink && DockerIgnoreRule.ShouldTraverseIgnoredDirectory(relativePath, ignoreRules))
+                if (isDirectory && !isSymbolicLink &&
+                    (ContainsArchivePath(relativePath, dockerfileArchivePath) ||
+                     DockerIgnoreRule.ShouldTraverseIgnoredDirectory(relativePath, ignoreRules)))
                     WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, ignoreRules, cancellationToken);
                 continue;
             }
@@ -77,13 +79,19 @@ internal static class DockerBuildContextArchive
                 WriteSymbolicLink(writer, path, relativePath, isDirectory, cancellationToken);
             else if (isDirectory)
             {
-                writer.WriteEntry(new PaxTarEntry(TarEntryType.Directory, relativePath));
+                var entry = new PaxTarEntry(TarEntryType.Directory, relativePath);
+                if (!OperatingSystem.IsWindows())
+                    entry.Mode = File.GetUnixFileMode(path);
+                writer.WriteEntry(entry);
                 WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, ignoreRules, cancellationToken);
             }
             else
                 WriteFile(writer, path, relativePath, cancellationToken);
         }
     }
+
+    private static bool ContainsArchivePath(string directoryPath, string archivePath)
+        => archivePath.StartsWith(directoryPath + "/", StringComparison.Ordinal);
 
     private static void WriteFile(TarWriter writer, string path, string archivePath, CancellationToken cancellationToken)
     {
@@ -144,6 +152,7 @@ internal static class DockerBuildContextArchive
                 return [];
 
             return File.ReadLines(path)
+                .Select((line, index) => index == 0 ? line.TrimStart('\uFEFF') : line)
                 .Select(line => line.Trim())
                 .Where(line => line.Length > 0 && !line.StartsWith('#'))
                 .Select(Create)
