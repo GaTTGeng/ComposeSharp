@@ -402,7 +402,7 @@ public sealed class ComposeFileLoader
             return new BuildConfig(
                 Context: GetString(buildMap, "context"),
                 Dockerfile: GetString(buildMap, "dockerfile"),
-                Args: GetStringDictionaryOrNull(buildMap, "args"),
+                Args: GetBuildArgs(buildMap),
                 CacheFrom: GetStringListOrNull(buildMap, "cache_from"),
                 CacheTo: GetStringListOrNull(buildMap, "cache_to"),
                 Target: GetString(buildMap, "target"),
@@ -761,5 +761,35 @@ public sealed class ComposeFileLoader
     {
         var dict = GetStringDictionary(map, key);
         return dict.Count > 0 ? dict : null;
+    }
+
+    private static IReadOnlyDictionary<string, string?>? GetBuildArgs(Dictionary<object, object?> map)
+    {
+        if (!map.TryGetValue("args", out var value) || value is null)
+            return null;
+
+        if (value is Dictionary<object, object?> dictionary)
+        {
+            return dictionary.ToDictionary(
+                pair => pair.Key.ToString()!,
+                pair => pair.Value?.ToString());
+        }
+
+        if (value is List<object?> list)
+        {
+            return list
+                .Select(item => item?.ToString() ?? string.Empty)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item =>
+                {
+                    var separator = GetDictionaryEntrySeparator(item, false);
+                    return separator < 0
+                        ? new KeyValuePair<string, string?>(item, null)
+                        : new KeyValuePair<string, string?>(item[..separator], item[(separator + 1)..]);
+                })
+                .ToDictionary(pair => pair.Key, pair => pair.Value);
+        }
+
+        return null;
     }
 }

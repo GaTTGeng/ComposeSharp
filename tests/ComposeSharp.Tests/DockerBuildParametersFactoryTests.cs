@@ -100,6 +100,33 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void Create_ResolvesValuelessBuildArgsFromTheEnvironment()
+    {
+        var service = LoadService("""
+            services:
+              app:
+                build:
+                  context: .
+                  args: [BUILD_TEST_VALUE, EXPLICIT_EMPTY=]
+            """);
+        const string environmentVariable = "BUILD_TEST_VALUE";
+        var previousValue = Environment.GetEnvironmentVariable(environmentVariable);
+        Environment.SetEnvironmentVariable(environmentVariable, "inherited");
+
+        try
+        {
+            var parameters = DockerBuildParametersFactory.Create(service, options: null);
+
+            Assert.Equal("inherited", parameters.BuildArgs![environmentVariable]);
+            Assert.Equal(string.Empty, parameters.BuildArgs["EXPLICIT_EMPTY"]);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(environmentVariable, previousValue);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_AppliesDockerIgnoreRules()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
@@ -119,6 +146,67 @@ public sealed class DockerBuildParametersFactoryTests
             Assert.DoesNotContain("1.secret", entries);
             Assert.DoesNotContain("private", entries);
             Assert.DoesNotContain("private/secret.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_SkipsIgnoredDirectoryUnlessAnIncludeRuleCanRestoreEntries()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var ignoredDirectory = Path.Combine(directory, "ignored");
+        Directory.CreateDirectory(ignoredDirectory);
+        File.WriteAllText(Path.Combine(directory, "Dockerfile"), "FROM scratch");
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "ignored/\n!ignored/keep.txt\n");
+        File.WriteAllText(Path.Combine(ignoredDirectory, "skip.txt"), "skip");
+        File.WriteAllText(Path.Combine(ignoredDirectory, "keep.txt"), "keep");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain("ignored/skip.txt", entries);
+            Assert.Contains("ignored/keep.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_PreservesUnixExecutablePermissions()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var scriptPath = Path.Combine(directory, "entrypoint.sh");
+        File.WriteAllText(Path.Combine(directory, "Dockerfile"), "FROM scratch");
+        File.WriteAllText(scriptPath, "#!/bin/sh\n");
+        File.SetUnixFileMode(scriptPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                                          UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                                          UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+
+        try
+        {
+            using var archive = DockerBuildContextArchive.Create(directory);
+            using var reader = new TarReader(archive);
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry()) is not null)
+            {
+                if (entry.Name != "entrypoint.sh")
+                    continue;
+
+                Assert.True(entry.Mode.HasFlag(UnixFileMode.UserExecute));
+                return;
+            }
+
+            Assert.Fail("The executable file was not included in the build context archive.");
         }
         finally
         {

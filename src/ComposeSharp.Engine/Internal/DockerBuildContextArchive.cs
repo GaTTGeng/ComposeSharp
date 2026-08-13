@@ -25,27 +25,7 @@ internal static class DockerBuildContextArchive
         {
             using (var writer = new TarWriter(archive, leaveOpen: true))
             {
-                foreach (var path in EnumerateEntries(directory, cancellationToken).OrderBy(path => path, StringComparer.Ordinal))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var relativePath = ToArchivePath(directory, path);
-                    var attributes = File.GetAttributes(path);
-                    var isDirectory = attributes.HasFlag(FileAttributes.Directory);
-                    if (!string.Equals(relativePath, dockerfileArchivePath, StringComparison.Ordinal) &&
-                        DockerIgnoreRule.IsIgnored(relativePath, isDirectory, ignoreRules))
-                        continue;
-
-                    if (attributes.HasFlag(FileAttributes.ReparsePoint))
-                    {
-                        WriteSymbolicLink(writer, path, relativePath, isDirectory, cancellationToken);
-                        continue;
-                    }
-
-                    if (isDirectory)
-                        writer.WriteEntry(new PaxTarEntry(TarEntryType.Directory, relativePath));
-                    else
-                        WriteFile(writer, path, relativePath, cancellationToken);
-                }
+                WriteDirectoryEntries(writer, directory, directory, dockerfileArchivePath, ignoreRules, cancellationToken);
 
                 if (isExternalDockerfile)
                     WriteFile(writer, dockerfileSourcePath, dockerfileArchivePath, cancellationToken);
@@ -69,19 +49,39 @@ internal static class DockerBuildContextArchive
             : ExternalDockerfileArchivePath;
     }
 
-    private static IEnumerable<string> EnumerateEntries(string directory, CancellationToken cancellationToken)
+    private static void WriteDirectoryEntries(
+        TarWriter writer,
+        string rootDirectory,
+        string directory,
+        string dockerfileArchivePath,
+        IReadOnlyList<DockerIgnoreRule> ignoreRules,
+        CancellationToken cancellationToken)
     {
-        foreach (var path in Directory.EnumerateFileSystemEntries(directory))
+        foreach (var path in Directory.EnumerateFileSystemEntries(directory).OrderBy(path => path, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            yield return path;
-
+            var relativePath = ToArchivePath(rootDirectory, path);
             var attributes = File.GetAttributes(path);
-            if (attributes.HasFlag(FileAttributes.Directory) && !attributes.HasFlag(FileAttributes.ReparsePoint))
+            var isDirectory = attributes.HasFlag(FileAttributes.Directory);
+            var isSymbolicLink = attributes.HasFlag(FileAttributes.ReparsePoint);
+            var isIgnored = !string.Equals(relativePath, dockerfileArchivePath, StringComparison.Ordinal) &&
+                            DockerIgnoreRule.IsIgnored(relativePath, isDirectory, ignoreRules);
+            if (isIgnored)
             {
-                foreach (var descendant in EnumerateEntries(path, cancellationToken))
-                    yield return descendant;
+                if (isDirectory && !isSymbolicLink && DockerIgnoreRule.ShouldTraverseIgnoredDirectory(relativePath, ignoreRules))
+                    WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, ignoreRules, cancellationToken);
+                continue;
             }
+
+            if (isSymbolicLink)
+                WriteSymbolicLink(writer, path, relativePath, isDirectory, cancellationToken);
+            else if (isDirectory)
+            {
+                writer.WriteEntry(new PaxTarEntry(TarEntryType.Directory, relativePath));
+                WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, ignoreRules, cancellationToken);
+            }
+            else
+                WriteFile(writer, path, relativePath, cancellationToken);
         }
     }
 
@@ -89,10 +89,13 @@ internal static class DockerBuildContextArchive
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var input = File.OpenRead(path);
-        writer.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, archivePath)
+        var entry = new PaxTarEntry(TarEntryType.RegularFile, archivePath)
         {
             DataStream = new CancellationAwareReadStream(input, cancellationToken)
-        });
+        };
+        if (!OperatingSystem.IsWindows())
+            entry.Mode = File.GetUnixFileMode(path);
+        writer.WriteEntry(entry);
         cancellationToken.ThrowIfCancellationRequested();
     }
 
@@ -129,7 +132,7 @@ internal static class DockerBuildContextArchive
             FileOptions.DeleteOnClose | FileOptions.SequentialScan);
     }
 
-    private sealed class DockerIgnoreRule(bool include, Regex pattern)
+    private sealed class DockerIgnoreRule(bool include, string patternText, Regex pattern)
     {
         public static IReadOnlyList<DockerIgnoreRule> Read(string directory, string dockerfileSourcePath)
         {
@@ -158,26 +161,48 @@ internal static class DockerBuildContextArchive
             return ignored;
         }
 
+        public static bool ShouldTraverseIgnoredDirectory(string relativePath, IReadOnlyList<DockerIgnoreRule> rules)
+            => rules.Any(rule => rule.CanMatchDescendant(relativePath));
+
         private static DockerIgnoreRule Create(string line)
         {
             var include = line.StartsWith('!');
             var pattern = include ? line[1..] : line;
             pattern = pattern.TrimStart('/').TrimEnd('/');
             if (pattern is "." or "")
-                return new DockerIgnoreRule(include, new Regex("(?!)", RegexOptions.CultureInvariant));
+                return new DockerIgnoreRule(include, pattern, new Regex("(?!)", RegexOptions.CultureInvariant));
 
             var expression = ToExpression(pattern);
             if (!pattern.Contains('/'))
                 expression = $"(?:.*/)?{expression}";
 
-            return new DockerIgnoreRule(include, new Regex($"^{expression}(?:/.*)?$", RegexOptions.CultureInvariant));
+            return new DockerIgnoreRule(include, pattern, new Regex($"^{expression}(?:/.*)?$", RegexOptions.CultureInvariant));
         }
 
         private bool Include { get; } = include;
+        private string PatternText { get; } = patternText;
         private Regex Pattern { get; } = pattern;
 
         private bool Matches(string relativePath, bool isDirectory)
             => Pattern.IsMatch(relativePath) || (isDirectory && Pattern.IsMatch(relativePath + "/"));
+
+        private bool CanMatchDescendant(string relativePath)
+        {
+            if (!Include)
+                return false;
+            if (!PatternText.Contains('/'))
+                return true;
+
+            var wildcardIndex = PatternText.IndexOfAny(['*', '?', '[']);
+            var fixedPrefix = wildcardIndex < 0 ? PatternText : PatternText[..wildcardIndex];
+            fixedPrefix = fixedPrefix.TrimEnd('/');
+            if (fixedPrefix.Length == 0)
+                return true;
+
+            return fixedPrefix.StartsWith(relativePath + "/", StringComparison.Ordinal) ||
+                   relativePath.StartsWith(fixedPrefix + "/", StringComparison.Ordinal) ||
+                   string.Equals(relativePath, fixedPrefix, StringComparison.Ordinal);
+        }
 
         private static string ToExpression(string pattern)
         {

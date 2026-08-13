@@ -20,8 +20,8 @@ internal static class DockerBuildParametersFactory
             NoCache = options?.NoCache == true || build.NoCache == true,
             Pull = options?.Pull == true || build.Pull == true ? "true" : null,
             Dockerfile = build.Dockerfile,
-            BuildArgs = Merge(build.Args, options?.BuildArgs),
-            Labels = Merge(build.Labels, options?.Labels),
+            BuildArgs = MergeBuildArgs(build.Args, options?.BuildArgs),
+            Labels = MergeStrings(build.Labels, options?.Labels),
             CacheFrom = build.CacheFrom?.ToList(),
             Target = options?.Target ?? build.Target,
             Platform = options?.Platform ?? GetSinglePlatform(service.Name, build.Platforms),
@@ -32,7 +32,35 @@ internal static class DockerBuildParametersFactory
         };
     }
 
-    private static Dictionary<string, string>? Merge(
+    private static Dictionary<string, string>? MergeBuildArgs(
+        IReadOnlyDictionary<string, string?>? configured,
+        IReadOnlyDictionary<string, string>? overrides)
+    {
+        if (configured is null && overrides is null)
+            return null;
+
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (configured is not null)
+        {
+            foreach (var (key, value) in configured)
+            {
+                if (value is not null)
+                    result[key] = value;
+                else if (Environment.GetEnvironmentVariable(key) is { } environmentValue)
+                    result[key] = environmentValue;
+            }
+        }
+
+        if (overrides is not null)
+        {
+            foreach (var (key, value) in overrides)
+                result[key] = value;
+        }
+
+        return result;
+    }
+
+    private static Dictionary<string, string>? MergeStrings(
         IReadOnlyDictionary<string, string>? configured,
         IReadOnlyDictionary<string, string>? overrides)
     {
@@ -42,13 +70,11 @@ internal static class DockerBuildParametersFactory
         var result = configured is null
             ? new Dictionary<string, string>(StringComparer.Ordinal)
             : new Dictionary<string, string>(configured, StringComparer.Ordinal);
-
         if (overrides is not null)
         {
             foreach (var (key, value) in overrides)
                 result[key] = value;
         }
-
         return result;
     }
 

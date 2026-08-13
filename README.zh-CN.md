@@ -86,7 +86,7 @@ builder.Services.AddComposeSharp();
 
 请特别留意以下事实：
 
-- `BuildAsync` 会将本地 build context 打包为 tar 并发送给 Docker Engine API。它会应用 `.dockerignore` 或所选 Dockerfile 对应的 `.dockerignore`、保留符号链接、安全暂存位于上下文外的 Dockerfile，并在创建归档时响应取消；归档会写入临时文件而非进程内存。它支持 Dockerfile、tags、target、build args、labels、`cache_from`、network mode、extra hosts、共享内存与内存限制、单个平台、pull 和 no-cache；`ComposeBuildOptions.LogConsumer` 会接收 Docker 构建状态，构建流中的错误会使操作失败。BuildKit 专用的 `cache_to`、多平台、`privileged`、`builder` 与 progress mode 选择尚未应用。
+- `BuildAsync` 会将本地 build context 打包为 tar 并发送给 Docker Engine API。它会应用 `.dockerignore` 或所选 Dockerfile 对应的 `.dockerignore`、保留符号链接与 Unix 文件权限；被忽略的目录树只有在否定规则可能重新包含其后代时才会遍历；它会安全暂存位于上下文外的 Dockerfile，并在创建归档时响应取消。归档会写入临时文件而非进程内存。未赋值的 build argument 会在进程环境存在该变量时继承其值。它支持 Dockerfile、tags、target、build args、labels、`cache_from`、network mode、extra hosts、共享内存与内存限制、单个平台、pull 和 no-cache；`ComposeBuildOptions.LogConsumer` 会接收 Docker 构建状态，构建流中的错误会使操作失败。BuildKit 专用的 `cache_to`、多平台、`privileged`、`builder` 与 progress mode 选择尚未应用。
 - `CopyAsync`、`ExportAsync`、`CommitAsync` 当前仍调用 `docker` 可执行文件；核心生命周期则通过 Docker.DotNet。
 - `TopAsync` 当前返回空列表。
 - `GenerateAsync` 返回读取到的项目摘要，并不会生成新的 Compose 文件。
