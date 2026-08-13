@@ -13,4 +13,5 @@ public sealed record ComposeBuildOptions
     public string? Target { get; init; }
     public string? Memory { get; init; }
     public string? Builder { get; init; }
+    public ILogConsumer? LogConsumer { get; init; }
 }

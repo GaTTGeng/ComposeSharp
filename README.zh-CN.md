@@ -79,14 +79,15 @@ builder.Services.AddComposeSharp();
 
 | 能力 | 当前实现 |
 | --- | --- |
-| 项目生命周期 | 创建项目网络，创建/启动/删除带标签的容器，列举项目容器，按需删除网络和卷。 |
+| 项目生命周期 | 创建项目网络，创建/启动/删除带标签的容器，列举项目容器，按需删除网络和卷，并通过 Docker Engine 构建已选择的服务。 |
 | 服务控制 | start、stop、restart、pause、unpause、kill、remove、run、exec、attach、pull、push、scale、wait 和端口查询。 |
 | 观察 | 容器、镜像、卷、日志、项目列表，以及 `VizAsync` 输出的 DOT 依赖图。 |
 | 事件与文件变化 | `EventsAsync` 每两秒轮询容器状态；`WatchAsync` 仅在 build context 变动时发出 `rebuild` 通知。 |
 
 请特别留意以下事实：
 
-- `BuildAsync`、`CopyAsync`、`ExportAsync`、`CommitAsync` 当前仍调用 `docker` 可执行文件；核心生命周期则通过 Docker.DotNet。
+- `BuildAsync` 会将本地 build context 打包为 tar 并发送给 Docker Engine API。它支持 Dockerfile、tags、target、build args、labels、`cache_from`、network mode、extra hosts、共享内存与内存限制、单个平台、pull 和 no-cache；`ComposeBuildOptions.LogConsumer` 会接收 Docker 构建状态。BuildKit 专用的 `cache_to`、多平台、`privileged`、`builder` 与 progress mode 选择尚未应用。
+- `CopyAsync`、`ExportAsync`、`CommitAsync` 当前仍调用 `docker` 可执行文件；核心生命周期则通过 Docker.DotNet。
 - `TopAsync` 当前返回空列表。
 - `GenerateAsync` 返回读取到的项目摘要，并不会生成新的 Compose 文件。
 - `PublishAsync` 只为服务镜像打 tag，不会把镜像推送到 registry。

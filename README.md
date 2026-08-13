@@ -103,7 +103,7 @@ The loader can retain fields that the engine does not yet apply. Consult the [Co
 
 | Area | Current behavior |
 | --- | --- |
-| Project lifecycle | Creates project networks, creates/starts/removes labeled containers, lists project containers, and removes project networks and optional volumes. |
+| Project lifecycle | Creates project networks, creates/starts/removes labeled containers, lists project containers, removes project networks and optional volumes, and builds selected services through Docker Engine. |
 | Service operations | Supports start, stop, restart, pause, unpause, kill, remove, run, exec, attach, pull, push, scale, wait, and port lookup. |
 | Inspection | Provides project list, containers, images, volumes, logs, and a DOT graph via `VizAsync`. |
 | Streaming | `LogsAsync` streams Docker logs. `EventsAsync` polls project containers every two seconds; it is not a Docker event-stream subscription. |
@@ -113,7 +113,8 @@ The loader can retain fields that the engine does not yet apply. Consult the [Co
 
 These boundaries are part of the public contract today:
 
-- `BuildAsync`, `CopyAsync`, `ExportAsync`, and `CommitAsync` invoke the `docker` executable. The rest of the core lifecycle uses Docker.DotNet.
+- `BuildAsync` sends a tarred local build context to the Docker Engine API. It supports a Dockerfile, tags, target, build arguments, labels, `cache_from`, network mode, extra hosts, shared-memory and memory limits, one platform, pull, and no-cache. `ComposeBuildOptions.LogConsumer` receives Docker build status messages. BuildKit-specific `cache_to`, multiple platforms, `privileged`, `builder`, and progress-mode selection are not applied.
+- `CopyAsync`, `ExportAsync`, and `CommitAsync` invoke the `docker` executable. The rest of the core lifecycle uses Docker.DotNet.
 - `TopAsync` currently returns an empty list.
 - `GenerateAsync` reports the loaded project configuration; it does not emit a rendered Compose file.
 - `PublishAsync` tags service images for a repository; it does not push them.
