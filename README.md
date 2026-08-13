@@ -113,7 +113,7 @@ The loader can retain fields that the engine does not yet apply. Consult the [Co
 
 These boundaries are part of the public contract today:
 
-- `BuildAsync` sends a tarred local build context to the Docker Engine API. It applies `.dockerignore`, preserves symbolic links, and supports a Dockerfile, tags, target, build arguments, labels, `cache_from`, network mode, extra hosts, shared-memory and memory limits, one platform, pull, and no-cache. `ComposeBuildOptions.LogConsumer` receives Docker build status messages, and build-stream errors fail the operation. BuildKit-specific `cache_to`, multiple platforms, `privileged`, `builder`, and progress-mode selection are not applied.
+- `BuildAsync` sends a tarred local build context to the Docker Engine API. It applies `.dockerignore` or the selected Dockerfile's `.dockerignore`, preserves symbolic links, and spools the archive to a temporary file rather than process memory. It supports a Dockerfile, tags, target, build arguments, labels, `cache_from`, network mode, extra hosts, shared-memory and memory limits, one platform, pull, and no-cache. `ComposeBuildOptions.LogConsumer` receives Docker build status messages, and build-stream errors fail the operation. BuildKit-specific `cache_to`, multiple platforms, `privileged`, `builder`, and progress-mode selection are not applied.
 - `CopyAsync`, `ExportAsync`, and `CommitAsync` invoke the `docker` executable. The rest of the core lifecycle uses Docker.DotNet.
 - `TopAsync` currently returns an empty list.
 - `GenerateAsync` reports the loaded project configuration; it does not emit a rendered Compose file.

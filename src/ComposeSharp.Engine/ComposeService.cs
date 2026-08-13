@@ -32,8 +32,8 @@ public sealed class ComposeService : IComposeService
         {
             var build = service.Build!;
             var contextDirectory = Path.GetFullPath(Path.Combine(project.WorkingDirectory, build.Context ?? build.ContextDirectory ?? "."));
-            await using var archive = DockerBuildContextArchive.Create(contextDirectory);
             var parameters = DockerBuildParametersFactory.Create(service, options);
+            await using var archive = DockerBuildContextArchive.Create(contextDirectory, parameters.Dockerfile);
             var progress = new BuildProgress(service.Name, options?.LogConsumer);
             var authConfigs = context.RegistryAuth is { ServerAddress: { Length: > 0 } } auth
                 ? new[] { ImageManager.CreateAuthConfig(auth) }

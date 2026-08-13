@@ -125,6 +125,32 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_UsesDockerfileSpecificIgnoreFileAndRetainsDockerfile()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var dockerDirectory = Path.Combine(directory, "docker");
+        Directory.CreateDirectory(dockerDirectory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "root-only.txt\n");
+        File.WriteAllText(Path.Combine(directory, "root-only.txt"), "root");
+        File.WriteAllText(Path.Combine(directory, "custom-secret.txt"), "secret");
+        File.WriteAllText(Path.Combine(dockerDirectory, "Containerfile"), "FROM scratch");
+        File.WriteAllText(Path.Combine(dockerDirectory, "Containerfile.dockerignore"), "custom-secret.txt\nContainerfile\n");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory, "docker/Containerfile");
+
+            Assert.Contains("docker/Containerfile", entries);
+            Assert.Contains("root-only.txt", entries);
+            Assert.DoesNotContain("custom-secret.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_PreservesSymbolicLinks()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
@@ -148,6 +174,7 @@ public sealed class DockerBuildParametersFactoryTests
         try
         {
             using var archive = DockerBuildContextArchive.Create(directory);
+            Assert.IsType<FileStream>(archive);
             using var reader = new TarReader(archive);
             TarEntry? entry;
             while ((entry = reader.GetNextEntry()) is not null)
@@ -168,9 +195,9 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 
-    private static IReadOnlyList<string> ReadArchiveEntries(string directory)
+    private static IReadOnlyList<string> ReadArchiveEntries(string directory, string? dockerfile = null)
     {
-        using var archive = DockerBuildContextArchive.Create(directory);
+        using var archive = DockerBuildContextArchive.Create(directory, dockerfile);
         using var reader = new TarReader(archive);
         var entries = new List<string>();
         TarEntry? entry;

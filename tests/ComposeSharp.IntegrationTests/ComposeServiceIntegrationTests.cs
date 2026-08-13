@@ -101,6 +101,7 @@ public class ComposeServiceIntegrationTests
             COPY --from=build /message /message
             CMD ["cat", "/message"]
             """);
+        File.WriteAllText(Path.Combine(composeDirectory, "Containerfile.dockerignore"), "Containerfile\n");
         File.WriteAllText(Path.Combine(composeDirectory, "compose.yaml"), $$"""
             services:
               app:

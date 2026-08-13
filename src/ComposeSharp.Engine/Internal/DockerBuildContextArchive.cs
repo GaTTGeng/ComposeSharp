@@ -6,38 +6,48 @@ namespace ComposeSharp.Engine.Internal;
 
 internal static class DockerBuildContextArchive
 {
-    public static Stream Create(string directory)
+    public static Stream Create(string directory, string? dockerfile = null)
     {
         if (!Directory.Exists(directory))
             throw new DirectoryNotFoundException($"Build context directory '{directory}' does not exist.");
 
-        var ignoreRules = DockerIgnoreRule.Read(directory);
-        var archive = new MemoryStream();
-        using (var writer = new TarWriter(archive, leaveOpen: true))
+        var selectedDockerfile = NormalizeArchivePath(dockerfile ?? "Dockerfile");
+        var ignoreRules = DockerIgnoreRule.Read(directory, selectedDockerfile);
+        var archive = CreateTemporaryArchive();
+        try
         {
-            foreach (var path in EnumerateEntries(directory).OrderBy(path => path, StringComparer.Ordinal))
+            using (var writer = new TarWriter(archive, leaveOpen: true))
             {
-                var relativePath = ToArchivePath(directory, path);
-                var attributes = File.GetAttributes(path);
-                var isDirectory = attributes.HasFlag(FileAttributes.Directory);
-                if (DockerIgnoreRule.IsIgnored(relativePath, isDirectory, ignoreRules))
-                    continue;
-
-                if (attributes.HasFlag(FileAttributes.ReparsePoint))
+                foreach (var path in EnumerateEntries(directory).OrderBy(path => path, StringComparer.Ordinal))
                 {
-                    WriteSymbolicLink(writer, path, relativePath, isDirectory);
-                    continue;
+                    var relativePath = ToArchivePath(directory, path);
+                    var attributes = File.GetAttributes(path);
+                    var isDirectory = attributes.HasFlag(FileAttributes.Directory);
+                    if (!string.Equals(relativePath, selectedDockerfile, StringComparison.Ordinal) &&
+                        DockerIgnoreRule.IsIgnored(relativePath, isDirectory, ignoreRules))
+                        continue;
+
+                    if (attributes.HasFlag(FileAttributes.ReparsePoint))
+                    {
+                        WriteSymbolicLink(writer, path, relativePath, isDirectory);
+                        continue;
+                    }
+
+                    if (isDirectory)
+                        writer.WriteEntry(new PaxTarEntry(TarEntryType.Directory, relativePath));
+                    else
+                        writer.WriteEntry(path, relativePath);
                 }
-
-                if (isDirectory)
-                    writer.WriteEntry(new PaxTarEntry(TarEntryType.Directory, relativePath));
-                else
-                    writer.WriteEntry(path, relativePath);
             }
-        }
 
-        archive.Position = 0;
-        return archive;
+            archive.Position = 0;
+            return archive;
+        }
+        catch
+        {
+            archive.Dispose();
+            throw;
+        }
     }
 
     private static IEnumerable<string> EnumerateEntries(string directory)
@@ -69,11 +79,21 @@ internal static class DockerBuildContextArchive
     private static string ToArchivePath(string root, string path)
         => Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/');
 
+    private static FileStream CreateTemporaryArchive()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"docker-build-context-{Guid.NewGuid():N}.tar");
+        return new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 81920,
+            FileOptions.DeleteOnClose | FileOptions.SequentialScan);
+    }
+
     private sealed class DockerIgnoreRule(bool include, Regex pattern)
     {
-        public static IReadOnlyList<DockerIgnoreRule> Read(string directory)
+        public static IReadOnlyList<DockerIgnoreRule> Read(string directory, string dockerfile)
         {
-            var path = Path.Combine(directory, ".dockerignore");
+            var dockerfileIgnorePath = Path.Combine(directory, dockerfile.Replace('/', Path.DirectorySeparatorChar) + ".dockerignore");
+            var path = File.Exists(dockerfileIgnorePath)
+                ? dockerfileIgnorePath
+                : Path.Combine(directory, ".dockerignore");
             if (!File.Exists(path))
                 return [];
 
@@ -158,5 +178,13 @@ internal static class DockerBuildContextArchive
             }
             return expression.ToString();
         }
+    }
+
+    private static string NormalizeArchivePath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        while (normalized.StartsWith("./", StringComparison.Ordinal))
+            normalized = normalized[2..];
+        return normalized;
     }
 }
