@@ -211,6 +211,35 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CreateArchive_RejectsDockerIgnoreNamedPipes(bool dockerfileSpecific)
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var ignorePath = Path.Combine(directory, dockerfileSpecific ? "Dockerfile.dockerignore" : ".dockerignore");
+        if (dockerfileSpecific)
+            File.WriteAllText(Path.Combine(directory, "Dockerfile"), "FROM scratch");
+        if (MkFifo(ignorePath, 0x1A4) != 0)
+            throw new IOException("Unable to create a named pipe for the archive test.");
+
+        try
+        {
+            var exception = Assert.Throws<NotSupportedException>(() => DockerBuildContextArchive.Create(directory));
+
+            Assert.Contains("Docker ignore file", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("named pipe", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void CreateArchive_RetainsEmptyDirectoryForChildOnlyDockerIgnorePattern()
     {
@@ -1385,6 +1414,20 @@ public sealed class DockerBuildParametersFactoryTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(38, true)]
+    [InlineData(2, false)]
+    public void ShouldFallBackToLStat_HandlesStatXErrors(int error, bool expected)
+    {
+        var method = typeof(DockerBuildContextArchive).GetMethod("ShouldFallBackToLStat",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+
+        var actual = Assert.IsType<bool>(method.Invoke(null, [error]));
+
+        Assert.Equal(expected, actual);
     }
 
     [DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]

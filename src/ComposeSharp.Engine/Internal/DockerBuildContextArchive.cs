@@ -8,6 +8,7 @@ namespace ComposeSharp.Engine.Internal;
 internal static class DockerBuildContextArchive
 {
     private const string ExternalDockerfileArchivePathPrefix = "__external_dockerfile__";
+    private const int LinuxOperationNotPermittedError = 1;
     private const int LinuxFunctionNotImplementedError = 38;
     private const string UnicodeScalarExpression = @"(?:[^/\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])";
 
@@ -27,7 +28,7 @@ internal static class DockerBuildContextArchive
         var isExternalDockerfile = !IsWithinDirectory(directory, dockerfileSourcePath);
         if (PathExists(dockerfileSourcePath))
         {
-            EnsureDockerfileIsRegularFile(dockerfileSourcePath);
+            EnsureRegularFile(dockerfileSourcePath, "Dockerfile");
         }
         else if (isExternalDockerfile)
         {
@@ -175,23 +176,23 @@ internal static class DockerBuildContextArchive
         }
     }
 
-    private static void EnsureDockerfileIsRegularFile(string path)
+    private static void EnsureRegularFile(string path, string fileDescription)
     {
         if (Directory.Exists(path))
-            throw new NotSupportedException($"Dockerfile '{path}' must be a regular file.");
+            throw new NotSupportedException($"{fileDescription} '{path}' must be a regular file.");
 
         switch (GetUnixFileType(path))
         {
             case UnixFileType.Regular:
                 return;
             case UnixFileType.NamedPipe:
-                throw new NotSupportedException($"Dockerfile '{path}' cannot be a named pipe.");
+                throw new NotSupportedException($"{fileDescription} '{path}' cannot be a named pipe.");
             case UnixFileType.Socket:
-                throw new NotSupportedException($"Dockerfile '{path}' cannot be a Unix socket.");
+                throw new NotSupportedException($"{fileDescription} '{path}' cannot be a Unix socket.");
             case UnixFileType.Device:
-                throw new NotSupportedException($"Dockerfile '{path}' cannot be a Unix device node.");
+                throw new NotSupportedException($"{fileDescription} '{path}' cannot be a Unix device node.");
             default:
-                throw new NotSupportedException($"Dockerfile '{path}' must be a regular file.");
+                throw new NotSupportedException($"{fileDescription} '{path}' must be a regular file.");
         }
     }
 
@@ -256,7 +257,7 @@ internal static class DockerBuildContextArchive
             if (result == 0)
                 return stat.Mode;
 
-            return Marshal.GetLastWin32Error() == LinuxFunctionNotImplementedError
+            return ShouldFallBackToLStat(Marshal.GetLastWin32Error())
                 ? GetLinuxFileModeFromLStat(path)
                 : ThrowUnableToInspectFile(path);
         }
@@ -265,6 +266,9 @@ internal static class DockerBuildContextArchive
             return GetLinuxFileModeFromLStat(path);
         }
     }
+
+    private static bool ShouldFallBackToLStat(int error)
+        => error is LinuxFunctionNotImplementedError or LinuxOperationNotPermittedError;
 
     private static uint GetLinuxFileModeFromLStat(string path)
     {
@@ -431,11 +435,13 @@ internal static class DockerBuildContextArchive
         public static IReadOnlyList<DockerIgnoreRule> Read(string directory, string dockerfileSourcePath)
         {
             var dockerfileIgnorePath = dockerfileSourcePath + ".dockerignore";
-            var path = File.Exists(dockerfileIgnorePath)
+            var path = PathExists(dockerfileIgnorePath)
                 ? dockerfileIgnorePath
                 : Path.Combine(directory, ".dockerignore");
-            if (!File.Exists(path))
+            if (!PathExists(path))
                 return [];
+
+            EnsureRegularFile(path, "Docker ignore file");
 
             return File.ReadLines(path)
                 .Select((line, index) => index == 0 ? line.TrimStart('\uFEFF') : line)
