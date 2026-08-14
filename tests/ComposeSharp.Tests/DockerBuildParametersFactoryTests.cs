@@ -341,6 +341,29 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_MatchesUnicodeScalarsForNegatedDockerIgnoreCharacterClasses()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var excludedFileName = $"{char.ConvertFromUtf32(0x1F600)}.txt";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), $"[!{char.ConvertFromUtf32(0x1F600)}].txt\n");
+        File.WriteAllText(Path.Combine(directory, excludedFileName), "included");
+        File.WriteAllText(Path.Combine(directory, "a.txt"), "ignored");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.Contains(excludedFileName, entries);
+            Assert.DoesNotContain("a.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void PathsAreEqual_ResolvesDirectorySymbolicLinks()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");

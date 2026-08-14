@@ -580,7 +580,7 @@ internal static class DockerBuildContextArchive
                 expression.Append(characterClass);
                 expression.Append("]|(?!(?:");
                 expression.Append(string.Join("|", supplementaryScalars.Select(Regex.Escape)));
-                expression.Append(")[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])");
+                expression.Append("))[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])");
             }
             else
             {
