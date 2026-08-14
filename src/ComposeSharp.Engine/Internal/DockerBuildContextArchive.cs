@@ -547,8 +547,17 @@ internal static class DockerBuildContextArchive
 
             var characterClass = new StringBuilder();
             var supplementaryScalars = new List<string>();
+            var supplementaryRanges = new List<(int Start, int End)>();
             for (var contentIndex = 0; contentIndex < content.Length; contentIndex++)
             {
+                if (TryGetSupplementaryRange(content, contentIndex, out var rangeEnd, out var rangeStartScalar,
+                        out var rangeEndScalar))
+                {
+                    supplementaryRanges.Add((rangeStartScalar, rangeEndScalar));
+                    contentIndex = rangeEnd;
+                    continue;
+                }
+
                 var character = content[contentIndex];
                 var escaped = character == '\\' && contentIndex + 1 < content.Length;
                 if (escaped)
@@ -566,7 +575,10 @@ internal static class DockerBuildContextArchive
                 characterClass.Append(character);
             }
 
-            if (supplementaryScalars.Count == 0)
+            var supplementaryExpressions = supplementaryScalars.Select(Regex.Escape)
+                .Concat(supplementaryRanges.Select(range => ToSupplementaryRangeExpression(range.Start, range.End)))
+                .ToList();
+            if (supplementaryExpressions.Count == 0)
             {
                 expression.Append('[');
                 if (isNegated)
@@ -579,7 +591,7 @@ internal static class DockerBuildContextArchive
                 expression.Append("(?:[^\\uD800-\\uDFFF");
                 expression.Append(characterClass);
                 expression.Append("]|(?!(?:");
-                expression.Append(string.Join("|", supplementaryScalars.Select(Regex.Escape)));
+                expression.Append(string.Join("|", supplementaryExpressions));
                 expression.Append("))[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])");
             }
             else
@@ -592,13 +604,55 @@ internal static class DockerBuildContextArchive
                     expression.Append(']');
                     expression.Append('|');
                 }
-                expression.Append(string.Join("|", supplementaryScalars.Select(Regex.Escape)));
+                expression.Append(string.Join("|", supplementaryExpressions));
                 expression.Append(')');
             }
 
             index = end;
             return true;
         }
+
+        private static bool TryGetSupplementaryRange(string content, int start, out int end, out int startScalar,
+            out int endScalar)
+        {
+            end = start;
+            startScalar = 0;
+            endScalar = 0;
+            if (start + 4 >= content.Length || !char.IsHighSurrogate(content[start]) ||
+                !char.IsLowSurrogate(content[start + 1]) || content[start + 2] != '-' ||
+                !char.IsHighSurrogate(content[start + 3]) || !char.IsLowSurrogate(content[start + 4]))
+                return false;
+
+            startScalar = char.ConvertToUtf32(content, start);
+            endScalar = char.ConvertToUtf32(content, start + 3);
+            if (startScalar > endScalar)
+                return false;
+
+            end = start + 4;
+            return true;
+        }
+
+        private static string ToSupplementaryRangeExpression(int startScalar, int endScalar)
+        {
+            var startHigh = (char)(((startScalar - 0x10000) >> 10) + 0xD800);
+            var startLow = (char)(((startScalar - 0x10000) & 0x3FF) + 0xDC00);
+            var endHigh = (char)(((endScalar - 0x10000) >> 10) + 0xD800);
+            var endLow = (char)(((endScalar - 0x10000) & 0x3FF) + 0xDC00);
+            if (startHigh == endHigh)
+                return $"{ToUnicodeEscape(startHigh)}[{ToUnicodeEscape(startLow)}-{ToUnicodeEscape(endLow)}]";
+
+            var expressions = new List<string>
+            {
+                $"{ToUnicodeEscape(startHigh)}[{ToUnicodeEscape(startLow)}-\\uDFFF]"
+            };
+            if (startHigh + 1 < endHigh)
+                expressions.Add($"[{ToUnicodeEscape((char)(startHigh + 1))}-{ToUnicodeEscape((char)(endHigh - 1))}]" +
+                                "[\\uDC00-\\uDFFF]");
+            expressions.Add($"{ToUnicodeEscape(endHigh)}[\\uDC00-{ToUnicodeEscape(endLow)}]");
+            return $"(?:{string.Join("|", expressions)})";
+        }
+
+        private static string ToUnicodeEscape(char character) => $"\\u{(int)character:X4}";
 
         private static int FindCharacterClassEnd(string pattern, int start)
         {
