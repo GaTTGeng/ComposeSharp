@@ -1,4 +1,5 @@
 using System.Formats.Tar;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -6,7 +7,7 @@ namespace ComposeSharp.Engine.Internal;
 
 internal static class DockerBuildContextArchive
 {
-    private const string ExternalDockerfileArchivePath = "__external_dockerfile__";
+    private const string ExternalDockerfileArchivePathPrefix = "__external_dockerfile__";
 
     public static Stream Create(string directory, string? dockerfile = null, CancellationToken cancellationToken = default)
     {
@@ -16,7 +17,7 @@ internal static class DockerBuildContextArchive
         cancellationToken.ThrowIfCancellationRequested();
         var dockerfileSourcePath = GetDockerfileSourcePath(directory, dockerfile);
         var dockerfileArchivePath = GetDockerfileArchivePath(directory, dockerfile);
-        var isExternalDockerfile = string.Equals(dockerfileArchivePath, ExternalDockerfileArchivePath, StringComparison.Ordinal);
+        var isExternalDockerfile = !IsWithinDirectory(directory, dockerfileSourcePath);
         if (isExternalDockerfile && !File.Exists(dockerfileSourcePath))
             throw new FileNotFoundException($"Dockerfile '{dockerfile}' does not exist.", dockerfileSourcePath);
         var ignoreRules = DockerIgnoreRule.Read(directory, dockerfileSourcePath);
@@ -46,7 +47,7 @@ internal static class DockerBuildContextArchive
         var dockerfileSourcePath = GetDockerfileSourcePath(directory, dockerfile);
         return IsWithinDirectory(directory, dockerfileSourcePath)
             ? ToArchivePath(directory, dockerfileSourcePath)
-            : ExternalDockerfileArchivePath;
+            : GetAvailableExternalDockerfileArchivePath(directory);
     }
 
     private static void WriteDirectoryEntries(
@@ -85,6 +86,8 @@ internal static class DockerBuildContextArchive
                 writer.WriteEntry(entry);
                 WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, ignoreRules, cancellationToken);
             }
+            else if (IsNamedPipe(path))
+                WriteNamedPipe(writer, path, relativePath, cancellationToken);
             else
                 WriteFile(writer, path, relativePath, cancellationToken);
         }
@@ -92,6 +95,35 @@ internal static class DockerBuildContextArchive
 
     private static bool ContainsArchivePath(string directoryPath, string archivePath)
         => archivePath.StartsWith(directoryPath + "/", StringComparison.Ordinal);
+
+    private static string GetAvailableExternalDockerfileArchivePath(string directory)
+    {
+        for (var suffix = 0; ; suffix++)
+        {
+            var archivePath = suffix == 0
+                ? ExternalDockerfileArchivePathPrefix
+                : $"{ExternalDockerfileArchivePathPrefix}-{suffix}";
+            if (!PathExists(Path.Combine(directory, archivePath)))
+                return archivePath;
+        }
+    }
+
+    private static bool PathExists(string path)
+    {
+        try
+        {
+            _ = File.GetAttributes(path);
+            return true;
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return false;
+        }
+    }
 
     private static void WriteFile(TarWriter writer, string path, string archivePath, CancellationToken cancellationToken)
     {
@@ -118,6 +150,39 @@ internal static class DockerBuildContextArchive
 
         writer.WriteEntry(new PaxTarEntry(TarEntryType.SymbolicLink, relativePath) { LinkName = linkTarget });
     }
+
+    private static bool IsNamedPipe(string path)
+    {
+        if (OperatingSystem.IsWindows() || (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()))
+            return false;
+
+        var buffer = Marshal.AllocHGlobal(512);
+        try
+        {
+            if (LStat(path, buffer) != 0)
+                throw new IOException($"Unable to inspect filesystem entry '{path}' (error {Marshal.GetLastWin32Error()}).");
+
+            var modeOffset = OperatingSystem.IsLinux() ? 24 : 4;
+            var mode = Marshal.ReadInt32(buffer, modeOffset);
+            return (mode & 0xF000) == 0x1000;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    private static void WriteNamedPipe(TarWriter writer, string path, string archivePath, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var entry = new PaxTarEntry(TarEntryType.Fifo, archivePath);
+        if (!OperatingSystem.IsWindows())
+            entry.Mode = File.GetUnixFileMode(path);
+        writer.WriteEntry(entry);
+    }
+
+    [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
+    private static extern int LStat(string path, IntPtr buffer);
 
     private static string GetDockerfileSourcePath(string directory, string? dockerfile)
         => Path.GetFullPath(Path.Combine(directory, dockerfile ?? "Dockerfile"));

@@ -1,4 +1,5 @@
 using System.Formats.Tar;
+using System.Runtime.InteropServices;
 using System.Text;
 using ComposeSharp.Api;
 using ComposeSharp.Engine.Internal;
@@ -384,6 +385,30 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_StagesExternalDockerfileAtAnUnusedPath()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var contextDirectory = Path.Combine(directory, "app");
+        Directory.CreateDirectory(contextDirectory);
+        File.WriteAllText(Path.Combine(directory, "Containerfile"), "FROM scratch");
+        File.WriteAllText(Path.Combine(contextDirectory, "__external_dockerfile__"), "context file");
+
+        try
+        {
+            var archivePath = DockerBuildContextArchive.GetDockerfileArchivePath(contextDirectory, "../Containerfile");
+            var entries = ReadArchiveEntries(contextDirectory, "../Containerfile");
+
+            Assert.NotEqual("__external_dockerfile__", archivePath);
+            Assert.Equal(1, entries.Count(entry => entry == archivePath));
+            Assert.Contains("__external_dockerfile__", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_ThrowsWhenCancellationIsRequested()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
@@ -446,6 +471,43 @@ public sealed class DockerBuildParametersFactoryTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    [Fact]
+    public void CreateArchive_PreservesNamedPipes()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var pipePath = Path.Combine(directory, "events");
+        if (MkFifo(pipePath, 0x1A4) != 0)
+            throw new IOException("Unable to create a named pipe for the archive test.");
+
+        try
+        {
+            using var archive = DockerBuildContextArchive.Create(directory);
+            using var reader = new TarReader(archive);
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry()) is not null)
+            {
+                if (entry.Name != "events")
+                    continue;
+
+                Assert.Equal(TarEntryType.Fifo, entry.EntryType);
+                return;
+            }
+
+            Assert.Fail("The named pipe was not included in the build context archive.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]
+    private static extern int MkFifo(string path, uint mode);
 
     private static IReadOnlyList<string> ReadArchiveEntries(string directory, string? dockerfile = null)
     {
