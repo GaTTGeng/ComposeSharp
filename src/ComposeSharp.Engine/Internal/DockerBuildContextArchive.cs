@@ -10,7 +10,11 @@ internal static class DockerBuildContextArchive
     private const string ExternalDockerfileArchivePathPrefix = "__external_dockerfile__";
     private const int LinuxFunctionNotImplementedError = 38;
 
-    public static Stream Create(string directory, string? dockerfile = null, CancellationToken cancellationToken = default)
+    public static Stream Create(
+        string directory,
+        string? dockerfile = null,
+        string? dockerfileArchivePath = null,
+        CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(directory))
             throw new DirectoryNotFoundException($"Build context directory '{directory}' does not exist.");
@@ -18,7 +22,7 @@ internal static class DockerBuildContextArchive
         cancellationToken.ThrowIfCancellationRequested();
         var dockerfilePath = GetDockerfilePath(directory, dockerfile);
         var dockerfileSourcePath = ResolveDockerfileLinkTarget(dockerfilePath);
-        var dockerfileArchivePath = GetDockerfileArchivePath(directory, dockerfile);
+        dockerfileArchivePath ??= GetDockerfileArchivePath(directory, dockerfile);
         var isExternalDockerfile = !IsWithinDirectory(directory, dockerfileSourcePath);
         if (isExternalDockerfile && !File.Exists(dockerfileSourcePath))
             throw new FileNotFoundException($"Dockerfile '{dockerfile}' does not exist.", dockerfileSourcePath);
@@ -31,7 +35,9 @@ internal static class DockerBuildContextArchive
                 var linkedDockerfilePath = isExternalDockerfile && IsWithinDirectory(directory, dockerfilePath)
                     ? dockerfilePath
                     : null;
-                WriteDirectoryEntries(writer, directory, directory, dockerfileArchivePath, linkedDockerfilePath, archive.Name, ignoreRules, cancellationToken);
+                var stagedDockerfileArchivePath = isExternalDockerfile ? dockerfileArchivePath : null;
+                WriteDirectoryEntries(writer, directory, directory, dockerfileArchivePath, linkedDockerfilePath,
+                    stagedDockerfileArchivePath, archive.Name, ignoreRules, cancellationToken);
 
                 if (isExternalDockerfile)
                     WriteFile(writer, dockerfileSourcePath, dockerfileArchivePath, cancellationToken);
@@ -61,6 +67,7 @@ internal static class DockerBuildContextArchive
         string directory,
         string dockerfileArchivePath,
         string? linkedDockerfilePath,
+        string? stagedDockerfileArchivePath,
         string temporaryArchivePath,
         IReadOnlyList<DockerIgnoreRule> ignoreRules,
         CancellationToken cancellationToken)
@@ -74,6 +81,8 @@ internal static class DockerBuildContextArchive
                 continue;
 
             var relativePath = ToArchivePath(rootDirectory, path);
+            if (string.Equals(relativePath, stagedDockerfileArchivePath, StringComparison.Ordinal))
+                continue;
             var attributes = File.GetAttributes(path);
             var isDirectory = attributes.HasFlag(FileAttributes.Directory);
             var isSymbolicLink = attributes.HasFlag(FileAttributes.ReparsePoint);
@@ -84,7 +93,8 @@ internal static class DockerBuildContextArchive
                 if (isDirectory && !isSymbolicLink &&
                     (ContainsArchivePath(relativePath, dockerfileArchivePath) ||
                      DockerIgnoreRule.ShouldTraverseIgnoredDirectory(relativePath, ignoreRules)))
-                    WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, linkedDockerfilePath, temporaryArchivePath, ignoreRules, cancellationToken);
+                    WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, linkedDockerfilePath,
+                        stagedDockerfileArchivePath, temporaryArchivePath, ignoreRules, cancellationToken);
                 continue;
             }
 
@@ -99,7 +109,8 @@ internal static class DockerBuildContextArchive
                 if (!OperatingSystem.IsWindows())
                     entry.Mode = File.GetUnixFileMode(path);
                 writer.WriteEntry(entry);
-                WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, linkedDockerfilePath, temporaryArchivePath, ignoreRules, cancellationToken);
+                WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, linkedDockerfilePath,
+                    stagedDockerfileArchivePath, temporaryArchivePath, ignoreRules, cancellationToken);
             }
             else
             {

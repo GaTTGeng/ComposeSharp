@@ -674,6 +674,33 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_UsesTheSpecifiedExternalDockerfileArchivePath()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var contextDirectory = Path.Combine(directory, "app");
+        Directory.CreateDirectory(contextDirectory);
+        File.WriteAllText(Path.Combine(directory, "Containerfile"), "FROM scratch");
+        File.WriteAllText(Path.Combine(contextDirectory, "__external_dockerfile__"), "unrelated context file");
+
+        try
+        {
+            using var archive = DockerBuildContextArchive.Create(
+                contextDirectory, "../Containerfile", "__external_dockerfile__");
+            using var reader = new TarReader(archive);
+            var entries = new List<string>();
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry()) is not null)
+                entries.Add(entry.Name);
+
+            Assert.Equal(1, entries.Count(entry => entry == "__external_dockerfile__"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_ThrowsWhenCancellationIsRequested()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
