@@ -129,6 +129,28 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void GetDockerfileArchivePath_UsesOnDiskCasingOnWindows()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "Dockerfile"), "FROM scratch");
+
+        try
+        {
+            var archivePath = DockerBuildContextArchive.GetDockerfileArchivePath(directory, "dockerfile");
+
+            Assert.Equal("Dockerfile", archivePath);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_AppliesDockerIgnoreRules()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
@@ -359,6 +381,40 @@ public sealed class DockerBuildParametersFactoryTests
             }
 
             Assert.Fail("The directory was not included in the build context archive.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_PreservesDirectoryModificationTime()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var sourceDirectory = Path.Combine(directory, "source");
+        Directory.CreateDirectory(sourceDirectory);
+        var modificationTime = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(sourceDirectory, modificationTime);
+
+        try
+        {
+            using var archive = DockerBuildContextArchive.Create(directory);
+            using var reader = new TarReader(archive);
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry()) is not null)
+            {
+                if (entry.Name != "source")
+                    continue;
+
+                Assert.Equal(modificationTime, entry.ModificationTime.UtcDateTime);
+                return;
+            }
+
+            Assert.Fail("The source directory was not included in the build context archive.");
         }
         finally
         {

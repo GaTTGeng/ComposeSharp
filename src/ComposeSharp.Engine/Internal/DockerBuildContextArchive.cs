@@ -84,7 +84,10 @@ internal static class DockerBuildContextArchive
                 WriteSymbolicLink(writer, path, relativePath, isDirectory, cancellationToken);
             else if (isDirectory)
             {
-                var entry = new PaxTarEntry(TarEntryType.Directory, relativePath);
+                var entry = new PaxTarEntry(TarEntryType.Directory, relativePath)
+                {
+                    ModificationTime = File.GetLastWriteTimeUtc(path)
+                };
                 if (!OperatingSystem.IsWindows())
                     entry.Mode = File.GetUnixFileMode(path);
                 writer.WriteEntry(entry);
@@ -252,7 +255,31 @@ internal static class DockerBuildContextArchive
     }
 
     private static string GetDockerfileSourcePath(string directory, string? dockerfile)
-        => Path.GetFullPath(Path.Combine(directory, dockerfile ?? "Dockerfile"));
+    {
+        var path = Path.GetFullPath(Path.Combine(directory, dockerfile ?? "Dockerfile"));
+        return OperatingSystem.IsWindows() ? GetCanonicalWindowsPath(path) : path;
+    }
+
+    private static string GetCanonicalWindowsPath(string path)
+    {
+        if (!File.Exists(path) && !Directory.Exists(path))
+            return path;
+
+        var root = Path.GetPathRoot(path)!;
+        var relativePath = Path.GetRelativePath(root, path);
+        var currentPath = root;
+        foreach (var segment in relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var matchingPath = Directory.EnumerateFileSystemEntries(currentPath)
+                .FirstOrDefault(entry => string.Equals(Path.GetFileName(entry), segment, StringComparison.OrdinalIgnoreCase));
+            if (matchingPath is null)
+                return path;
+
+            currentPath = matchingPath;
+        }
+
+        return currentPath;
+    }
 
     private static bool IsWithinDirectory(string directory, string path)
     {
