@@ -25,11 +25,13 @@ internal static class DockerBuildContextArchive
         var dockerfileSourcePath = ResolveFileSystemPath(dockerfilePath);
         dockerfileArchivePath ??= GetDockerfileArchivePath(directory, dockerfile);
         var isExternalDockerfile = !IsWithinDirectory(directory, dockerfileSourcePath);
-        if (isExternalDockerfile)
+        if (PathExists(dockerfileSourcePath))
         {
-            if (!PathExists(dockerfileSourcePath))
-                throw new FileNotFoundException($"Dockerfile '{dockerfile}' does not exist.", dockerfileSourcePath);
-            EnsureExternalDockerfileIsRegularFile(dockerfileSourcePath);
+            EnsureDockerfileIsRegularFile(dockerfileSourcePath);
+        }
+        else if (isExternalDockerfile)
+        {
+            throw new FileNotFoundException($"Dockerfile '{dockerfile}' does not exist.", dockerfileSourcePath);
         }
         var ignoreRules = DockerIgnoreRule.Read(directory, dockerfilePath);
         var archive = CreateTemporaryArchive();
@@ -173,23 +175,23 @@ internal static class DockerBuildContextArchive
         }
     }
 
-    private static void EnsureExternalDockerfileIsRegularFile(string path)
+    private static void EnsureDockerfileIsRegularFile(string path)
     {
         if (Directory.Exists(path))
-            throw new NotSupportedException($"External Dockerfile '{path}' must be a regular file.");
+            throw new NotSupportedException($"Dockerfile '{path}' must be a regular file.");
 
         switch (GetUnixFileType(path))
         {
             case UnixFileType.Regular:
                 return;
             case UnixFileType.NamedPipe:
-                throw new NotSupportedException($"External Dockerfile '{path}' cannot be a named pipe.");
+                throw new NotSupportedException($"Dockerfile '{path}' cannot be a named pipe.");
             case UnixFileType.Socket:
-                throw new NotSupportedException($"External Dockerfile '{path}' cannot be a Unix socket.");
+                throw new NotSupportedException($"Dockerfile '{path}' cannot be a Unix socket.");
             case UnixFileType.Device:
-                throw new NotSupportedException($"External Dockerfile '{path}' cannot be a Unix device node.");
+                throw new NotSupportedException($"Dockerfile '{path}' cannot be a Unix device node.");
             default:
-                throw new NotSupportedException($"External Dockerfile '{path}' must be a regular file.");
+                throw new NotSupportedException($"Dockerfile '{path}' must be a regular file.");
         }
     }
 

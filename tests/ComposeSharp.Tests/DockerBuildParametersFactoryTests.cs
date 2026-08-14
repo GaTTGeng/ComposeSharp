@@ -893,6 +893,50 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CreateArchive_RejectsInternalDockerfileNamedPipes(bool throughSymbolicLink)
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var pipePath = Path.Combine(directory, throughSymbolicLink ? "recipe" : "Dockerfile");
+        if (MkFifo(pipePath, 0x1A4) != 0)
+            throw new IOException("Unable to create a named pipe for the archive test.");
+
+        if (throughSymbolicLink)
+        {
+            try
+            {
+                File.CreateSymbolicLink(Path.Combine(directory, "Dockerfile"), "recipe");
+            }
+            catch (IOException)
+            {
+                Directory.Delete(directory, recursive: true);
+                return;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Directory.Delete(directory, recursive: true);
+                return;
+            }
+        }
+
+        try
+        {
+            var exception = Assert.Throws<NotSupportedException>(() => DockerBuildContextArchive.Create(directory));
+
+            Assert.Contains("named pipe", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void CreateArchive_StagesDockerfileSymlinkedOutsideTheContextByContent()
     {
