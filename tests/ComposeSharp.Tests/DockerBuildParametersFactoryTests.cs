@@ -571,6 +571,49 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_StagesDockerfileThroughExternalLinkedDirectoryByContent()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var contextDirectory = Path.Combine(directory, "app");
+        var externalDockerDirectory = Path.Combine(directory, "shared-docker");
+        Directory.CreateDirectory(contextDirectory);
+        Directory.CreateDirectory(externalDockerDirectory);
+        File.WriteAllText(Path.Combine(externalDockerDirectory, "Dockerfile"), "FROM scratch");
+        try
+        {
+            Directory.CreateSymbolicLink(Path.Combine(contextDirectory, "docker"), "../shared-docker");
+        }
+        catch (IOException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+
+        try
+        {
+            var archivePath = DockerBuildContextArchive.GetDockerfileArchivePath(contextDirectory, "docker/Dockerfile");
+            using var archive = DockerBuildContextArchive.Create(contextDirectory, "docker/Dockerfile");
+            using var reader = new TarReader(archive);
+            var entries = new List<TarEntry>();
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry()) is not null)
+                entries.Add(entry);
+
+            Assert.Equal("__external_dockerfile__", archivePath);
+            Assert.Contains(entries, entry => entry.Name == archivePath && entry.EntryType == TarEntryType.RegularFile);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_StagesExternalDockerfileAtAnUnusedPath()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");

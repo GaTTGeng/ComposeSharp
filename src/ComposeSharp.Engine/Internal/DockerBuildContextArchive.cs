@@ -8,6 +8,7 @@ namespace ComposeSharp.Engine.Internal;
 internal static class DockerBuildContextArchive
 {
     private const string ExternalDockerfileArchivePathPrefix = "__external_dockerfile__";
+    private const int LinuxFunctionNotImplementedError = 38;
 
     public static Stream Create(string directory, string? dockerfile = null, CancellationToken cancellationToken = default)
     {
@@ -204,8 +205,12 @@ internal static class DockerBuildContextArchive
     {
         try
         {
-            return StatX(-100, path, 0x100, 0x1, out LinuxStatx stat) == 0
-                ? stat.Mode
+            var result = StatX(-100, path, 0x100, 0x1, out LinuxStatx stat);
+            if (result == 0)
+                return stat.Mode;
+
+            return Marshal.GetLastWin32Error() == LinuxFunctionNotImplementedError
+                ? GetLinuxFileModeFromLStat(path)
                 : ThrowUnableToInspectFile(path);
         }
         catch (EntryPointNotFoundException)
@@ -315,10 +320,20 @@ internal static class DockerBuildContextArchive
 
     private static string ResolveDockerfileLinkTarget(string path)
     {
-        var file = new FileInfo(path);
-        return file.LinkTarget is null
-            ? path
-            : file.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? path;
+        var root = Path.GetPathRoot(path)!;
+        var resolvedPath = root;
+        var relativePath = Path.GetRelativePath(root, path);
+        foreach (var segment in relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            resolvedPath = Path.Combine(resolvedPath, segment);
+            FileSystemInfo entry = Directory.Exists(resolvedPath)
+                ? new DirectoryInfo(resolvedPath)
+                : new FileInfo(resolvedPath);
+            if (entry.LinkTarget is not null)
+                resolvedPath = entry.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? resolvedPath;
+        }
+
+        return resolvedPath;
     }
 
     private static string GetCanonicalPath(string path)
