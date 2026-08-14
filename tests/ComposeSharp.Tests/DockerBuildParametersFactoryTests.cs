@@ -1,5 +1,6 @@
 using System.Formats.Tar;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using ComposeSharp.Api;
@@ -311,6 +312,60 @@ public sealed class DockerBuildParametersFactoryTests
             var entries = ReadArchiveEntries(directory);
 
             Assert.DoesNotContain(fileName, entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_MatchesUnicodeScalarsForDockerIgnoreCharacterClasses()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var fileName = $"{char.ConvertFromUtf32(0x1F600)}.txt";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), $"[{char.ConvertFromUtf32(0x1F600)}].txt\n");
+        File.WriteAllText(Path.Combine(directory, fileName), "secret");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain(fileName, entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PathsAreEqual_ResolvesDirectorySymbolicLinks()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var targetDirectory = Path.Combine(directory, "target");
+        var aliasDirectory = Path.Combine(directory, "alias");
+        Directory.CreateDirectory(targetDirectory);
+        var targetPath = Path.Combine(targetDirectory, "archive.tar");
+        File.WriteAllText(targetPath, "archive");
+
+        try
+        {
+            Directory.CreateSymbolicLink(aliasDirectory, targetDirectory);
+        }
+        catch (IOException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+
+        try
+        {
+            var method = typeof(DockerBuildContextArchive).GetMethod("PathsAreEqual",
+                BindingFlags.NonPublic | BindingFlags.Static)!;
+
+            Assert.True((bool)method.Invoke(null, [Path.Combine(aliasDirectory, "archive.tar"), targetPath])!);
         }
         finally
         {

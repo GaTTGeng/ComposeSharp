@@ -21,7 +21,7 @@ internal static class DockerBuildContextArchive
 
         cancellationToken.ThrowIfCancellationRequested();
         var dockerfilePath = GetDockerfilePath(directory, dockerfile);
-        var dockerfileSourcePath = ResolveDockerfileLinkTarget(dockerfilePath);
+        var dockerfileSourcePath = ResolveFileSystemPath(dockerfilePath);
         dockerfileArchivePath ??= GetDockerfileArchivePath(directory, dockerfile);
         var isExternalDockerfile = !IsWithinDirectory(directory, dockerfileSourcePath);
         if (isExternalDockerfile && !File.Exists(dockerfileSourcePath))
@@ -131,8 +131,13 @@ internal static class DockerBuildContextArchive
         => archivePath.StartsWith(directoryPath + "/", StringComparison.Ordinal);
 
     private static bool PathsAreEqual(string left, string right)
-        => string.Equals(Path.GetFullPath(left), Path.GetFullPath(right),
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    {
+        var leftPath = Path.GetFullPath(left);
+        var rightPath = Path.GetFullPath(right);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return string.Equals(leftPath, rightPath, comparison) ||
+               string.Equals(ResolveFileSystemPath(leftPath), ResolveFileSystemPath(rightPath), comparison);
+    }
 
     private static string GetAvailableExternalDockerfileArchivePath(string directory)
     {
@@ -321,7 +326,7 @@ internal static class DockerBuildContextArchive
     }
 
     private static string GetDockerfileSourcePath(string directory, string? dockerfile)
-        => ResolveDockerfileLinkTarget(GetDockerfilePath(directory, dockerfile));
+        => ResolveFileSystemPath(GetDockerfilePath(directory, dockerfile));
 
     private static string GetDockerfilePath(string directory, string? dockerfile)
     {
@@ -329,7 +334,7 @@ internal static class DockerBuildContextArchive
         return OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? GetCanonicalPath(path) : path;
     }
 
-    private static string ResolveDockerfileLinkTarget(string path)
+    private static string ResolveFileSystemPath(string path)
     {
         var root = Path.GetPathRoot(path)!;
         var resolvedPath = root;
@@ -534,13 +539,14 @@ internal static class DockerBuildContextArchive
                 return false;
 
             var content = pattern[(index + 1)..end];
-            expression.Append('[');
-            if (content[0] is '!' or '^')
+            var isNegated = content[0] is '!' or '^';
+            if (isNegated)
             {
-                expression.Append('^');
                 content = content[1..];
             }
 
+            var characterClass = new StringBuilder();
+            var supplementaryScalars = new List<string>();
             for (var contentIndex = 0; contentIndex < content.Length; contentIndex++)
             {
                 var character = content[contentIndex];
@@ -548,11 +554,48 @@ internal static class DockerBuildContextArchive
                 if (escaped)
                     character = content[++contentIndex];
 
+                if (char.IsHighSurrogate(character) && contentIndex + 1 < content.Length &&
+                    char.IsLowSurrogate(content[contentIndex + 1]))
+                {
+                    supplementaryScalars.Add(new string([character, content[++contentIndex]]));
+                    continue;
+                }
+
                 if (character is '\\' or ']' || (escaped && (character is '-' or '^')))
-                    expression.Append('\\');
-                expression.Append(character);
+                    characterClass.Append('\\');
+                characterClass.Append(character);
             }
-            expression.Append(']');
+
+            if (supplementaryScalars.Count == 0)
+            {
+                expression.Append('[');
+                if (isNegated)
+                    expression.Append('^');
+                expression.Append(characterClass);
+                expression.Append(']');
+            }
+            else if (isNegated)
+            {
+                expression.Append("(?:[^\\uD800-\\uDFFF");
+                expression.Append(characterClass);
+                expression.Append("]|(?!(?:");
+                expression.Append(string.Join("|", supplementaryScalars.Select(Regex.Escape)));
+                expression.Append(")[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])");
+            }
+            else
+            {
+                expression.Append("(?:");
+                if (characterClass.Length > 0)
+                {
+                    expression.Append('[');
+                    expression.Append(characterClass);
+                    expression.Append(']');
+                    expression.Append('|');
+                }
+                expression.Append(string.Join("|", supplementaryScalars.Select(Regex.Escape)));
+                expression.Append(')');
+            }
+
             index = end;
             return true;
         }
