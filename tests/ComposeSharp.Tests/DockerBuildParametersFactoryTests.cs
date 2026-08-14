@@ -211,6 +211,25 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_RetainsEmptyDirectoryForChildOnlyDockerIgnorePattern()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(directory, "assets"));
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "assets/*\n");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.Contains("assets", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_NormalizesDockerIgnorePaths()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");

@@ -87,7 +87,7 @@ internal static class DockerBuildContextArchive
             var isDirectory = attributes.HasFlag(FileAttributes.Directory);
             var isSymbolicLink = attributes.HasFlag(FileAttributes.ReparsePoint);
             var isIgnored = !string.Equals(relativePath, dockerfileArchivePath, StringComparison.Ordinal) &&
-                            DockerIgnoreRule.IsIgnored(relativePath, isDirectory, ignoreRules);
+                            DockerIgnoreRule.IsIgnored(relativePath, ignoreRules);
             if (isIgnored)
             {
                 if (isDirectory && !isSymbolicLink &&
@@ -406,12 +406,12 @@ internal static class DockerBuildContextArchive
                 .ToList();
         }
 
-        public static bool IsIgnored(string relativePath, bool isDirectory, IReadOnlyList<DockerIgnoreRule> rules)
+        public static bool IsIgnored(string relativePath, IReadOnlyList<DockerIgnoreRule> rules)
         {
             var ignored = false;
             foreach (var rule in rules)
             {
-                if (rule.Matches(relativePath, isDirectory))
+                if (rule.Matches(relativePath))
                     ignored = !rule.Include;
             }
             return ignored;
@@ -460,8 +460,7 @@ internal static class DockerBuildContextArchive
         private string PatternText { get; } = patternText;
         private Regex Pattern { get; } = pattern;
 
-        private bool Matches(string relativePath, bool isDirectory)
-            => Pattern.IsMatch(relativePath) || (isDirectory && Pattern.IsMatch(relativePath + "/"));
+        private bool Matches(string relativePath) => Pattern.IsMatch(relativePath);
 
         private bool CanMatchDescendant(string relativePath)
         {
