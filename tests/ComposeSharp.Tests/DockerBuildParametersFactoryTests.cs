@@ -512,6 +512,34 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_TreatsDescendingDockerIgnoreCharacterClassRangesAsEmpty()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "[z-a].txt\n[^z-a].neg\n");
+        File.WriteAllText(Path.Combine(directory, "z.txt"), "retained");
+        File.WriteAllText(Path.Combine(directory, "a.txt"), "retained");
+        File.WriteAllText(Path.Combine(directory, "-.txt"), "retained");
+        File.WriteAllText(Path.Combine(directory, "z.neg"), "ignored");
+        File.WriteAllText(Path.Combine(directory, $"{char.ConvertFromUtf32(0x1F600)}.neg"), "ignored");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.Contains("z.txt", entries);
+            Assert.Contains("a.txt", entries);
+            Assert.Contains("-.txt", entries);
+            Assert.DoesNotContain("z.neg", entries);
+            Assert.DoesNotContain($"{char.ConvertFromUtf32(0x1F600)}.neg", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_HonorsLeadingWhitespaceInDockerIgnorePatterns()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
@@ -1235,11 +1263,14 @@ public sealed class DockerBuildParametersFactoryTests
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         var pipePath = Path.Combine(directory, "events");
+        var modificationTime = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
         if (MkFifo(pipePath, 0x1A4) != 0)
             throw new IOException("Unable to create a named pipe for the archive test.");
 
         try
         {
+            File.SetLastWriteTimeUtc(pipePath, modificationTime);
+
             using var archive = DockerBuildContextArchive.Create(directory);
             using var reader = new TarReader(archive);
             TarEntry? entry;
@@ -1249,6 +1280,7 @@ public sealed class DockerBuildParametersFactoryTests
                     continue;
 
                 Assert.Equal(TarEntryType.Fifo, entry.EntryType);
+                Assert.Equal(modificationTime, entry.ModificationTime.UtcDateTime);
                 return;
             }
 

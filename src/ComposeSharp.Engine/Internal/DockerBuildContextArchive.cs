@@ -266,7 +266,10 @@ internal static class DockerBuildContextArchive
     private static void WriteNamedPipe(TarWriter writer, string path, string archivePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var entry = new PaxTarEntry(TarEntryType.Fifo, archivePath);
+        var entry = new PaxTarEntry(TarEntryType.Fifo, archivePath)
+        {
+            ModificationTime = File.GetLastWriteTimeUtc(path)
+        };
         if (!OperatingSystem.IsWindows())
             entry.Mode = File.GetUnixFileMode(path);
         writer.WriteEntry(entry);
@@ -549,7 +552,15 @@ internal static class DockerBuildContextArchive
             if (isNegated)
                 content = content[1..];
             var scalarExpressions = ParseCharacterClassRanges(content)
-                .Select(range => ToUnicodeScalarRangeExpression(range.Start, range.End));
+                .Select(range => ToUnicodeScalarRangeExpression(range.Start, range.End))
+                .ToList();
+            if (scalarExpressions.Count == 0)
+            {
+                expression.Append(isNegated ? UnicodeScalarExpression : "(?!)");
+                index = end;
+                return true;
+            }
+
             var scalarClassExpression = string.Join("|", scalarExpressions);
             if (isNegated)
                 expression.Append("(?!(?:").Append(scalarClassExpression).Append("))").Append(UnicodeScalarExpression);
@@ -575,9 +586,10 @@ internal static class DockerBuildContextArchive
             for (var index = 0; index < tokens.Count;)
             {
                 if (index + 2 < tokens.Count && !tokens[index + 1].IsEscaped &&
-                    tokens[index + 1].Scalar == '-' && tokens[index].Scalar <= tokens[index + 2].Scalar)
+                    tokens[index + 1].Scalar == '-')
                 {
-                    ranges.Add((tokens[index].Scalar, tokens[index + 2].Scalar));
+                    if (tokens[index].Scalar <= tokens[index + 2].Scalar)
+                        ranges.Add((tokens[index].Scalar, tokens[index + 2].Scalar));
                     index += 3;
                     continue;
                 }
