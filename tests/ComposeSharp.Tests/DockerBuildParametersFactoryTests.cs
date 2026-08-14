@@ -131,7 +131,7 @@ public sealed class DockerBuildParametersFactoryTests
     [Fact]
     public void GetDockerfileArchivePath_UsesOnDiskCasingOnWindows()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS())
             return;
 
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
@@ -190,6 +190,29 @@ public sealed class DockerBuildParametersFactoryTests
             var entries = ReadArchiveEntries(directory);
 
             Assert.DoesNotContain("secrets.env", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_HonorsEscapedDockerIgnoreMetacharactersOnUnix()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "report\\[old\\].txt\n");
+        File.WriteAllText(Path.Combine(directory, "report[old].txt"), "secret");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain("report[old].txt", entries);
         }
         finally
         {

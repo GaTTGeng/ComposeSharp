@@ -257,10 +257,10 @@ internal static class DockerBuildContextArchive
     private static string GetDockerfileSourcePath(string directory, string? dockerfile)
     {
         var path = Path.GetFullPath(Path.Combine(directory, dockerfile ?? "Dockerfile"));
-        return OperatingSystem.IsWindows() ? GetCanonicalWindowsPath(path) : path;
+        return OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? GetCanonicalPath(path) : path;
     }
 
-    private static string GetCanonicalWindowsPath(string path)
+    private static string GetCanonicalPath(string path)
     {
         if (!File.Exists(path) && !Directory.Exists(path))
             return path;
@@ -348,8 +348,11 @@ internal static class DockerBuildContextArchive
 
         private static string NormalizePattern(string pattern)
         {
+            if (OperatingSystem.IsWindows())
+                pattern = pattern.Replace('\\', '/');
+
             var segments = new List<string>();
-            foreach (var segment in pattern.Replace('\\', '/').Split('/'))
+            foreach (var segment in pattern.Split('/'))
             {
                 if (segment is "" or ".")
                     continue;
@@ -400,7 +403,12 @@ internal static class DockerBuildContextArchive
             for (var index = 0; index < pattern.Length; index++)
             {
                 var character = pattern[index];
-                if (character == '*' && index + 1 < pattern.Length && pattern[index + 1] == '*')
+                if (character == '\\' && index + 1 < pattern.Length)
+                {
+                    index++;
+                    expression.Append(Regex.Escape(pattern[index].ToString()));
+                }
+                else if (character == '*' && index + 1 < pattern.Length && pattern[index + 1] == '*')
                 {
                     index++;
                     if (index + 1 < pattern.Length && pattern[index + 1] == '/')
