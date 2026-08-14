@@ -24,7 +24,7 @@ internal static class DockerBuildParametersFactory
             Labels = MergeStrings(build.Labels, options?.Labels),
             CacheFrom = build.CacheFrom?.ToList(),
             Target = options?.Target ?? build.Target,
-            Platform = options?.Platform ?? GetSinglePlatform(service.Name, build.Platforms),
+            Platform = options?.Platform ?? GetSinglePlatform(service.Name, build.Platforms) ?? service.Platform,
             NetworkMode = build.Network,
             ExtraHosts = build.ExtraHosts?.Select(host => $"{host.Key}:{host.Value}").ToList(),
             ShmSize = ParseBytes(build.ShmSize, "build.shm_size"),

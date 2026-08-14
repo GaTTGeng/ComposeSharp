@@ -93,10 +93,16 @@ internal static class DockerBuildContextArchive
                 writer.WriteEntry(entry);
                 WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, temporaryArchivePath, ignoreRules, cancellationToken);
             }
-            else if (IsNamedPipe(path))
-                WriteNamedPipe(writer, path, relativePath, cancellationToken);
             else
-                WriteFile(writer, path, relativePath, cancellationToken);
+            {
+                var fileType = GetUnixFileType(path);
+                if (fileType == UnixFileType.Socket)
+                    continue;
+                if (fileType == UnixFileType.NamedPipe)
+                    WriteNamedPipe(writer, path, relativePath, cancellationToken);
+                else
+                    WriteFile(writer, path, relativePath, cancellationToken);
+            }
         }
     }
 
@@ -166,17 +172,22 @@ internal static class DockerBuildContextArchive
         writer.WriteEntry(new PaxTarEntry(TarEntryType.SymbolicLink, relativePath) { LinkName = linkTarget });
     }
 
-    private static bool IsNamedPipe(string path)
+    private static UnixFileType GetUnixFileType(string path)
     {
         if (OperatingSystem.IsWindows())
-            return false;
+            return UnixFileType.Regular;
 
         var mode = OperatingSystem.IsLinux()
             ? GetLinuxFileMode(path)
             : OperatingSystem.IsMacOS()
                 ? GetMacOsFileMode(path)
                 : 0u;
-        return (mode & 0xF000) == 0x1000;
+        return (mode & 0xF000) switch
+        {
+            0x1000 => UnixFileType.NamedPipe,
+            0xC000 => UnixFileType.Socket,
+            _ => UnixFileType.Regular
+        };
     }
 
     private static uint GetLinuxFileMode(string path)
@@ -223,6 +234,13 @@ internal static class DockerBuildContextArchive
         if (!OperatingSystem.IsWindows())
             entry.Mode = File.GetUnixFileMode(path);
         writer.WriteEntry(entry);
+    }
+
+    private enum UnixFileType
+    {
+        Regular,
+        NamedPipe,
+        Socket
     }
 
     [DllImport("libc", EntryPoint = "statx", SetLastError = true)]

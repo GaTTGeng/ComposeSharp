@@ -1,4 +1,5 @@
 using System.Formats.Tar;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using ComposeSharp.Api;
@@ -90,6 +91,21 @@ public sealed class DockerBuildParametersFactoryTests
 
         Assert.Equal(64L * 1024 * 1024, parameters.ShmSize);
         Assert.Equal(2L * 1024 * 1024, parameters.Memory);
+    }
+
+    [Fact]
+    public void Create_UsesServicePlatformWhenBuildAndOperationPlatformsAreNotConfigured()
+    {
+        var service = LoadService("""
+            services:
+              app:
+                platform: linux/amd64
+                build: .
+            """);
+
+        var parameters = DockerBuildParametersFactory.Create(service, options: null);
+
+        Assert.Equal("linux/amd64", parameters.Platform);
     }
 
     [Fact]
@@ -671,6 +687,31 @@ public sealed class DockerBuildParametersFactoryTests
             }
 
             Assert.Fail("The named pipe was not included in the build context archive.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_SkipsUnixSockets()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var socketPath = Path.Combine(directory, "server.sock");
+
+        try
+        {
+            using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            socket.Bind(new UnixDomainSocketEndPoint(socketPath));
+
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain("server.sock", entries);
         }
         finally
         {
