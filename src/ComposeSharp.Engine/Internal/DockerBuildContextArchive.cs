@@ -541,7 +541,7 @@ internal static class DockerBuildContextArchive
                 return false;
 
             var content = pattern[(index + 1)..end];
-            var isNegated = content.Length > 1 && content[0] is '!' or '^';
+            var isNegated = content.Length > 1 && content[0] == '^';
             if (isNegated)
                 content = content[1..];
             var scalarExpressions = ParseCharacterClassRanges(content)

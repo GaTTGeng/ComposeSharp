@@ -371,7 +371,7 @@ public sealed class DockerBuildParametersFactoryTests
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
         var excludedFileName = $"{char.ConvertFromUtf32(0x1F600)}.txt";
         Directory.CreateDirectory(directory);
-        File.WriteAllText(Path.Combine(directory, ".dockerignore"), $"[!{char.ConvertFromUtf32(0x1F600)}].txt\n");
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), $"[^{char.ConvertFromUtf32(0x1F600)}].txt\n");
         File.WriteAllText(Path.Combine(directory, excludedFileName), "included");
         File.WriteAllText(Path.Combine(directory, "a.txt"), "ignored");
 
@@ -444,7 +444,7 @@ public sealed class DockerBuildParametersFactoryTests
         var rangeEnd = char.ConvertFromUtf32(0x1F603);
         var retainedFileName = $"{char.ConvertFromUtf32(0x1F601)}.txt";
         Directory.CreateDirectory(directory);
-        File.WriteAllText(Path.Combine(directory, ".dockerignore"), $"[!{rangeStart}-{rangeEnd}].txt\n");
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), $"[^{rangeStart}-{rangeEnd}].txt\n");
         File.WriteAllText(Path.Combine(directory, retainedFileName), "included");
         File.WriteAllText(Path.Combine(directory, "a.txt"), "ignored");
 
@@ -480,6 +480,30 @@ public sealed class DockerBuildParametersFactoryTests
             Assert.DoesNotContain("b.txt", entries);
             Assert.DoesNotContain(fileName, entries);
             Assert.Contains($"{char.ConvertFromUtf32(0x1F601)}.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_TreatsExclamationMarksAsPositiveDockerIgnoreCharacterClassMembers()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "[!a].txt\n");
+        File.WriteAllText(Path.Combine(directory, "!.txt"), "ignored");
+        File.WriteAllText(Path.Combine(directory, "a.txt"), "ignored");
+        File.WriteAllText(Path.Combine(directory, "b.txt"), "included");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain("!.txt", entries);
+            Assert.DoesNotContain("a.txt", entries);
+            Assert.Contains("b.txt", entries);
         }
         finally
         {
