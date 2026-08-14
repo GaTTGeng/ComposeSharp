@@ -131,7 +131,8 @@ internal static class DockerBuildContextArchive
         using var input = File.OpenRead(path);
         var entry = new PaxTarEntry(TarEntryType.RegularFile, archivePath)
         {
-            DataStream = new CancellationAwareReadStream(input, cancellationToken)
+            DataStream = new CancellationAwareReadStream(input, cancellationToken),
+            ModificationTime = File.GetLastWriteTimeUtc(path)
         };
         if (!OperatingSystem.IsWindows())
             entry.Mode = File.GetUnixFileMode(path);
@@ -153,24 +154,42 @@ internal static class DockerBuildContextArchive
 
     private static bool IsNamedPipe(string path)
     {
-        if (OperatingSystem.IsWindows() || (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()))
+        if (OperatingSystem.IsWindows())
             return false;
 
-        var buffer = Marshal.AllocHGlobal(512);
-        try
-        {
-            if (LStat(path, buffer) != 0)
-                throw new IOException($"Unable to inspect filesystem entry '{path}' (error {Marshal.GetLastWin32Error()}).");
-
-            var modeOffset = OperatingSystem.IsLinux() ? 24 : 4;
-            var mode = Marshal.ReadInt32(buffer, modeOffset);
-            return (mode & 0xF000) == 0x1000;
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(buffer);
-        }
+        var mode = OperatingSystem.IsLinux()
+            ? GetLinuxFileMode(path)
+            : OperatingSystem.IsMacOS()
+                ? GetMacOsFileMode(path)
+                : 0u;
+        return (mode & 0xF000) == 0x1000;
     }
+
+    private static uint GetLinuxFileMode(string path)
+        => RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => LStat(path, out LinuxX64Stat stat) == 0
+                ? stat.Mode
+                : ThrowUnableToInspectFile(path),
+            Architecture.Arm64 => LStat(path, out LinuxArm64Stat stat) == 0
+                ? stat.Mode
+                : ThrowUnableToInspectFile(path),
+            Architecture.X86 => LStat(path, out Linux32BitStat stat) == 0
+                ? stat.Mode
+                : ThrowUnableToInspectFile(path),
+            Architecture.Arm => LStat(path, out Linux32BitStat stat) == 0
+                ? stat.Mode
+                : ThrowUnableToInspectFile(path),
+            _ => 0u
+        };
+
+    private static uint GetMacOsFileMode(string path)
+        => LStat(path, out MacOsStat stat) == 0
+            ? stat.Mode
+            : ThrowUnableToInspectFile(path);
+
+    private static uint ThrowUnableToInspectFile(string path)
+        => throw new IOException($"Unable to inspect filesystem entry '{path}' (error {Marshal.GetLastWin32Error()}).");
 
     private static void WriteNamedPipe(TarWriter writer, string path, string archivePath, CancellationToken cancellationToken)
     {
@@ -182,7 +201,44 @@ internal static class DockerBuildContextArchive
     }
 
     [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
-    private static extern int LStat(string path, IntPtr buffer);
+    private static extern int LStat(string path, out LinuxX64Stat stat);
+
+    [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
+    private static extern int LStat(string path, out LinuxArm64Stat stat);
+
+    [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
+    private static extern int LStat(string path, out Linux32BitStat stat);
+
+    [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
+    private static extern int LStat(string path, out MacOsStat stat);
+
+    [StructLayout(LayoutKind.Explicit, Size = 512)]
+    private struct LinuxX64Stat
+    {
+        [FieldOffset(24)]
+        public uint Mode;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 512)]
+    private struct LinuxArm64Stat
+    {
+        [FieldOffset(16)]
+        public uint Mode;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 512)]
+    private struct Linux32BitStat
+    {
+        [FieldOffset(16)]
+        public uint Mode;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 512)]
+    private struct MacOsStat
+    {
+        [FieldOffset(4)]
+        public uint Mode;
+    }
 
     private static string GetDockerfileSourcePath(string directory, string? dockerfile)
         => Path.GetFullPath(Path.Combine(directory, dockerfile ?? "Dockerfile"));

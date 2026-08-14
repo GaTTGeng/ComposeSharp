@@ -301,6 +301,38 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_PreservesFileModificationTime()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var filePath = Path.Combine(directory, "source.txt");
+        var modificationTime = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        File.WriteAllText(filePath, "content");
+        File.SetLastWriteTimeUtc(filePath, modificationTime);
+
+        try
+        {
+            using var archive = DockerBuildContextArchive.Create(directory);
+            using var reader = new TarReader(archive);
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry()) is not null)
+            {
+                if (entry.Name != "source.txt")
+                    continue;
+
+                Assert.Equal(modificationTime, entry.ModificationTime.UtcDateTime);
+                return;
+            }
+
+            Assert.Fail("The source file was not included in the build context archive.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_PreservesUnixDirectoryPermissions()
     {
         if (OperatingSystem.IsWindows())
