@@ -9,6 +9,7 @@ internal static class DockerBuildContextArchive
 {
     private const string ExternalDockerfileArchivePathPrefix = "__external_dockerfile__";
     private const int LinuxFunctionNotImplementedError = 38;
+    private const string UnicodeScalarExpression = @"(?:[^/\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])";
 
     public static Stream Create(
         string directory,
@@ -405,8 +406,9 @@ internal static class DockerBuildContextArchive
 
             return File.ReadLines(path)
                 .Select((line, index) => index == 0 ? line.TrimStart('\uFEFF') : line)
+                .Where(line => !line.StartsWith('#'))
                 .Select(line => line.Trim())
-                .Where(line => line.Length > 0 && !line.StartsWith('#'))
+                .Where(line => line.Length > 0)
                 .Select(Create)
                 .ToList();
         }
@@ -519,7 +521,7 @@ internal static class DockerBuildContextArchive
                 }
                 else if (character == '?')
                 {
-                    expression.Append(@"(?:[^/\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])");
+                    expression.Append(UnicodeScalarExpression);
                 }
                 else if (character == '[' && TryAppendCharacterClass(pattern, ref index, expression))
                 {
@@ -539,98 +541,91 @@ internal static class DockerBuildContextArchive
                 return false;
 
             var content = pattern[(index + 1)..end];
-            var isNegated = content[0] is '!' or '^';
+            var isNegated = content.Length > 1 && content[0] is '!' or '^';
             if (isNegated)
-            {
                 content = content[1..];
-            }
-
-            var characterClass = new StringBuilder();
-            var supplementaryScalars = new List<string>();
-            var supplementaryRanges = new List<(int Start, int End)>();
-            for (var contentIndex = 0; contentIndex < content.Length; contentIndex++)
-            {
-                if (TryGetSupplementaryRange(content, contentIndex, out var rangeEnd, out var rangeStartScalar,
-                        out var rangeEndScalar))
-                {
-                    supplementaryRanges.Add((rangeStartScalar, rangeEndScalar));
-                    contentIndex = rangeEnd;
-                    continue;
-                }
-
-                var character = content[contentIndex];
-                var escaped = character == '\\' && contentIndex + 1 < content.Length;
-                if (escaped)
-                    character = content[++contentIndex];
-
-                if (char.IsHighSurrogate(character) && contentIndex + 1 < content.Length &&
-                    char.IsLowSurrogate(content[contentIndex + 1]))
-                {
-                    supplementaryScalars.Add(new string([character, content[++contentIndex]]));
-                    continue;
-                }
-
-                if (character is '\\' or ']' || (escaped && (character is '-' or '^')))
-                    characterClass.Append('\\');
-                characterClass.Append(character);
-            }
-
-            var supplementaryExpressions = supplementaryScalars.Select(Regex.Escape)
-                .Concat(supplementaryRanges.Select(range => ToSupplementaryRangeExpression(range.Start, range.End)))
-                .ToList();
-            if (supplementaryExpressions.Count == 0)
-            {
-                expression.Append('[');
-                if (isNegated)
-                    expression.Append('^');
-                expression.Append(characterClass);
-                expression.Append(']');
-            }
-            else if (isNegated)
-            {
-                expression.Append("(?:[^\\uD800-\\uDFFF");
-                expression.Append(characterClass);
-                expression.Append("]|(?!(?:");
-                expression.Append(string.Join("|", supplementaryExpressions));
-                expression.Append("))[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])");
-            }
+            var scalarExpressions = ParseCharacterClassRanges(content)
+                .Select(range => ToUnicodeScalarRangeExpression(range.Start, range.End));
+            var scalarClassExpression = string.Join("|", scalarExpressions);
+            if (isNegated)
+                expression.Append("(?!(?:").Append(scalarClassExpression).Append("))").Append(UnicodeScalarExpression);
             else
-            {
-                expression.Append("(?:");
-                if (characterClass.Length > 0)
-                {
-                    expression.Append('[');
-                    expression.Append(characterClass);
-                    expression.Append(']');
-                    expression.Append('|');
-                }
-                expression.Append(string.Join("|", supplementaryExpressions));
-                expression.Append(')');
-            }
+                expression.Append("(?:").Append(scalarClassExpression).Append(')');
 
             index = end;
             return true;
         }
 
-        private static bool TryGetSupplementaryRange(string content, int start, out int end, out int startScalar,
-            out int endScalar)
+        private static IReadOnlyList<(int Start, int End)> ParseCharacterClassRanges(string content)
         {
-            end = start;
-            startScalar = 0;
-            endScalar = 0;
-            if (start + 4 >= content.Length || !char.IsHighSurrogate(content[start]) ||
-                !char.IsLowSurrogate(content[start + 1]) || content[start + 2] != '-' ||
-                !char.IsHighSurrogate(content[start + 3]) || !char.IsLowSurrogate(content[start + 4]))
-                return false;
+            var tokens = new List<(int Scalar, bool IsEscaped)>();
+            for (var index = 0; index < content.Length;)
+            {
+                var isEscaped = content[index] == '\\' && index + 1 < content.Length;
+                if (isEscaped)
+                    index++;
+                tokens.Add((ReadUnicodeScalar(content, ref index), isEscaped));
+            }
 
-            startScalar = char.ConvertToUtf32(content, start);
-            endScalar = char.ConvertToUtf32(content, start + 3);
-            if (startScalar > endScalar)
-                return false;
+            var ranges = new List<(int Start, int End)>();
+            for (var index = 0; index < tokens.Count;)
+            {
+                if (index + 2 < tokens.Count && !tokens[index + 1].IsEscaped &&
+                    tokens[index + 1].Scalar == '-' && tokens[index].Scalar <= tokens[index + 2].Scalar)
+                {
+                    ranges.Add((tokens[index].Scalar, tokens[index + 2].Scalar));
+                    index += 3;
+                    continue;
+                }
 
-            end = start + 4;
-            return true;
+                ranges.Add((tokens[index].Scalar, tokens[index].Scalar));
+                index++;
+            }
+
+            return ranges;
         }
+
+        private static int ReadUnicodeScalar(string text, ref int index)
+        {
+            if (char.IsHighSurrogate(text[index]) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1]))
+            {
+                var scalar = char.ConvertToUtf32(text, index);
+                index += 2;
+                return scalar;
+            }
+
+            return text[index++];
+        }
+
+        private static string ToUnicodeScalarRangeExpression(int startScalar, int endScalar)
+        {
+            var expressions = new List<string>();
+            if (startScalar <= 0xFFFF)
+                expressions.AddRange(ToBmpRangeExpressions(startScalar, Math.Min(endScalar, 0xFFFF)));
+            if (endScalar >= 0x10000)
+                expressions.Add(ToSupplementaryRangeExpression(Math.Max(startScalar, 0x10000), endScalar));
+            return expressions.Count switch
+            {
+                0 => "(?!)",
+                1 => expressions[0],
+                _ => $"(?:{string.Join("|", expressions)})"
+            };
+        }
+
+        private static IReadOnlyList<string> ToBmpRangeExpressions(int startScalar, int endScalar)
+        {
+            var expressions = new List<string>();
+            if (startScalar <= 0xD7FF)
+                expressions.Add(ToBmpRangeExpression(startScalar, Math.Min(endScalar, 0xD7FF)));
+            if (endScalar >= 0xE000)
+                expressions.Add(ToBmpRangeExpression(Math.Max(startScalar, 0xE000), endScalar));
+            return expressions;
+        }
+
+        private static string ToBmpRangeExpression(int startScalar, int endScalar)
+            => startScalar == endScalar
+                ? ToUnicodeEscape(startScalar)
+                : $"[{ToUnicodeEscape(startScalar)}-{ToUnicodeEscape(endScalar)}]";
 
         private static string ToSupplementaryRangeExpression(int startScalar, int endScalar)
         {
@@ -652,7 +647,7 @@ internal static class DockerBuildContextArchive
             return $"(?:{string.Join("|", expressions)})";
         }
 
-        private static string ToUnicodeEscape(char character) => $"\\u{(int)character:X4}";
+        private static string ToUnicodeEscape(int scalar) => $"\\u{scalar:X4}";
 
         private static int FindCharacterClassEnd(string pattern, int start)
         {

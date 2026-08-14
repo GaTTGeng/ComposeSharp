@@ -299,6 +299,31 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_HonorsEscapedHyphensInDockerIgnoreCharacterClassesOnUnix()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "report[\\-].txt\n");
+        File.WriteAllText(Path.Combine(directory, "report-.txt"), "ignored");
+        File.WriteAllText(Path.Combine(directory, "reporta.txt"), "included");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain("report-.txt", entries);
+            Assert.Contains("reporta.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_MatchesUnicodeScalarsForDockerIgnoreQuestionMarks()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
@@ -381,6 +406,100 @@ public sealed class DockerBuildParametersFactoryTests
 
             Assert.DoesNotContain(fileName, entries);
             Assert.Contains("a.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_MatchesUnicodeScalarsForBmpOnlyNegatedDockerIgnoreCharacterClasses()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var fileName = $"{char.ConvertFromUtf32(0x1F600)}.txt";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "[^a].txt\n");
+        File.WriteAllText(Path.Combine(directory, fileName), "ignored");
+        File.WriteAllText(Path.Combine(directory, "a.txt"), "included");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain(fileName, entries);
+            Assert.Contains("a.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_MatchesUnicodeScalarRangesForNegatedDockerIgnoreCharacterClasses()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var rangeStart = char.ConvertFromUtf32(0x1F600);
+        var rangeEnd = char.ConvertFromUtf32(0x1F603);
+        var retainedFileName = $"{char.ConvertFromUtf32(0x1F601)}.txt";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), $"[!{rangeStart}-{rangeEnd}].txt\n");
+        File.WriteAllText(Path.Combine(directory, retainedFileName), "included");
+        File.WriteAllText(Path.Combine(directory, "a.txt"), "ignored");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.Contains(retainedFileName, entries);
+            Assert.DoesNotContain("a.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_MatchesCrossPlaneUnicodeRangesForDockerIgnoreCharacterClasses()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var rangeEnd = char.ConvertFromUtf32(0x1F600);
+        var fileName = $"{rangeEnd}.txt";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), $"[a-{rangeEnd}].txt\n");
+        File.WriteAllText(Path.Combine(directory, "b.txt"), "ignored");
+        File.WriteAllText(Path.Combine(directory, fileName), "ignored");
+        File.WriteAllText(Path.Combine(directory, $"{char.ConvertFromUtf32(0x1F601)}.txt"), "included");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain("b.txt", entries);
+            Assert.DoesNotContain(fileName, entries);
+            Assert.Contains($"{char.ConvertFromUtf32(0x1F601)}.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_HonorsLeadingWhitespaceInDockerIgnorePatterns()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "  #secret\n");
+        File.WriteAllText(Path.Combine(directory, "#secret"), "ignored");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain("#secret", entries);
         }
         finally
         {
