@@ -15,7 +15,8 @@ internal static class DockerBuildContextArchive
             throw new DirectoryNotFoundException($"Build context directory '{directory}' does not exist.");
 
         cancellationToken.ThrowIfCancellationRequested();
-        var dockerfileSourcePath = GetDockerfileSourcePath(directory, dockerfile);
+        var dockerfilePath = GetDockerfilePath(directory, dockerfile);
+        var dockerfileSourcePath = ResolveDockerfileLinkTarget(dockerfilePath);
         var dockerfileArchivePath = GetDockerfileArchivePath(directory, dockerfile);
         var isExternalDockerfile = !IsWithinDirectory(directory, dockerfileSourcePath);
         if (isExternalDockerfile && !File.Exists(dockerfileSourcePath))
@@ -26,7 +27,10 @@ internal static class DockerBuildContextArchive
         {
             using (var writer = new TarWriter(archive, leaveOpen: true))
             {
-                WriteDirectoryEntries(writer, directory, directory, dockerfileArchivePath, archive.Name, ignoreRules, cancellationToken);
+                var linkedDockerfilePath = isExternalDockerfile && IsWithinDirectory(directory, dockerfilePath)
+                    ? dockerfilePath
+                    : null;
+                WriteDirectoryEntries(writer, directory, directory, dockerfileArchivePath, linkedDockerfilePath, archive.Name, ignoreRules, cancellationToken);
 
                 if (isExternalDockerfile)
                     WriteFile(writer, dockerfileSourcePath, dockerfileArchivePath, cancellationToken);
@@ -55,6 +59,7 @@ internal static class DockerBuildContextArchive
         string rootDirectory,
         string directory,
         string dockerfileArchivePath,
+        string? linkedDockerfilePath,
         string temporaryArchivePath,
         IReadOnlyList<DockerIgnoreRule> ignoreRules,
         CancellationToken cancellationToken)
@@ -63,6 +68,8 @@ internal static class DockerBuildContextArchive
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (PathsAreEqual(path, temporaryArchivePath))
+                continue;
+            if (linkedDockerfilePath is not null && PathsAreEqual(path, linkedDockerfilePath))
                 continue;
 
             var relativePath = ToArchivePath(rootDirectory, path);
@@ -76,7 +83,7 @@ internal static class DockerBuildContextArchive
                 if (isDirectory && !isSymbolicLink &&
                     (ContainsArchivePath(relativePath, dockerfileArchivePath) ||
                      DockerIgnoreRule.ShouldTraverseIgnoredDirectory(relativePath, ignoreRules)))
-                    WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, temporaryArchivePath, ignoreRules, cancellationToken);
+                    WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, linkedDockerfilePath, temporaryArchivePath, ignoreRules, cancellationToken);
                 continue;
             }
 
@@ -91,13 +98,15 @@ internal static class DockerBuildContextArchive
                 if (!OperatingSystem.IsWindows())
                     entry.Mode = File.GetUnixFileMode(path);
                 writer.WriteEntry(entry);
-                WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, temporaryArchivePath, ignoreRules, cancellationToken);
+                WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, linkedDockerfilePath, temporaryArchivePath, ignoreRules, cancellationToken);
             }
             else
             {
                 var fileType = GetUnixFileType(path);
                 if (fileType == UnixFileType.Socket)
                     continue;
+                if (fileType == UnixFileType.Device)
+                    throw new NotSupportedException($"Build context contains an unsupported Unix device node at '{path}'.");
                 if (fileType == UnixFileType.NamedPipe)
                     WriteNamedPipe(writer, path, relativePath, cancellationToken);
                 else
@@ -185,6 +194,7 @@ internal static class DockerBuildContextArchive
         return (mode & 0xF000) switch
         {
             0x1000 => UnixFileType.NamedPipe,
+            0x2000 or 0x6000 => UnixFileType.Device,
             0xC000 => UnixFileType.Socket,
             _ => UnixFileType.Regular
         };
@@ -240,7 +250,8 @@ internal static class DockerBuildContextArchive
     {
         Regular,
         NamedPipe,
-        Socket
+        Socket,
+        Device
     }
 
     [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
@@ -294,9 +305,20 @@ internal static class DockerBuildContextArchive
     }
 
     private static string GetDockerfileSourcePath(string directory, string? dockerfile)
+        => ResolveDockerfileLinkTarget(GetDockerfilePath(directory, dockerfile));
+
+    private static string GetDockerfilePath(string directory, string? dockerfile)
     {
         var path = Path.GetFullPath(Path.Combine(directory, dockerfile ?? "Dockerfile"));
         return OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? GetCanonicalPath(path) : path;
+    }
+
+    private static string ResolveDockerfileLinkTarget(string path)
+    {
+        var file = new FileInfo(path);
+        return file.LinkTarget is null
+            ? path
+            : file.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? path;
     }
 
     private static string GetCanonicalPath(string path)

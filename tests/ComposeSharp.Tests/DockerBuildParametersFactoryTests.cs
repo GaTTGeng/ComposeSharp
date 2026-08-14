@@ -529,6 +529,48 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_StagesDockerfileSymlinkedOutsideTheContextByContent()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var contextDirectory = Path.Combine(directory, "app");
+        Directory.CreateDirectory(contextDirectory);
+        File.WriteAllText(Path.Combine(directory, "Containerfile"), "FROM scratch");
+        try
+        {
+            File.CreateSymbolicLink(Path.Combine(contextDirectory, "Dockerfile"), "../Containerfile");
+        }
+        catch (IOException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+
+        try
+        {
+            var archivePath = DockerBuildContextArchive.GetDockerfileArchivePath(contextDirectory, "Dockerfile");
+            using var archive = DockerBuildContextArchive.Create(contextDirectory, "Dockerfile");
+            using var reader = new TarReader(archive);
+            var entries = new List<TarEntry>();
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry()) is not null)
+                entries.Add(entry);
+
+            Assert.Equal("__external_dockerfile__", archivePath);
+            Assert.DoesNotContain(entries, entry => entry.Name == "Dockerfile");
+            Assert.Contains(entries, entry => entry.Name == archivePath && entry.EntryType == TarEntryType.RegularFile);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_StagesExternalDockerfileAtAnUnusedPath()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
