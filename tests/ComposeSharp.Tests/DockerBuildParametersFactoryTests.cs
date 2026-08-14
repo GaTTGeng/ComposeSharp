@@ -1075,6 +1075,64 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CreateArchive_PreservesSymbolicLinkModificationTime(bool directoryLink)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var targetPath = Path.Combine(directory, directoryLink ? "target" : "target.txt");
+        var linkPath = Path.Combine(directory, directoryLink ? "linked" : "linked.txt");
+        var modificationTime = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        if (directoryLink)
+            Directory.CreateDirectory(targetPath);
+        else
+            File.WriteAllText(targetPath, "content");
+
+        try
+        {
+            if (directoryLink)
+                Directory.CreateSymbolicLink(linkPath, Path.GetFileName(targetPath));
+            else
+                File.CreateSymbolicLink(linkPath, Path.GetFileName(targetPath));
+        }
+        catch (IOException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+
+        try
+        {
+            File.SetLastWriteTimeUtc(linkPath, modificationTime);
+
+            using var archive = DockerBuildContextArchive.Create(directory);
+            using var reader = new TarReader(archive);
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry()) is not null)
+            {
+                if (entry.Name != Path.GetFileName(linkPath))
+                    continue;
+
+                Assert.Equal(TarEntryType.SymbolicLink, entry.EntryType);
+                Assert.Equal(modificationTime, entry.ModificationTime.UtcDateTime);
+                return;
+            }
+
+            Assert.Fail("The symbolic link was not included in the build context archive.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void CreateArchive_NormalizesRelativeSymbolicLinkTargets()
     {

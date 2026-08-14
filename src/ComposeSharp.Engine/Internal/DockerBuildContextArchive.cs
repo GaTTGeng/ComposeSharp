@@ -196,7 +196,11 @@ internal static class DockerBuildContextArchive
         if (OperatingSystem.IsWindows() && !Path.IsPathRooted(linkTarget))
             linkTarget = linkTarget.Replace('\\', '/');
 
-        writer.WriteEntry(new PaxTarEntry(TarEntryType.SymbolicLink, relativePath) { LinkName = linkTarget });
+        writer.WriteEntry(new PaxTarEntry(TarEntryType.SymbolicLink, relativePath)
+        {
+            LinkName = linkTarget,
+            ModificationTime = File.GetLastWriteTimeUtc(path)
+        });
     }
 
     private static UnixFileType GetUnixFileType(string path)
