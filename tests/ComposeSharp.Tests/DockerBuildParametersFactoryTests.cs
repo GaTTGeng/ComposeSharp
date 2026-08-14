@@ -571,6 +571,42 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_UsesRequestedDockerfileSpecificIgnoreFileWhenDockerfileIsLinked()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var dockerDirectory = Path.Combine(directory, "docker");
+        Directory.CreateDirectory(dockerDirectory);
+        File.WriteAllText(Path.Combine(dockerDirectory, "Containerfile"), "FROM scratch");
+        File.WriteAllText(Path.Combine(directory, "Dockerfile.dockerignore"), "secrets.env\n");
+        File.WriteAllText(Path.Combine(directory, "secrets.env"), "secret");
+        try
+        {
+            File.CreateSymbolicLink(Path.Combine(directory, "Dockerfile"), "docker/Containerfile");
+        }
+        catch (IOException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory, "Dockerfile");
+
+            Assert.DoesNotContain("secrets.env", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_StagesDockerfileThroughExternalLinkedDirectoryByContent()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");

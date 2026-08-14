@@ -22,7 +22,7 @@ internal static class DockerBuildContextArchive
         var isExternalDockerfile = !IsWithinDirectory(directory, dockerfileSourcePath);
         if (isExternalDockerfile && !File.Exists(dockerfileSourcePath))
             throw new FileNotFoundException($"Dockerfile '{dockerfile}' does not exist.", dockerfileSourcePath);
-        var ignoreRules = DockerIgnoreRule.Read(directory, dockerfileSourcePath);
+        var ignoreRules = DockerIgnoreRule.Read(directory, dockerfilePath);
         var archive = CreateTemporaryArchive();
         try
         {
@@ -298,8 +298,8 @@ internal static class DockerBuildContextArchive
     [StructLayout(LayoutKind.Explicit, Size = 256)]
     private struct LinuxX86Stat
     {
-        [FieldOffset(12)]
-        public ushort Mode;
+        [FieldOffset(16)]
+        public uint Mode;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 512)]
