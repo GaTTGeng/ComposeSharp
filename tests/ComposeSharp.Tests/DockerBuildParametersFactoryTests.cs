@@ -263,12 +263,35 @@ public sealed class DockerBuildParametersFactoryTests
         Directory.CreateDirectory(directory);
         File.WriteAllText(Path.Combine(directory, ".dockerignore"), "report[\\]].txt\n");
         File.WriteAllText(Path.Combine(directory, "report].txt"), "secret");
+        File.WriteAllText(Path.Combine(directory, "report\\.txt"), "included");
 
         try
         {
             var entries = ReadArchiveEntries(directory);
 
             Assert.DoesNotContain("report].txt", entries);
+            Assert.Contains("report\\.txt", entries);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateArchive_MatchesUnicodeScalarsForDockerIgnoreQuestionMarks()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var fileName = $"{char.ConvertFromUtf32(0x1F600)}.txt";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".dockerignore"), "?.txt\n");
+        File.WriteAllText(Path.Combine(directory, fileName), "secret");
+
+        try
+        {
+            var entries = ReadArchiveEntries(directory);
+
+            Assert.DoesNotContain(fileName, entries);
         }
         finally
         {

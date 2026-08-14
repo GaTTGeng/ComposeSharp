@@ -515,7 +515,7 @@ internal static class DockerBuildContextArchive
                 }
                 else if (character == '?')
                 {
-                    expression.Append("[^/]");
+                    expression.Append(@"(?:[^/\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])");
                 }
                 else if (character == '[' && TryAppendCharacterClass(pattern, ref index, expression))
                 {
@@ -542,9 +542,14 @@ internal static class DockerBuildContextArchive
                 content = content[1..];
             }
 
-            foreach (var character in content)
+            for (var contentIndex = 0; contentIndex < content.Length; contentIndex++)
             {
-                if (character is '\\' or ']')
+                var character = content[contentIndex];
+                var escaped = character == '\\' && contentIndex + 1 < content.Length;
+                if (escaped)
+                    character = content[++contentIndex];
+
+                if (character is '\\' or ']' || (escaped && (character is '-' or '^')))
                     expression.Append('\\');
                 expression.Append(character);
             }
