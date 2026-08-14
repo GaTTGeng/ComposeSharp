@@ -868,6 +868,32 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_RejectsExternalDockerfileNamedPipes()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var contextDirectory = Path.Combine(directory, "app");
+        var dockerfilePath = Path.Combine(directory, "Dockerfile");
+        Directory.CreateDirectory(contextDirectory);
+        if (MkFifo(dockerfilePath, 0x1A4) != 0)
+            throw new IOException("Unable to create a named pipe for the archive test.");
+
+        try
+        {
+            var exception = Assert.Throws<NotSupportedException>(() =>
+                DockerBuildContextArchive.Create(contextDirectory, "../Dockerfile"));
+
+            Assert.Contains("named pipe", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_StagesDockerfileSymlinkedOutsideTheContextByContent()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");

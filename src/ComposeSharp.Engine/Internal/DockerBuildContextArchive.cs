@@ -25,8 +25,12 @@ internal static class DockerBuildContextArchive
         var dockerfileSourcePath = ResolveFileSystemPath(dockerfilePath);
         dockerfileArchivePath ??= GetDockerfileArchivePath(directory, dockerfile);
         var isExternalDockerfile = !IsWithinDirectory(directory, dockerfileSourcePath);
-        if (isExternalDockerfile && !File.Exists(dockerfileSourcePath))
-            throw new FileNotFoundException($"Dockerfile '{dockerfile}' does not exist.", dockerfileSourcePath);
+        if (isExternalDockerfile)
+        {
+            if (!PathExists(dockerfileSourcePath))
+                throw new FileNotFoundException($"Dockerfile '{dockerfile}' does not exist.", dockerfileSourcePath);
+            EnsureExternalDockerfileIsRegularFile(dockerfileSourcePath);
+        }
         var ignoreRules = DockerIgnoreRule.Read(directory, dockerfilePath);
         var archive = CreateTemporaryArchive();
         try
@@ -166,6 +170,26 @@ internal static class DockerBuildContextArchive
         catch (DirectoryNotFoundException)
         {
             return false;
+        }
+    }
+
+    private static void EnsureExternalDockerfileIsRegularFile(string path)
+    {
+        if (Directory.Exists(path))
+            throw new NotSupportedException($"External Dockerfile '{path}' must be a regular file.");
+
+        switch (GetUnixFileType(path))
+        {
+            case UnixFileType.Regular:
+                return;
+            case UnixFileType.NamedPipe:
+                throw new NotSupportedException($"External Dockerfile '{path}' cannot be a named pipe.");
+            case UnixFileType.Socket:
+                throw new NotSupportedException($"External Dockerfile '{path}' cannot be a Unix socket.");
+            case UnixFileType.Device:
+                throw new NotSupportedException($"External Dockerfile '{path}' cannot be a Unix device node.");
+            default:
+                throw new NotSupportedException($"External Dockerfile '{path}' must be a regular file.");
         }
     }
 
