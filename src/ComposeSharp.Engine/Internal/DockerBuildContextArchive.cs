@@ -187,7 +187,7 @@ internal static class DockerBuildContextArchive
         if (string.IsNullOrWhiteSpace(linkTarget))
             throw new IOException($"Unable to read symbolic link target for '{path}'.");
 
-        if (!Path.IsPathRooted(linkTarget))
+        if (OperatingSystem.IsWindows() && !Path.IsPathRooted(linkTarget))
             linkTarget = linkTarget.Replace('\\', '/');
 
         writer.WriteEntry(new PaxTarEntry(TarEntryType.SymbolicLink, relativePath) { LinkName = linkTarget });
@@ -530,7 +530,7 @@ internal static class DockerBuildContextArchive
 
         private static bool TryAppendCharacterClass(string pattern, ref int index, StringBuilder expression)
         {
-            var end = pattern.IndexOf(']', index + 1);
+            var end = FindCharacterClassEnd(pattern, index + 1);
             if (end < 0 || end == index + 1)
                 return false;
 
@@ -551,6 +551,23 @@ internal static class DockerBuildContextArchive
             expression.Append(']');
             index = end;
             return true;
+        }
+
+        private static int FindCharacterClassEnd(string pattern, int start)
+        {
+            for (var index = start; index < pattern.Length; index++)
+            {
+                if (pattern[index] == '\\' && index + 1 < pattern.Length)
+                {
+                    index++;
+                    continue;
+                }
+
+                if (pattern[index] == ']')
+                    return index;
+            }
+
+            return -1;
         }
     }
 
