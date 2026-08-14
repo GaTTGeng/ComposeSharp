@@ -8,6 +8,20 @@ namespace ComposeSharp.Tests;
 public sealed class ProfileServiceSelectorTests
 {
     [Fact]
+    public void CreateAuthConfig_DefaultsAnUnspecifiedRegistryToDockerHub()
+    {
+        var auth = ImageManager.CreateAuthConfig(new DockerRegistryAuth
+        {
+            Username = "user",
+            Password = "password"
+        });
+
+        Assert.Equal("https://index.docker.io/v1/", auth.ServerAddress);
+        Assert.Equal("user", auth.Username);
+        Assert.Equal("password", auth.Password);
+    }
+
+    [Fact]
     public async Task PullImagesAsync_EmptyServiceSelectionDoesNotAttemptPull()
     {
         await new ImageManager().PullImagesAsync(null!, [], auth: null, CancellationToken.None);

@@ -180,9 +180,33 @@ internal static class DockerBuildContextArchive
     }
 
     private static uint GetLinuxFileMode(string path)
-        => StatX(-100, path, 0x100, 0x1, out LinuxStatx stat) == 0
-            ? stat.Mode
-            : ThrowUnableToInspectFile(path);
+    {
+        try
+        {
+            return StatX(-100, path, 0x100, 0x1, out LinuxStatx stat) == 0
+                ? stat.Mode
+                : ThrowUnableToInspectFile(path);
+        }
+        catch (EntryPointNotFoundException)
+        {
+            return GetLinuxFileModeFromLStat(path);
+        }
+    }
+
+    private static uint GetLinuxFileModeFromLStat(string path)
+    {
+        var result = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => LStat(path, out LinuxX64Stat stat) == 0 ? stat.Mode : ThrowUnableToInspectFile(path),
+            Architecture.Arm64 => LStat(path, out LinuxArm64Stat stat) == 0 ? stat.Mode : ThrowUnableToInspectFile(path),
+            Architecture.X86 => LStat(path, out LinuxX86Stat stat) == 0 ? stat.Mode : ThrowUnableToInspectFile(path),
+            Architecture.Arm => LStat(path, out LinuxX86Stat stat) == 0 ? stat.Mode : ThrowUnableToInspectFile(path),
+            _ => throw new PlatformNotSupportedException(
+                $"Unable to inspect filesystem entries without statx on {RuntimeInformation.ProcessArchitecture}.")
+        };
+
+        return result;
+    }
 
     private static uint GetMacOsFileMode(string path)
         => LStat(path, out MacOsStat stat) == 0
@@ -207,10 +231,40 @@ internal static class DockerBuildContextArchive
     [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
     private static extern int LStat(string path, out MacOsStat stat);
 
+    [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
+    private static extern int LStat(string path, out LinuxX64Stat stat);
+
+    [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
+    private static extern int LStat(string path, out LinuxArm64Stat stat);
+
+    [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
+    private static extern int LStat(string path, out LinuxX86Stat stat);
+
     [StructLayout(LayoutKind.Explicit, Size = 256)]
     private struct LinuxStatx
     {
         [FieldOffset(28)]
+        public ushort Mode;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct LinuxX64Stat
+    {
+        [FieldOffset(24)]
+        public uint Mode;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct LinuxArm64Stat
+    {
+        [FieldOffset(16)]
+        public uint Mode;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct LinuxX86Stat
+    {
+        [FieldOffset(12)]
         public ushort Mode;
     }
 
