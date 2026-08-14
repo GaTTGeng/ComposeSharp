@@ -505,6 +505,50 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void CreateArchive_NormalizesRelativeSymbolicLinkTargets()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");
+        var targetDirectory = Path.Combine(directory, "target");
+        Directory.CreateDirectory(targetDirectory);
+        File.WriteAllText(Path.Combine(targetDirectory, "file.txt"), "content");
+        try
+        {
+            File.CreateSymbolicLink(Path.Combine(directory, "linked.txt"), "target\\file.txt");
+        }
+        catch (IOException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Directory.Delete(directory, recursive: true);
+            return;
+        }
+
+        try
+        {
+            using var archive = DockerBuildContextArchive.Create(directory);
+            using var reader = new TarReader(archive);
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry()) is not null)
+            {
+                if (entry.Name != "linked.txt")
+                    continue;
+
+                Assert.Equal("target/file.txt", entry.LinkName);
+                return;
+            }
+
+            Assert.Fail("The symbolic link was not included in the build context archive.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateArchive_PreservesNamedPipes()
     {
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())

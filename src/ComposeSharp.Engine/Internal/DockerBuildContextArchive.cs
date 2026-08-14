@@ -26,7 +26,7 @@ internal static class DockerBuildContextArchive
         {
             using (var writer = new TarWriter(archive, leaveOpen: true))
             {
-                WriteDirectoryEntries(writer, directory, directory, dockerfileArchivePath, ignoreRules, cancellationToken);
+                WriteDirectoryEntries(writer, directory, directory, dockerfileArchivePath, archive.Name, ignoreRules, cancellationToken);
 
                 if (isExternalDockerfile)
                     WriteFile(writer, dockerfileSourcePath, dockerfileArchivePath, cancellationToken);
@@ -55,12 +55,16 @@ internal static class DockerBuildContextArchive
         string rootDirectory,
         string directory,
         string dockerfileArchivePath,
+        string temporaryArchivePath,
         IReadOnlyList<DockerIgnoreRule> ignoreRules,
         CancellationToken cancellationToken)
     {
         foreach (var path in Directory.EnumerateFileSystemEntries(directory).OrderBy(path => path, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (PathsAreEqual(path, temporaryArchivePath))
+                continue;
+
             var relativePath = ToArchivePath(rootDirectory, path);
             var attributes = File.GetAttributes(path);
             var isDirectory = attributes.HasFlag(FileAttributes.Directory);
@@ -72,7 +76,7 @@ internal static class DockerBuildContextArchive
                 if (isDirectory && !isSymbolicLink &&
                     (ContainsArchivePath(relativePath, dockerfileArchivePath) ||
                      DockerIgnoreRule.ShouldTraverseIgnoredDirectory(relativePath, ignoreRules)))
-                    WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, ignoreRules, cancellationToken);
+                    WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, temporaryArchivePath, ignoreRules, cancellationToken);
                 continue;
             }
 
@@ -84,7 +88,7 @@ internal static class DockerBuildContextArchive
                 if (!OperatingSystem.IsWindows())
                     entry.Mode = File.GetUnixFileMode(path);
                 writer.WriteEntry(entry);
-                WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, ignoreRules, cancellationToken);
+                WriteDirectoryEntries(writer, rootDirectory, path, dockerfileArchivePath, temporaryArchivePath, ignoreRules, cancellationToken);
             }
             else if (IsNamedPipe(path))
                 WriteNamedPipe(writer, path, relativePath, cancellationToken);
@@ -95,6 +99,10 @@ internal static class DockerBuildContextArchive
 
     private static bool ContainsArchivePath(string directoryPath, string archivePath)
         => archivePath.StartsWith(directoryPath + "/", StringComparison.Ordinal);
+
+    private static bool PathsAreEqual(string left, string right)
+        => string.Equals(Path.GetFullPath(left), Path.GetFullPath(right),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     private static string GetAvailableExternalDockerfileArchivePath(string directory)
     {
@@ -148,6 +156,9 @@ internal static class DockerBuildContextArchive
             : new FileInfo(path).LinkTarget;
         if (string.IsNullOrWhiteSpace(linkTarget))
             throw new IOException($"Unable to read symbolic link target for '{path}'.");
+
+        if (!Path.IsPathRooted(linkTarget))
+            linkTarget = linkTarget.Replace('\\', '/');
 
         writer.WriteEntry(new PaxTarEntry(TarEntryType.SymbolicLink, relativePath) { LinkName = linkTarget });
     }
