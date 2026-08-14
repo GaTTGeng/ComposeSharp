@@ -76,6 +76,23 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     [Fact]
+    public void Create_AcceptsStandardByteUnitSuffixes()
+    {
+        var service = LoadService("""
+            services:
+              app:
+                build:
+                  context: .
+                  shm_size: 64mb
+            """);
+
+        var parameters = DockerBuildParametersFactory.Create(service, new ComposeBuildOptions { Memory = "2MiB" });
+
+        Assert.Equal(64L * 1024 * 1024, parameters.ShmSize);
+        Assert.Equal(2L * 1024 * 1024, parameters.Memory);
+    }
+
+    [Fact]
     public void CreateArchive_IncludesBuildFilesUsingRelativePaths()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-context-{Guid.NewGuid():N}");

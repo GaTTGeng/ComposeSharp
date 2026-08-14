@@ -180,22 +180,9 @@ internal static class DockerBuildContextArchive
     }
 
     private static uint GetLinuxFileMode(string path)
-        => RuntimeInformation.ProcessArchitecture switch
-        {
-            Architecture.X64 => LStat(path, out LinuxX64Stat stat) == 0
-                ? stat.Mode
-                : ThrowUnableToInspectFile(path),
-            Architecture.Arm64 => LStat(path, out LinuxArm64Stat stat) == 0
-                ? stat.Mode
-                : ThrowUnableToInspectFile(path),
-            Architecture.X86 => LStat(path, out Linux32BitStat stat) == 0
-                ? stat.Mode
-                : ThrowUnableToInspectFile(path),
-            Architecture.Arm => LStat(path, out Linux32BitStat stat) == 0
-                ? stat.Mode
-                : ThrowUnableToInspectFile(path),
-            _ => 0u
-        };
+        => StatX(-100, path, 0x100, 0x1, out LinuxStatx stat) == 0
+            ? stat.Mode
+            : ThrowUnableToInspectFile(path);
 
     private static uint GetMacOsFileMode(string path)
         => LStat(path, out MacOsStat stat) == 0
@@ -214,37 +201,17 @@ internal static class DockerBuildContextArchive
         writer.WriteEntry(entry);
     }
 
-    [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
-    private static extern int LStat(string path, out LinuxX64Stat stat);
-
-    [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
-    private static extern int LStat(string path, out LinuxArm64Stat stat);
-
-    [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
-    private static extern int LStat(string path, out Linux32BitStat stat);
+    [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
+    private static extern int StatX(int directoryFileDescriptor, string path, int flags, uint mask, out LinuxStatx stat);
 
     [DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
     private static extern int LStat(string path, out MacOsStat stat);
 
-    [StructLayout(LayoutKind.Explicit, Size = 512)]
-    private struct LinuxX64Stat
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct LinuxStatx
     {
-        [FieldOffset(24)]
-        public uint Mode;
-    }
-
-    [StructLayout(LayoutKind.Explicit, Size = 512)]
-    private struct LinuxArm64Stat
-    {
-        [FieldOffset(16)]
-        public uint Mode;
-    }
-
-    [StructLayout(LayoutKind.Explicit, Size = 512)]
-    private struct Linux32BitStat
-    {
-        [FieldOffset(16)]
-        public uint Mode;
+        [FieldOffset(28)]
+        public ushort Mode;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 512)]
@@ -270,8 +237,9 @@ internal static class DockerBuildContextArchive
         var currentPath = root;
         foreach (var segment in relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
         {
-            var matchingPath = Directory.EnumerateFileSystemEntries(currentPath)
-                .FirstOrDefault(entry => string.Equals(Path.GetFileName(entry), segment, StringComparison.OrdinalIgnoreCase));
+            var entries = Directory.EnumerateFileSystemEntries(currentPath).ToList();
+            var matchingPath = entries.FirstOrDefault(entry => string.Equals(Path.GetFileName(entry), segment, StringComparison.Ordinal)) ??
+                               entries.FirstOrDefault(entry => string.Equals(Path.GetFileName(entry), segment, StringComparison.OrdinalIgnoreCase));
             if (matchingPath is null)
                 return path;
 

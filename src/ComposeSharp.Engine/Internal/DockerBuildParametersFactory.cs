@@ -93,21 +93,23 @@ internal static class DockerBuildParametersFactory
             return null;
 
         var text = value.Trim();
-        var multiplier = 1L;
-        if (char.IsLetter(text[^1]))
+        var suffixStart = text.Length;
+        while (suffixStart > 0 && char.IsLetter(text[suffixStart - 1]))
+            suffixStart--;
+        var suffix = text[suffixStart..].ToUpperInvariant();
+        var multiplier = suffix switch
         {
-            multiplier = char.ToUpperInvariant(text[^1]) switch
-            {
-                'K' => 1024L,
-                'M' => 1024L * 1024,
-                'G' => 1024L * 1024 * 1024,
-                _ => throw new ArgumentException($"{property} must be an integer byte count or use a K, M, or G suffix.", property)
-            };
-            text = text[..^1];
-        }
+            "" or "B" => 1L,
+            "K" or "KB" or "KIB" => 1024L,
+            "M" or "MB" or "MIB" => 1024L * 1024,
+            "G" or "GB" or "GIB" => 1024L * 1024 * 1024,
+            "T" or "TB" or "TIB" => 1024L * 1024 * 1024 * 1024,
+            _ => throw new ArgumentException($"{property} must be an integer byte count or use a supported byte-unit suffix.", property)
+        };
+        text = text[..suffixStart];
 
         if (!long.TryParse(text, out var bytes) || bytes < 0)
-            throw new ArgumentException($"{property} must be an integer byte count or use a K, M, or G suffix.", property);
+            throw new ArgumentException($"{property} must be an integer byte count or use a supported byte-unit suffix.", property);
 
         try
         {
