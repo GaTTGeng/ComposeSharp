@@ -22,6 +22,7 @@ public sealed class ComposeService : IComposeService
     public async Task BuildAsync(ComposeProjectContext context, ComposeBuildOptions? options = null, CancellationToken cancellationToken = default)
     {
         var project = LoadProjectInternal(context);
+        using var client = _clientFactory.CreateClient(context.SocketPath);
         var targetServices = ProfileServiceSelector
             .Select(project, context.Profiles, options?.Services)
             .Where(service => service.Build is not null)
@@ -30,19 +31,26 @@ public sealed class ComposeService : IComposeService
         foreach (var service in targetServices)
         {
             var build = service.Build!;
-            var psi = new System.Diagnostics.ProcessStartInfo("docker", $"build -t {service.Image ?? service.Name}")
-            {
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            if (build.Context is not null) psi.ArgumentList.Add(build.Context);
-            if (build.Dockerfile is not null) psi.ArgumentList.Add($"--file={build.Dockerfile}");
-            if (build.Target is not null) psi.ArgumentList.Add($"--target={build.Target}");
-            if (options?.NoCache == true || build.NoCache == true) psi.ArgumentList.Add("--no-cache");
+            var contextDirectory = Path.GetFullPath(Path.Combine(project.WorkingDirectory, build.Context ?? build.ContextDirectory ?? "."));
+            var parameters = DockerBuildParametersFactory.Create(service, options);
+            var dockerfile = parameters.Dockerfile;
+            var dockerfileArchivePath = DockerBuildContextArchive.GetDockerfileArchivePath(contextDirectory, dockerfile);
+            parameters.Dockerfile = dockerfileArchivePath;
+            await using var archive = DockerBuildContextArchive.Create(
+                contextDirectory, dockerfile, dockerfileArchivePath, cancellationToken);
+            var progress = new BuildProgress(service.Name, options?.LogConsumer);
+            var authConfigs = context.RegistryAuth is { } auth
+                ? new[] { ImageManager.CreateAuthConfig(auth) }
+                : [];
 
-            var proc = System.Diagnostics.Process.Start(psi);
-            if (proc is not null) await proc.WaitForExitAsync(cancellationToken);
+            await client.Images.BuildImageFromDockerfileAsync(
+                parameters,
+                archive,
+                authConfigs,
+                null,
+                progress,
+                cancellationToken);
+            progress.ThrowIfFailed();
         }
     }
 
@@ -635,5 +643,27 @@ public sealed class ComposeService : IComposeService
             }
         }
         return result;
+    }
+
+    private sealed class BuildProgress(string serviceName, ILogConsumer? consumer) : IProgress<JSONMessage>
+    {
+        private string? _error;
+
+        public void Report(JSONMessage value)
+        {
+            var message = value.ErrorMessage ?? value.Error?.Message ?? value.Stream ?? value.ProgressMessage ?? value.Status;
+            if (!string.IsNullOrWhiteSpace(value.ErrorMessage ?? value.Error?.Message))
+                Interlocked.CompareExchange(ref _error, message, null);
+
+            if (!string.IsNullOrWhiteSpace(message))
+                consumer?.OnStatus(serviceName, message.TrimEnd());
+        }
+
+        public void ThrowIfFailed()
+        {
+            var error = Volatile.Read(ref _error);
+            if (error is not null)
+                throw new InvalidOperationException($"Docker build for service '{serviceName}' failed: {error}");
+        }
     }
 }

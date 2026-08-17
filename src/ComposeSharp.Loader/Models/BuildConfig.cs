@@ -3,7 +3,7 @@ namespace ComposeSharp.Loader.Models;
 public sealed record BuildConfig(
     string? Context,
     string? Dockerfile,
-    IReadOnlyDictionary<string, string>? Args,
+    IReadOnlyDictionary<string, string?>? Args,
     IReadOnlyList<string>? CacheFrom,
     IReadOnlyList<string>? CacheTo,
     string? Target,

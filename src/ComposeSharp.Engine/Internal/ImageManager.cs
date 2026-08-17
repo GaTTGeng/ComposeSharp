@@ -7,6 +7,8 @@ namespace ComposeSharp.Engine.Internal;
 
 internal sealed class ImageManager
 {
+    private const string DockerHubRegistryAddress = "https://index.docker.io/v1/";
+
     private readonly DockerClientFactory _factory = new();
 
     public async Task PullImageAsync(DockerClient client, DockerRegistryAuth? auth, string image, CancellationToken ct)
@@ -75,7 +77,15 @@ internal sealed class ImageManager
     }
 
     public static AuthConfig CreateAuthConfig(DockerRegistryAuth? auth)
-        => new() { Username = auth?.Username, Password = auth?.Password, Email = auth?.Email, ServerAddress = auth?.ServerAddress };
+        => new()
+        {
+            Username = auth?.Username,
+            Password = auth?.Password,
+            Email = auth?.Email,
+            ServerAddress = auth is null || !string.IsNullOrWhiteSpace(auth.ServerAddress)
+                ? auth?.ServerAddress
+                : DockerHubRegistryAddress
+        };
 
     public static (string FromImage, string Tag) SplitImage(string image)
     {

@@ -20,7 +20,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | --- | --- | --- | --- |
 | Service key | `Name` | Applied | Identifies the service in resource names and project labels. |
 | `image` | `Image` | Applied | Used to create and pull container images. |
-| `build` | `Build` | Parsed only / [planned](https://github.com/GaTTGeng/ComposeSharp/issues/14) | The loader retains `context`, `dockerfile`, `args`, cache settings, `target`, `tags`, `labels`, `network`, `extra_hosts`, `privileged`, `shm_size`, `platforms`, `pull`, `no_cache`, and `context_directory`. It does not retain `secrets`, `ssh`, or `additional_contexts`. `BuildAsync` currently combines `Arguments` with `ArgumentList`; a non-null build context causes process startup to fail before Docker receives the settings. |
+| `build` | `Build` | Partial | `BuildAsync` packages the local context into a temporary archive file, applying the selected Dockerfile's `.dockerignore` when present (otherwise the root file), including supported glob character classes; it preserves symbolic links and Unix file modes. Ignored directory trees are skipped unless a negated rule can restore a descendant. A selected Dockerfile outside the build context is staged at a safe archive path; archive creation observes cancellation. The operation then uses Docker Engine's build endpoint. It retains the selected Dockerfile even when an ignore rule matches it. It applies `context`, `dockerfile`, `args`, `cache_from`, `target`, `tags`, `labels`, `network`, `extra_hosts`, `shm_size`, one `platform`, `pull`, and `no_cache`; valueless build arguments inherit from the process environment when present, and operation options override build args, labels, target, platform, pull, and no-cache. Build status messages are exposed through `ComposeBuildOptions.LogConsumer`, and daemon-reported build-stream errors fail the operation. `cache_to`, multiple platforms, `privileged`, `builder`, and progress mode are not applied. The loader does not retain `secrets`, `ssh`, or `additional_contexts`. |
 | `container_name` | `ContainerName` | Applied | Used for a single replica; scaled services retain project-generated names. |
 | `command`, `entrypoint` | `Command`, `Entrypoint` | Partial | List syntax is passed to Docker's create-container request. Scalar values are passed as one argument rather than split into a command and arguments. |
 | `environment`, `env_file` | `Environment`, `EnvFile` | Partial | Inline environment and values read from scalar or list-of-string `env_file` entries are passed to the container, and their original paths are retained for inspection. Long `env_file` syntax and advanced Compose environment semantics are not implemented. |
@@ -72,7 +72,6 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 
 ## Related work
 
-- [Issue #14](https://github.com/GaTTGeng/ComposeSharp/issues/14) will replace the process-backed build path with Docker Engine APIs.
 - [Issue #19](https://github.com/GaTTGeng/ComposeSharp/issues/19) will make dependency ordering and readiness deliberate and testable.
 - [Issue #23](https://github.com/GaTTGeng/ComposeSharp/issues/23) tracks a broader matrix of tested Compose constructs and environments.
 
