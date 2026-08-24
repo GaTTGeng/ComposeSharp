@@ -49,7 +49,7 @@ internal sealed class ImageManager
 
         foreach (var container in containers)
         {
-            if (services is { Count: > 0 })
+            if (services is not null)
             {
                 var labels = container.Labels ?? new Dictionary<string, string>();
                 labels.TryGetValue(ComposeConstants.ServiceLabel, out var svc);

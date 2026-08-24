@@ -189,7 +189,7 @@ internal sealed class ContainerLifecycle
     private async Task<IReadOnlyList<ContainerListResponse>> GetTargetContainersAsync(
         DockerClient client, string projectName, IReadOnlyList<string>? services, bool all, CancellationToken ct)
     {
-        if (services is { Count: > 0 })
+        if (services is not null)
         {
             var allContainers = new List<ContainerListResponse>();
             foreach (var svc in services)
