@@ -198,6 +198,118 @@ public class ComposeServiceIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task LifecycleOperations_ApplyProfilesAndAllowExplicitServiceSelection()
+    {
+        if (!DockerAvailable) return;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"profile-lifecycle-{suffix}");
+        var projectName = $"profile-lifecycle-{suffix}";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+              debug:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                profiles: [debug]
+            """);
+
+        var defaultContext = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var profileContext = defaultContext with { Profiles = ["debug"] };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(profileContext);
+            await service.StopAsync(defaultContext);
+
+            var defaultContainers = await service.PsAsync(defaultContext, new ComposePsOptions { All = true });
+            var explicitDebugContainers = await service.PsAsync(defaultContext, new ComposePsOptions
+            {
+                All = true,
+                Services = ["debug"]
+            });
+
+            var app = Assert.Single(defaultContainers);
+            var debug = Assert.Single(explicitDebugContainers);
+            Assert.Equal("app", app.Service);
+            Assert.Equal("exited", app.State, ignoreCase: true);
+            Assert.Equal("debug", debug.Service);
+            Assert.Equal("running", debug.State, ignoreCase: true);
+
+            await service.StartAsync(defaultContext);
+            app = Assert.Single(await service.PsAsync(defaultContext));
+            Assert.Equal("running", app.State, ignoreCase: true);
+
+            await service.DownAsync(defaultContext);
+            Assert.Empty(await service.PsAsync(defaultContext, new ComposePsOptions { All = true }));
+            Assert.Single(await service.PsAsync(defaultContext, new ComposePsOptions
+            {
+                All = true,
+                Services = ["debug"]
+            }));
+        }
+        finally
+        {
+            try { await service.DownAsync(profileContext); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task LifecycleOperations_DoNothing_WhenProfileSelectionIsEmpty()
+    {
+        if (!DockerAvailable) return;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"profile-empty-{suffix}");
+        var projectName = $"profile-empty-{suffix}";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              debug:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                profiles: [debug]
+            """);
+
+        var defaultContext = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var profileContext = defaultContext with { Profiles = ["debug"] };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(profileContext);
+            await service.StopAsync(defaultContext);
+
+            var debug = Assert.Single(await service.PsAsync(defaultContext, new ComposePsOptions
+            {
+                All = true,
+                Services = ["debug"]
+            }));
+            Assert.Equal("running", debug.State, ignoreCase: true);
+        }
+        finally
+        {
+            try { await service.DownAsync(profileContext); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
     private sealed class TestLogConsumer : ILogConsumer
     {
         public List<string> Logs { get; } = [];

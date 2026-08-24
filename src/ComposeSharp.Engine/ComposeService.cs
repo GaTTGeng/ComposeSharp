@@ -85,21 +85,15 @@ public sealed class ComposeService : IComposeService
 
     public async Task DownAsync(ComposeProjectContext context, ComposeDownOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var selection = SelectExistingServices(context, options?.Services);
+        var targetServiceNames = selection.ServiceNames?.ToHashSet(StringComparer.Ordinal);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var timeout = options?.TimeoutSeconds.HasValue == true
             ? new ContainerStopParameters { WaitBeforeKillSeconds = (uint)options.TimeoutSeconds.Value }
             : new ContainerStopParameters { WaitBeforeKillSeconds = 10 };
 
         var containers = await _containers.ListProjectContainersAsync(client, context.ProjectName, true, cancellationToken);
-
-        if (options?.Services is { Count: > 0 })
-        {
-            containers = containers.Where(c =>
-            {
-                var labels = c.Labels ?? new Dictionary<string, string>();
-                return labels.TryGetValue(ComposeConstants.ServiceLabel, out var svc) && svc is not null && options.Services.Contains(svc);
-            }).ToList();
-        }
+        containers = FilterContainersByService(containers, targetServiceNames);
 
         foreach (var container in containers)
         {
@@ -108,7 +102,7 @@ public sealed class ComposeService : IComposeService
             await _containers.RemoveContainerAsync(client, container.ID, true, cancellationToken);
         }
 
-        if (options?.Services is not { Count: > 0 })
+        if (selection.IncludesAllDefinedServices)
         {
             await _networks.CleanupNetworksAsync(client, context.ProjectName, cancellationToken);
             if (options?.RemoveVolumes == true)
@@ -147,20 +141,23 @@ public sealed class ComposeService : IComposeService
 
     public async Task StartAsync(ComposeProjectContext context, ComposeStartOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        await _containers.StartContainersAsync(client, context.ProjectName, options?.Services, cancellationToken);
+        await _containers.StartContainersAsync(client, context.ProjectName, services, cancellationToken);
     }
 
     public async Task StopAsync(ComposeProjectContext context, ComposeStopOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        await _containers.StopContainersAsync(client, context.ProjectName, options?.Services, options?.TimeoutSeconds, cancellationToken);
+        await _containers.StopContainersAsync(client, context.ProjectName, services, options?.TimeoutSeconds, cancellationToken);
     }
 
     public async Task RestartAsync(ComposeProjectContext context, ComposeRestartOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        await _containers.RestartContainersAsync(client, context.ProjectName, options?.Services, options?.TimeoutSeconds, cancellationToken);
+        await _containers.RestartContainersAsync(client, context.ProjectName, services, options?.TimeoutSeconds, cancellationToken);
     }
 
     public async Task PullAsync(ComposeProjectContext context, ComposePullOptions? options = null, CancellationToken cancellationToken = default)
@@ -189,8 +186,9 @@ public sealed class ComposeService : IComposeService
 
     public async Task KillAsync(ComposeProjectContext context, ComposeKillOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        await _containers.KillContainersAsync(client, context.ProjectName, options?.Services, options?.Signal ?? "SIGKILL", cancellationToken);
+        await _containers.KillContainersAsync(client, context.ProjectName, services, options?.Signal ?? "SIGKILL", cancellationToken);
     }
 
     public async Task<string> RunAsync(ComposeProjectContext context, string serviceName, ComposeRunOptions? options = null, CancellationToken cancellationToken = default)
@@ -221,10 +219,11 @@ public sealed class ComposeService : IComposeService
 
     public async Task RemoveAsync(ComposeProjectContext context, ComposeRemoveOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
         if (options?.Stop == true)
-            await _containers.StopContainersAsync(client, context.ProjectName, options.Services, null, cancellationToken);
-        await _containers.RemoveContainersAsync(client, context.ProjectName, options?.Services, options?.Force ?? false, options?.Volumes ?? false, cancellationToken);
+            await _containers.StopContainersAsync(client, context.ProjectName, services, null, cancellationToken);
+        await _containers.RemoveContainersAsync(client, context.ProjectName, services, options?.Force ?? false, options?.Volumes ?? false, cancellationToken);
     }
 
     public async Task<ExecResult> ExecAsync(ComposeProjectContext context, string serviceName, ComposeExecOptions options, CancellationToken cancellationToken = default)
@@ -289,29 +288,30 @@ public sealed class ComposeService : IComposeService
 
     public async Task PauseAsync(ComposeProjectContext context, ComposePauseOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        await _containers.PauseContainersAsync(client, context.ProjectName, options?.Services, cancellationToken);
+        await _containers.PauseContainersAsync(client, context.ProjectName, services, cancellationToken);
     }
 
     public async Task UnPauseAsync(ComposeProjectContext context, ComposePauseOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        await _containers.UnPauseContainersAsync(client, context.ProjectName, options?.Services, cancellationToken);
+        await _containers.UnPauseContainersAsync(client, context.ProjectName, services, cancellationToken);
     }
 
     public async Task<IReadOnlyList<ContainerSummary>> PsAsync(ComposeProjectContext context, ComposePsOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var containers = await _containers.ListProjectContainersAsync(client, context.ProjectName, options?.All ?? true, cancellationToken);
+        containers = FilterContainersByService(containers, services);
 
         var result = new List<ContainerSummary>();
         foreach (var container in containers)
         {
             var labels = container.Labels ?? new Dictionary<string, string>();
             labels.TryGetValue(ComposeConstants.ServiceLabel, out var serviceName);
-
-            if (options?.Services is { Count: > 0 } && (serviceName is null || !options.Services.Contains(serviceName)))
-                continue;
 
             result.Add(new ContainerSummary
             {
@@ -368,8 +368,9 @@ public sealed class ComposeService : IComposeService
 
     public async Task<IReadOnlyList<ImageSummary>> ImagesAsync(ComposeProjectContext context, ComposeImagesOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        return await _images.ListImagesAsync(client, context.ProjectName, options?.Services, cancellationToken);
+        return await _images.ListImagesAsync(client, context.ProjectName, services, cancellationToken);
     }
 
     public async Task<(string Host, int Port)> PortAsync(ComposeProjectContext context, string serviceName, int containerPort, ComposePortOptions? options = null, CancellationToken cancellationToken = default)
@@ -389,12 +390,17 @@ public sealed class ComposeService : IComposeService
 
     public async Task LogsAsync(ComposeProjectContext context, ComposeLogsOptions? options = null, ILogConsumer? consumer = null, CancellationToken cancellationToken = default)
     {
+        var effectiveOptions = (options ?? new ComposeLogsOptions()) with
+        {
+            Services = SelectExistingServices(context, options?.Services).ServiceNames
+        };
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        await _logs.LogsAsync(client, context.ProjectName, options ?? new ComposeLogsOptions(), consumer, cancellationToken);
+        await _logs.LogsAsync(client, context.ProjectName, effectiveOptions, consumer, cancellationToken);
     }
 
     public async IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var since = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
@@ -406,7 +412,7 @@ public sealed class ComposeService : IComposeService
                 var labels = container.Labels ?? new Dictionary<string, string>();
                 labels.TryGetValue(ComposeConstants.ServiceLabel, out var svc);
 
-                if (options?.Services is { Count: > 0 } && (svc is null || !options.Services.Contains(svc)))
+                if (services is not null && (svc is null || !services.Contains(svc)))
                     continue;
 
                 yield return new ComposeEvent
@@ -450,15 +456,10 @@ public sealed class ComposeService : IComposeService
 
     public async Task<WaitResult> WaitAsync(ComposeProjectContext context, ComposeWaitOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var containers = await _containers.ListProjectContainersAsync(client, context.ProjectName, false, cancellationToken);
-
-        if (options?.Services is { Count: > 0 })
-            containers = containers.Where(c =>
-            {
-                var labels = c.Labels ?? new Dictionary<string, string>();
-                return labels.TryGetValue(ComposeConstants.ServiceLabel, out var svc) && svc is not null && options.Services.Contains(svc);
-            }).ToList();
+        containers = FilterContainersByService(containers, services);
 
         var exitCodes = new Dictionary<string, int>();
         var tasks = containers.Select(async container =>
@@ -613,6 +614,50 @@ public sealed class ComposeService : IComposeService
     {
         return _loader.Load(context.WorkingDirectory, context.ComposeFileName);
     }
+
+    private ExistingServiceSelection SelectExistingServices(
+        ComposeProjectContext context,
+        IReadOnlyList<string>? explicitServices)
+    {
+        ComposeProject project;
+        try
+        {
+            project = LoadProjectInternal(context);
+        }
+        catch (FileNotFoundException) when (context.Profiles is not { Count: > 0 })
+        {
+            return explicitServices is { Count: > 0 }
+                ? new ExistingServiceSelection(explicitServices.ToList(), IncludesAllDefinedServices: false)
+                : new ExistingServiceSelection(ServiceNames: null, IncludesAllDefinedServices: true);
+        }
+
+        var selected = ProfileServiceSelector.Select(project, context.Profiles, explicitServices);
+        return new ExistingServiceSelection(
+            selected.Select(service => service.Name).ToList(),
+            explicitServices is not { Count: > 0 } && selected.Count == project.Services.Count);
+    }
+
+    private static IReadOnlyList<ContainerListResponse> FilterContainersByService(
+        IReadOnlyList<ContainerListResponse> containers,
+        IReadOnlySet<string>? services)
+    {
+        if (services is null)
+            return containers;
+
+        return containers.Where(container =>
+        {
+            var labels = container.Labels ?? new Dictionary<string, string>();
+            return labels.TryGetValue(ComposeConstants.ServiceLabel, out var service) &&
+                   service is not null &&
+                   services.Contains(service);
+        }).ToList();
+    }
+
+    // A null service list preserves label-only behavior when no Compose file exists.
+    // An empty list is a verified profile selection that must remain a no-op.
+    private sealed record ExistingServiceSelection(
+        IReadOnlyList<string>? ServiceNames,
+        bool IncludesAllDefinedServices);
 
     private static IReadOnlyList<ServiceDefinition> GetOrderedServices(
         ComposeProject project,
