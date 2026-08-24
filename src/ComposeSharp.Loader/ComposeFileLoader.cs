@@ -85,8 +85,8 @@ public sealed class ComposeFileLoader
                 composePath,
                 "$",
                 "the YAML document is malformed.",
-                line: exception.Start.Line + 1,
-                column: exception.Start.Column + 1,
+                line: exception.Start.Line,
+                column: exception.Start.Column,
                 innerException: exception);
         }
     }

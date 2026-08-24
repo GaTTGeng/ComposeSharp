@@ -148,9 +148,9 @@ public sealed class ComposeLoaderValidationTests
         var exception = Assert.Throws<ComposeValidationException>(() => files.Load());
 
         AssertProjectDiagnostic(exception, files.PrimaryPath, "$", "malformed");
-        Assert.NotNull(exception.Line);
-        Assert.NotNull(exception.Column);
-        Assert.IsAssignableFrom<YamlException>(exception.InnerException);
+        var parserException = Assert.IsAssignableFrom<YamlException>(exception.InnerException);
+        Assert.Equal(parserException.Start.Line, exception.Line);
+        Assert.Equal(parserException.Start.Column, exception.Column);
     }
 
     [Fact]
