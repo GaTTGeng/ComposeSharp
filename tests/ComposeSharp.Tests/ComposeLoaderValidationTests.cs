@@ -164,6 +164,23 @@ public sealed class ComposeLoaderValidationTests
         AssertServiceDiagnostic(exception, files.OverlayPath!, "api", "services.api.build", "scalar or YAML mapping");
     }
 
+    [Theory]
+    [InlineData("image: app", "image: null", "services.api.image")]
+    [InlineData("build: .", "build: null", "services.api.build")]
+    public void LoadMerged_OverlayRemovingOnlyImageOrBuild_ReportsOverlaySource(
+        string baseProperty,
+        string overlayProperty,
+        string path)
+    {
+        using var files = new ComposeFiles(
+            $"services:\n  api:\n    {baseProperty}\n",
+            $"services:\n  api:\n    {overlayProperty}\n");
+
+        var exception = Assert.Throws<ComposeValidationException>(() => files.LoadMerged());
+
+        AssertServiceDiagnostic(exception, files.OverlayPath!, "api", path, "image");
+    }
+
     [Fact]
     public void LoadMerged_InvalidBaseListItem_ReportsBaseSourceAfterOverlayAppend()
     {

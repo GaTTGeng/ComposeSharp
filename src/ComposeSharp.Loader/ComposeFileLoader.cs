@@ -317,7 +317,17 @@ public sealed class ComposeFileLoader
         var hasImage = TryGetValue(service, "image", out var image) && image is not null;
         var hasBuild = TryGetValue(service, "build", out var build) && build is not null;
         if (!hasImage && !hasBuild)
-            throw Validation(context, path, "the service must specify either 'image' or 'build'.");
+        {
+            var imagePath = $"{path}.image";
+            var buildPath = $"{path}.build";
+            var serviceSource = context.SourceFor(path);
+            var failurePath = context.SourceFor(imagePath) != serviceSource
+                ? imagePath
+                : context.SourceFor(buildPath) != serviceSource
+                    ? buildPath
+                    : path;
+            throw Validation(context, failurePath, "the service must specify either 'image' or 'build'.");
+        }
 
         ValidateListOrMap(service, "environment", $"{path}.environment", context);
         ValidatePorts(service, path, context);
