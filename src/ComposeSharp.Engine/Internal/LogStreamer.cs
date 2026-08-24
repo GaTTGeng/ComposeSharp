@@ -73,7 +73,7 @@ internal sealed class LogStreamer
     private static async Task<IReadOnlyList<ContainerListResponse>> GetLogContainersAsync(
         DockerClient client, string projectName, IReadOnlyList<string>? services, CancellationToken ct)
     {
-        if (services is { Count: > 0 })
+        if (services is not null)
         {
             var all = new List<ContainerListResponse>();
             foreach (var svc in services)

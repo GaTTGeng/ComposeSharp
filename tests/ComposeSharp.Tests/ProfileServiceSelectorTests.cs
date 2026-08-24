@@ -87,6 +87,24 @@ public sealed class ProfileServiceSelectorTests
     }
 
     [Fact]
+    public void Select_IncludesServicesMatchingOneActiveProfile()
+    {
+        var services = ProfileServiceSelector.Select(CreateProject(), ["tests"]);
+
+        Assert.Equal(["app", "tests"], services.Select(service => service.Name));
+    }
+
+    [Fact]
+    public void Select_ReturnsEmpty_WhenEveryServiceHasAnInactiveProfile()
+    {
+        var project = CreateProject() with { Services = [CreateService("debug", ["debug"])] };
+
+        var services = ProfileServiceSelector.Select(project, profiles: null);
+
+        Assert.Empty(services);
+    }
+
+    [Fact]
     public void Select_ExplicitServiceBypassesProfileFiltering()
     {
         var services = ProfileServiceSelector.Select(CreateProject(), profiles: null, explicitServices: ["debug"]);
