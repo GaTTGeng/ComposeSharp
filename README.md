@@ -93,6 +93,10 @@ The loader is intentionally useful even when you do not start containers. It rea
 
 When expanding YAML, ComposeSharp uses the process environment first and then the project `.env` file. A service's `env_file` contributes only to that container's environment; it is not an interpolation source. Unset variables expand to an empty value unless a `-`/`:-` default or `?`/`:?` required-value form is used. `$$` produces a literal `$`. Required-variable errors name both the variable and the Compose file.
 
+### Loader diagnostics
+
+Invalid input throws `ComposeValidationException`. Its message and structured properties identify the resolved source file and stable YAML property path, plus the service name for service-scoped failures. YAML parser failures also expose one-based line and column values when available and retain the original exception as `InnerException`. For example: `Invalid Compose input in 'C:\app\compose.yaml' at 'services.api.environment', service 'api': expected a YAML list or mapping, but found scalar 'invalid'.` When files are loaded with `LoadMerged`, diagnostics use the overlay source for invalid nodes introduced by an overlay.
+
 `ComposeFileLoader.LoadMerged` accepts several files and applies an incremental, field-level merge: later scalars replace earlier values, mappings merge recursively, and lists append with focused replacement rules for service resources, `command`, and `entrypoint`. It is not Docker Compose's complete merge algorithm; see [the merge semantics](docs/merge-semantics.md) for the exact supported rules and unsupported YAML tags.
 
 `ComposeProjectContext.Profiles` selects services consistently for project loading and service-scoped lifecycle, inspection, image, log, event, and watch operations. Services without `profiles` are always selected; a profiled service is selected when any of its profiles is active. An operation that explicitly names a service can select it even when its profile is not active. An empty selection is a no-op rather than a request to operate on every project container.

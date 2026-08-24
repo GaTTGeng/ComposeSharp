@@ -37,6 +37,10 @@ Loader 会寻找 `docker-compose.yml`、`compose.yml`、`compose.yaml` 或 `dock
 
 展开 YAML 时，ComposeSharp 优先使用进程环境变量，其次使用项目的 `.env`。服务的 `env_file` 只会写入该容器的环境，不作为插值来源。未设置的变量会展开为空；可使用 `-`/`:-` 指定默认值，或使用 `?`/`:?` 强制要求变量存在。`$$` 会生成字面量 `$`；必需变量缺失时，错误会同时指出变量名和 Compose 文件。
 
+### Loader 诊断
+
+输入无效时会抛出 `ComposeValidationException`。异常消息及其结构化属性会给出解析后的来源文件和稳定的 YAML 属性路径；服务级错误还会给出服务名。YAML 解析错误在可用时包含从 1 开始的行号、列号，并通过 `InnerException` 保留原始异常。例如：`Invalid Compose input in 'C:\app\compose.yaml' at 'services.api.environment', service 'api': expected a YAML list or mapping, but found scalar 'invalid'.` 使用 `LoadMerged` 时，由覆盖文件引入的无效节点会指向相应的覆盖文件。
+
 ## 快速体验
 
 ```powershell

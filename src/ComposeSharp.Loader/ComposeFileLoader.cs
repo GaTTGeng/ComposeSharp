@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Net;
 using System.Text.RegularExpressions;
 using ComposeSharp.Loader.Interpolation;
 using ComposeSharp.Loader.Models;
@@ -12,8 +14,8 @@ public sealed class ComposeFileLoader
     public ComposeProject Load(string workingDirectory, string composeFileName)
     {
         var composePath = ResolveComposePath(workingDirectory, composeFileName);
-        var (root, env) = LoadDocument(composePath);
-        return ParseProject(composePath, root, env);
+        var document = LoadDocument(composePath);
+        return ParseProject(composePath, document.Root, document.Environment, document.Provenance);
     }
 
     public ComposeProject LoadMerged(string workingDirectory, IReadOnlyList<string> composeFiles)
@@ -26,26 +28,31 @@ public sealed class ComposeFileLoader
         Dictionary<object, object?>? mergedRoot = null;
         string? primaryComposePath = null;
         IReadOnlyDictionary<string, string>? primaryEnvironment = null;
+        Dictionary<string, string>? provenance = null;
         foreach (var file in composeFiles)
         {
             var composePath = ResolveComposePath(workingDirectory, file);
-            var (root, environment) = LoadDocument(composePath);
+            var document = LoadDocument(composePath);
             if (mergedRoot is null)
             {
-                mergedRoot = root;
+                mergedRoot = document.Root;
                 primaryComposePath = composePath;
-                primaryEnvironment = environment;
+                primaryEnvironment = document.Environment;
+                provenance = document.Provenance;
             }
             else
             {
-                mergedRoot = MergeDocuments(mergedRoot, root, composePath);
+                var baseRoot = mergedRoot;
+                mergedRoot = MergeDocuments(baseRoot, document.Root, composePath);
+                provenance = MergeProvenance(
+                    baseRoot, document.Root, mergedRoot, provenance!, document.Provenance);
             }
         }
 
-        return ParseProject(primaryComposePath!, mergedRoot!, primaryEnvironment!);
+        return ParseProject(primaryComposePath!, mergedRoot!, primaryEnvironment!, provenance!);
     }
 
-    private static (Dictionary<object, object?> Root, IReadOnlyDictionary<string, string> Environment) LoadDocument(string composePath)
+    private static LoadedDocument LoadDocument(string composePath)
     {
         var env = LoadDotEnv(Path.Combine(Path.GetDirectoryName(composePath)!, ".env"));
         var raw = File.ReadAllText(composePath);
@@ -56,26 +63,43 @@ public sealed class ComposeFileLoader
         }
         catch (InvalidOperationException exception)
         {
-            throw new InvalidOperationException(
-                $"Failed to interpolate Compose file '{composePath}': {exception.Message}",
-                exception);
+            throw new ComposeValidationException(
+                composePath, "$", $"interpolation failed: {exception.Message}", innerException: exception);
         }
-        RejectUnsupportedMergeTags(expanded, composePath);
-        var deserializer = new DeserializerBuilder().Build();
-        var root = deserializer.Deserialize<Dictionary<object, object?>>(expanded)
-                   ?? throw new InvalidOperationException("Compose file is empty.");
+        try
+        {
+            RejectUnsupportedMergeTags(expanded, composePath);
+            var deserializer = new DeserializerBuilder().Build();
+            var root = deserializer.Deserialize<Dictionary<object, object?>>(expanded)
+                       ?? throw new ComposeValidationException(composePath, "$", "the document is empty.");
 
-        return (root, env);
+            return new LoadedDocument(root, env, BuildProvenance(root, composePath));
+        }
+        catch (ComposeValidationException)
+        {
+            throw;
+        }
+        catch (YamlException exception)
+        {
+            throw new ComposeValidationException(
+                composePath,
+                "$",
+                "the YAML document is malformed.",
+                line: exception.Start.Line,
+                column: exception.Start.Column,
+                innerException: exception);
+        }
     }
 
     private ComposeProject ParseProject(
         string composePath,
         Dictionary<object, object?> root,
-        IReadOnlyDictionary<string, string> env)
+        IReadOnlyDictionary<string, string> env,
+        IReadOnlyDictionary<string, string> provenance)
     {
-
-        var servicesMap = GetMap(root, "services")
-                          ?? throw new NotSupportedException("Compose file must contain a services map.");
+        var validation = new ValidationContext(composePath, provenance);
+        ValidateProject(root, validation);
+        var servicesMap = (Dictionary<object, object?>)root["services"]!;
 
         var volumes = ParseNameList(root, "volumes");
         var networks = ParseNameList(root, "networks");
@@ -87,8 +111,7 @@ public sealed class ComposeFileLoader
         foreach (var (serviceNameObj, serviceValue) in servicesMap)
         {
             var serviceName = serviceNameObj.ToString()!;
-            var map = serviceValue as Dictionary<object, object?>
-                      ?? throw new NotSupportedException($"Service '{serviceName}' must be a YAML map.");
+            var map = (Dictionary<object, object?>)serviceValue!;
 
             services.Add(ParseService(serviceName, map, composePath, env));
         }
@@ -103,15 +126,534 @@ public sealed class ComposeFileLoader
             extensions);
     }
 
+    private sealed record LoadedDocument(
+        Dictionary<object, object?> Root,
+        IReadOnlyDictionary<string, string> Environment,
+        Dictionary<string, string> Provenance);
+
+    private sealed record ValidationContext(
+        string PrimarySource,
+        IReadOnlyDictionary<string, string> Provenance,
+        string? ServiceName = null,
+        string? DisplayServicePath = null,
+        string? ProvenanceServicePath = null)
+    {
+        public string SourceFor(string path)
+        {
+            var candidate = ToProvenancePath(path);
+            while (!string.IsNullOrEmpty(candidate))
+            {
+                if (Provenance.TryGetValue(candidate, out var source))
+                    return source;
+
+                var list = candidate.LastIndexOf('[');
+                var member = candidate.LastIndexOf('.');
+                candidate = list > member ? candidate[..list] : member >= 0 ? candidate[..member] : string.Empty;
+            }
+
+            return PrimarySource;
+        }
+
+        public ValidationContext ForService(
+            string serviceName,
+            string displayServicePath,
+            string provenanceServicePath) => this with
+        {
+            ServiceName = serviceName,
+            DisplayServicePath = displayServicePath,
+            ProvenanceServicePath = provenanceServicePath
+        };
+
+        private string ToProvenancePath(string displayPath)
+        {
+            if (DisplayServicePath is null || ProvenanceServicePath is null ||
+                !displayPath.StartsWith(DisplayServicePath, StringComparison.Ordinal))
+            {
+                return displayPath;
+            }
+
+            var suffix = displayPath[DisplayServicePath.Length..];
+            return suffix.Length == 0 || suffix[0] is '.' or '['
+                ? $"{ProvenanceServicePath}{suffix}"
+                : displayPath;
+        }
+    }
+
+    private static Dictionary<string, string> BuildProvenance(
+        Dictionary<object, object?> root,
+        string composePath)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal) { ["$"] = composePath };
+        AddProvenance(root, string.Empty, composePath, result);
+        return result;
+    }
+
+    private static void AddProvenance(
+        object? node,
+        string path,
+        string composePath,
+        Dictionary<string, string> result)
+    {
+        switch (node)
+        {
+            case Dictionary<object, object?> map:
+                foreach (var (key, value) in map)
+                {
+                    var memberPath = AppendPathSegment(path, key.ToString()!);
+                    result[memberPath] = composePath;
+                    AddProvenance(value, memberPath, composePath, result);
+                }
+                break;
+            case List<object?> list:
+                for (var index = 0; index < list.Count; index++)
+                {
+                    var itemPath = $"{path}[{index}]";
+                    result[itemPath] = composePath;
+                    AddProvenance(list[index], itemPath, composePath, result);
+                }
+                break;
+        }
+    }
+
+    private static Dictionary<string, string> MergeProvenance(
+        Dictionary<object, object?> baseDocument,
+        Dictionary<object, object?> overlay,
+        Dictionary<object, object?> mergedDocument,
+        IReadOnlyDictionary<string, string> baseProvenance,
+        IReadOnlyDictionary<string, string> overlayProvenance)
+    {
+        var result = new Dictionary<string, string>(baseProvenance, StringComparer.Ordinal);
+        ApplyOverlayProvenance(
+            baseDocument, overlay, mergedDocument, string.Empty, result, overlayProvenance);
+        return result;
+    }
+
+    private static void ApplyOverlayProvenance(
+        Dictionary<object, object?> baseMap,
+        Dictionary<object, object?> overlayMap,
+        Dictionary<object, object?> mergedMap,
+        string path,
+        Dictionary<string, string> result,
+        IReadOnlyDictionary<string, string> overlayProvenance)
+    {
+        foreach (var (keyNode, overlayValue) in overlayMap)
+        {
+            var key = keyNode.ToString()!;
+            var memberPath = AppendPathSegment(path, key);
+            TryGetValue(mergedMap, key, out var mergedValue);
+            if (!TryGetValue(baseMap, key, out var baseValue))
+            {
+                ReplaceProvenance(result, overlayProvenance, memberPath, memberPath);
+                continue;
+            }
+
+            if (baseValue is Dictionary<object, object?> baseChild &&
+                overlayValue is Dictionary<object, object?> overlayChild &&
+                mergedValue is Dictionary<object, object?> mergedChild)
+            {
+                ApplyOverlayProvenance(
+                    baseChild, overlayChild, mergedChild, memberPath, result, overlayProvenance);
+                continue;
+            }
+
+            if (baseValue is List<object?> baseList &&
+                overlayValue is List<object?> overlayList &&
+                mergedValue is List<object?> mergedList &&
+                !ReplacementListFields.Contains(GetLeaf(memberPath)) &&
+                !memberPath.EndsWith(".healthcheck.test", StringComparison.Ordinal))
+            {
+                for (var overlayIndex = 0; overlayIndex < overlayList.Count; overlayIndex++)
+                {
+                    var keyValue = GetListMergeKey(overlayList[overlayIndex], memberPath);
+                    var mergedIndex = mergedList.FindIndex(item =>
+                        string.Equals(GetListMergeKey(item, memberPath), keyValue, StringComparison.Ordinal));
+                    if (mergedIndex >= 0)
+                    {
+                        ReplaceProvenance(
+                            result,
+                            overlayProvenance,
+                            $"{memberPath}[{overlayIndex}]",
+                            $"{memberPath}[{mergedIndex}]");
+                    }
+                }
+                continue;
+            }
+
+            ReplaceProvenance(result, overlayProvenance, memberPath, memberPath);
+        }
+    }
+
+    private static void ReplaceProvenance(
+        Dictionary<string, string> target,
+        IReadOnlyDictionary<string, string> source,
+        string sourcePrefix,
+        string targetPrefix)
+    {
+        foreach (var key in target.Keys
+                     .Where(key => IsPathAtOrBelow(key, targetPrefix))
+                     .ToList())
+        {
+            target.Remove(key);
+        }
+
+        foreach (var (path, composePath) in source.Where(pair => IsPathAtOrBelow(pair.Key, sourcePrefix)))
+        {
+            var suffix = path[sourcePrefix.Length..];
+            target[$"{targetPrefix}{suffix}"] = composePath;
+        }
+    }
+
+    private static bool IsPathAtOrBelow(string path, string prefix)
+        => string.Equals(path, prefix, StringComparison.Ordinal) ||
+           path.StartsWith($"{prefix}.", StringComparison.Ordinal) ||
+           path.StartsWith($"{prefix}[", StringComparison.Ordinal);
+
+    private static string AppendPathSegment(string path, string segment)
+    {
+        if (segment.Length > 0 && segment.All(character => char.IsLetterOrDigit(character) || character is '_' or '-'))
+            return string.IsNullOrEmpty(path) ? segment : $"{path}.{segment}";
+
+        var escaped = segment.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal);
+        return $"{path}[\"{escaped}\"]";
+    }
+
+    private static void ValidateProject(Dictionary<object, object?> root, ValidationContext context)
+    {
+        if (!TryGetValue(root, "services", out var servicesValue))
+            throw Validation(context, "services", "the required services mapping is missing.");
+        if (servicesValue is not Dictionary<object, object?> services)
+            throw Validation(context, "services", $"expected a YAML mapping, but found {DescribeNode(servicesValue)}.");
+
+        foreach (var projectMap in new[] { "volumes", "networks", "secrets", "configs" })
+            ValidateOptionalMap(root, projectMap, projectMap, context);
+
+        foreach (var (nameNode, serviceValue) in services)
+        {
+            var serviceName = nameNode.ToString() ?? string.Empty;
+            var servicePath = $"services.{serviceName}";
+            var serviceContext = context.ForService(
+                serviceName,
+                servicePath,
+                AppendPathSegment("services", serviceName));
+            if (serviceValue is not Dictionary<object, object?> service)
+                throw Validation(serviceContext, servicePath, $"expected a YAML mapping, but found {DescribeNode(serviceValue)}.");
+
+            ValidateService(service, servicePath, serviceContext);
+        }
+    }
+
+    private static void ValidateService(
+        Dictionary<object, object?> service,
+        string path,
+        ValidationContext context)
+    {
+        ValidateOptionalScalar(service, "image", $"{path}.image", context);
+        ValidateBuild(service, path, context);
+
+        var hasImage = TryGetValue(service, "image", out var image) && image is not null;
+        var hasBuild = TryGetValue(service, "build", out var build) && build is not null;
+        if (!hasImage && !hasBuild)
+        {
+            var imagePath = $"{path}.image";
+            var buildPath = $"{path}.build";
+            var serviceSource = context.SourceFor(path);
+            var failurePath = context.SourceFor(imagePath) != serviceSource
+                ? imagePath
+                : context.SourceFor(buildPath) != serviceSource
+                    ? buildPath
+                    : path;
+            throw Validation(context, failurePath, "the service must specify either 'image' or 'build'.");
+        }
+
+        ValidateListOrMap(service, "environment", $"{path}.environment", context);
+        ValidatePorts(service, path, context);
+        ValidateOptionalMap(service, "deploy", $"{path}.deploy", context);
+        ValidateOptionalMap(service, "healthcheck", $"{path}.healthcheck", context);
+        ValidateOptionalMap(service, "logging", $"{path}.logging", context);
+        ValidateScalarOrMap(service, "extends", $"{path}.extends", context);
+
+        ValidateOptionalMapPath(service, "deploy", $"{path}.deploy", context, deploy =>
+        {
+            ValidateOptionalMap(deploy, "resources", $"{path}.deploy.resources", context);
+            ValidateOptionalMap(deploy, "restart_policy", $"{path}.deploy.restart_policy", context);
+            ValidateOptionalMap(deploy, "placement", $"{path}.deploy.placement", context);
+            ValidateOptionalMap(deploy, "update_config", $"{path}.deploy.update_config", context);
+            ValidateOptionalMap(deploy, "rollback_config", $"{path}.deploy.rollback_config", context);
+            ValidateInteger(deploy, "replicas", $"{path}.deploy.replicas", context);
+
+            ValidateOptionalMapPath(deploy, "resources", $"{path}.deploy.resources", context, resources =>
+            {
+                ValidateOptionalMap(resources, "limits", $"{path}.deploy.resources.limits", context);
+                ValidateOptionalMap(resources, "reservations", $"{path}.deploy.resources.reservations", context);
+                ValidateOptionalMapPath(resources, "limits", $"{path}.deploy.resources.limits", context, limits =>
+                {
+                    ValidateBytes(limits, "memory", $"{path}.deploy.resources.limits.memory", context);
+                });
+                ValidateOptionalMapPath(resources, "reservations", $"{path}.deploy.resources.reservations", context,
+                    reservations => ValidateBytes(
+                        reservations, "memory", $"{path}.deploy.resources.reservations.memory", context));
+            });
+
+            ValidateOptionalMapPath(deploy, "restart_policy", $"{path}.deploy.restart_policy", context, policy =>
+            {
+                ValidateInteger(policy, "max_retries", $"{path}.deploy.restart_policy.max_retries", context);
+                ValidateDurations(policy, $"{path}.deploy.restart_policy", context, "delay", "window", "period");
+            });
+            ValidateOptionalMapPath(deploy, "update_config", $"{path}.deploy.update_config", context, update =>
+            {
+                ValidateDurations(update, $"{path}.deploy.update_config", context, "delay", "monitor");
+                ValidateDouble(update, "max_failure_ratio", $"{path}.deploy.update_config.max_failure_ratio", context);
+            });
+            ValidateOptionalMapPath(deploy, "rollback_config", $"{path}.deploy.rollback_config", context, rollback =>
+            {
+                ValidateDurations(rollback, $"{path}.deploy.rollback_config", context, "delay", "monitor");
+                ValidateDouble(rollback, "max_failure_ratio", $"{path}.deploy.rollback_config.max_failure_ratio", context);
+            });
+        });
+
+        ValidateOptionalMapPath(service, "healthcheck", $"{path}.healthcheck", context, healthcheck =>
+        {
+            ValidateBoolean(healthcheck, "disable", $"{path}.healthcheck.disable", context);
+            ValidateInteger(healthcheck, "retries", $"{path}.healthcheck.retries", context);
+            ValidateDurations(healthcheck, $"{path}.healthcheck", context, "interval", "timeout", "start_period");
+        });
+
+        ValidateDurations(service, path, context, "stop_grace_period");
+        foreach (var byteField in new[] { "shm_size", "mem_limit", "memswap_limit", "mem_reservation" })
+            ValidateBytes(service, byteField, $"{path}.{byteField}", context);
+        foreach (var booleanField in new[]
+                 {
+                     "privileged", "tty", "stdin_open", "read_only", "init", "oom_kill_disable"
+                 })
+            ValidateBoolean(service, booleanField, $"{path}.{booleanField}", context);
+    }
+
+    private static void ValidateBuild(Dictionary<object, object?> service, string path, ValidationContext context)
+    {
+        if (!TryGetValue(service, "build", out var build) || build is null)
+            return;
+        if (IsScalar(build))
+            return;
+        if (build is not Dictionary<object, object?> buildMap)
+            throw Validation(context, $"{path}.build", $"expected a scalar or YAML mapping, but found {DescribeNode(build)}.");
+
+        ValidateBoolean(buildMap, "privileged", $"{path}.build.privileged", context);
+        ValidateBoolean(buildMap, "pull", $"{path}.build.pull", context);
+        ValidateBoolean(buildMap, "no_cache", $"{path}.build.no_cache", context);
+    }
+
+    private static void ValidatePorts(Dictionary<object, object?> service, string path, ValidationContext context)
+    {
+        if (!TryGetValue(service, "ports", out var value) || value is null)
+            return;
+        var portsPath = $"{path}.ports";
+        if (value is not List<object?> ports)
+            throw Validation(context, portsPath, $"expected a YAML list, but found {DescribeNode(value)}.");
+
+        for (var index = 0; index < ports.Count; index++)
+        {
+            var item = ports[index];
+            var itemPath = $"{portsPath}[{index}]";
+            if (!IsScalar(item))
+                throw Validation(context, itemPath, $"long port syntax is not supported; found {DescribeNode(item)}.");
+            var text = item?.ToString() ?? string.Empty;
+            if (!IsValidPort(text))
+                throw ConversionValidation(context, itemPath, text, "a supported short port mapping");
+        }
+    }
+
+    private static bool IsValidPort(string value)
+    {
+        var text = value.Trim('"', '\'');
+        var slash = text.LastIndexOf('/');
+        if (slash >= 0)
+        {
+            if (slash == text.Length - 1 || text[(slash + 1)..] is not ("tcp" or "udp" or "sctp"))
+                return false;
+            text = text[..slash];
+        }
+
+        if (text.StartsWith("[", StringComparison.Ordinal))
+        {
+            var closingBracket = text.IndexOf(']');
+            if (closingBracket <= 1 || closingBracket == text.Length - 1 || text[closingBracket + 1] != ':')
+                return false;
+
+            var host = text[1..closingBracket];
+            var ports = text[(closingBracket + 2)..].Split(':');
+            return IPAddress.TryParse(host, out _) && ports.Length == 2 && ports.All(IsValidPortNumber);
+        }
+
+        var parts = text.Split(':');
+        return parts.Length switch
+        {
+            1 or 2 => parts.All(IsValidPortNumber),
+            3 => IPAddress.TryParse(parts[0], out _) && parts.Skip(1).All(IsValidPortNumber),
+            _ => false
+        };
+    }
+
+    private static bool IsValidPortNumber(string value)
+        => int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var port) && port is >= 1 and <= 65535;
+
+    private static void ValidateOptionalMapPath(
+        Dictionary<object, object?> map,
+        string key,
+        string path,
+        ValidationContext context,
+        Action<Dictionary<object, object?>> validate)
+    {
+        if (!TryGetValue(map, key, out var value) || value is null)
+            return;
+        if (value is not Dictionary<object, object?> child)
+            throw Validation(context, path, $"expected a YAML mapping, but found {DescribeNode(value)}.");
+        validate(child);
+    }
+
+    private static void ValidateOptionalMap(
+        Dictionary<object, object?> map,
+        string key,
+        string path,
+        ValidationContext context)
+        => ValidateOptionalMapPath(map, key, path, context, _ => { });
+
+    private static void ValidateListOrMap(
+        Dictionary<object, object?> map,
+        string key,
+        string path,
+        ValidationContext context)
+    {
+        if (!TryGetValue(map, key, out var value) || value is null)
+            return;
+        if (value is not List<object?> && value is not Dictionary<object, object?>)
+            throw Validation(context, path, $"expected a YAML list or mapping, but found {DescribeNode(value)}.");
+    }
+
+    private static void ValidateScalarOrMap(
+        Dictionary<object, object?> map,
+        string key,
+        string path,
+        ValidationContext context)
+    {
+        if (!TryGetValue(map, key, out var value) || value is null)
+            return;
+        if (!IsScalar(value) && value is not Dictionary<object, object?>)
+            throw Validation(context, path, $"expected a scalar or YAML mapping, but found {DescribeNode(value)}.");
+    }
+
+    private static void ValidateOptionalScalar(
+        Dictionary<object, object?> map,
+        string key,
+        string path,
+        ValidationContext context)
+    {
+        if (TryGetValue(map, key, out var value) && value is not null && !IsScalar(value))
+            throw Validation(context, path, $"expected a scalar, but found {DescribeNode(value)}.");
+    }
+
+    private static void ValidateDurations(
+        Dictionary<object, object?> map,
+        string parentPath,
+        ValidationContext context,
+        params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!TryGetValue(map, key, out var value) || value is null)
+                continue;
+            var path = $"{parentPath}.{key}";
+            if (!IsScalar(value) || !TryParseDuration(value.ToString(), out _))
+                throw ConversionValidation(context, path, value, "a supported duration");
+        }
+    }
+
+    private static void ValidateBytes(
+        Dictionary<object, object?> map,
+        string key,
+        string path,
+        ValidationContext context)
+    {
+        if (!TryGetValue(map, key, out var value) || value is null)
+            return;
+        if (!IsScalar(value) || !TryParseBytes(value.ToString(), out _))
+            throw ConversionValidation(context, path, value, "a supported byte value");
+    }
+
+    private static void ValidateBoolean(
+        Dictionary<object, object?> map,
+        string key,
+        string path,
+        ValidationContext context)
+    {
+        if (!TryGetValue(map, key, out var value) || value is null)
+            return;
+        if (!IsScalar(value) || !bool.TryParse(value.ToString(), out _))
+            throw ConversionValidation(context, path, value, "a boolean value");
+    }
+
+    private static void ValidateInteger(
+        Dictionary<object, object?> map,
+        string key,
+        string path,
+        ValidationContext context)
+    {
+        if (!TryGetValue(map, key, out var value) || value is null)
+            return;
+        if (!IsScalar(value) || !int.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+            throw ConversionValidation(context, path, value, "an integer value");
+    }
+
+    private static void ValidateDouble(
+        Dictionary<object, object?> map,
+        string key,
+        string path,
+        ValidationContext context)
+    {
+        if (!TryGetValue(map, key, out var value) || value is null)
+            return;
+        if (!IsScalar(value) || !double.TryParse(value.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            throw ConversionValidation(context, path, value, "a numeric value");
+    }
+
+    private static ComposeValidationException Validation(ValidationContext context, string path, string message)
+        => new(context.SourceFor(path), path, message, context.ServiceName);
+
+    private static ComposeValidationException ConversionValidation(
+        ValidationContext context,
+        string path,
+        object? value,
+        string expected)
+    {
+        var conversionException = new FormatException($"Value '{value}' could not be converted to {expected}.");
+        return new ComposeValidationException(
+            context.SourceFor(path),
+            path,
+            $"'{value}' is not {expected}.",
+            context.ServiceName,
+            innerException: conversionException);
+    }
+
+    private static bool IsScalar(object? value)
+        => value is not Dictionary<object, object?> && value is not List<object?>;
+
+    private static string DescribeNode(object? value) => value switch
+    {
+        null => "null",
+        Dictionary<object, object?> => "a YAML mapping",
+        List<object?> => "a YAML list",
+        _ => $"scalar '{value}'"
+    };
+
     private static string ResolveComposePath(string workingDirectory, string composeFileName)
     {
-        var composePath = Path.Combine(workingDirectory, composeFileName);
+        var composePath = Path.GetFullPath(Path.Combine(workingDirectory, composeFileName));
         if (File.Exists(composePath)) return composePath;
 
         var candidates = new[] { "compose.yml", "compose.yaml", "docker-compose.yaml", "docker-compose.yml" };
         foreach (var candidate in candidates)
         {
-            var path = Path.Combine(workingDirectory, candidate);
+            var path = Path.GetFullPath(Path.Combine(workingDirectory, candidate));
             if (File.Exists(path)) return path;
         }
 
@@ -143,7 +685,7 @@ public sealed class ComposeFileLoader
         {
             var key = keyObject.ToString() ?? throw new NotSupportedException(
                 $"Compose map keys in '{overlayPath}' must be strings.");
-            var memberPath = string.IsNullOrEmpty(path) ? key : $"{path}.{key}";
+            var memberPath = AppendPathSegment(path, key);
 
             if (!TryGetValue(merged, key, out var baseValue))
             {
@@ -639,21 +1181,40 @@ public sealed class ComposeFileLoader
 
     internal static TimeSpan? ParseDuration(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        if (TimeSpan.TryParse(value, out var parsed)) return parsed;
+        return TryParseDuration(value, out var parsed) ? parsed : null;
+    }
 
-        var match = Regex.Match(value, @"^(?<num>\d+)(?<unit>ms|s|m|h)$", RegexOptions.IgnoreCase);
-        if (!match.Success) return null;
+    private static bool TryParseDuration(string? value, out TimeSpan parsed)
+    {
+        if (!string.IsNullOrWhiteSpace(value) &&
+            TimeSpan.TryParse(value, CultureInfo.InvariantCulture, out parsed))
+            return true;
 
-        var number = int.Parse(match.Groups["num"].Value);
-        return match.Groups["unit"].Value.ToLowerInvariant() switch
+        var match = Regex.Match(value ?? string.Empty, @"^(?<num>\d+)(?<unit>ms|s|m|h)$", RegexOptions.IgnoreCase);
+        if (!match.Success ||
+            !long.TryParse(match.Groups["num"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
         {
-            "ms" => TimeSpan.FromMilliseconds(number),
-            "s" => TimeSpan.FromSeconds(number),
-            "m" => TimeSpan.FromMinutes(number),
-            "h" => TimeSpan.FromHours(number),
-            _ => null
-        };
+            parsed = default;
+            return false;
+        }
+
+        try
+        {
+            parsed = match.Groups["unit"].Value.ToLowerInvariant() switch
+            {
+                "ms" => TimeSpan.FromMilliseconds(number),
+                "s" => TimeSpan.FromSeconds(number),
+                "m" => TimeSpan.FromMinutes(number),
+                "h" => TimeSpan.FromHours(number),
+                _ => default
+            };
+            return true;
+        }
+        catch (OverflowException)
+        {
+            parsed = default;
+            return false;
+        }
     }
 
     private static IReadOnlyList<string> ParseNameList(Dictionary<object, object?> root, string key)
@@ -695,20 +1256,40 @@ public sealed class ComposeFileLoader
 
     private static long? ParseBytes(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        if (long.TryParse(value, out var bytes)) return bytes;
+        return TryParseBytes(value, out var parsed) ? parsed : null;
+    }
 
-        var match = Regex.Match(value, @"^(?<num>\d+)(?<unit>[kmg])b?$", RegexOptions.IgnoreCase);
-        if (!match.Success) return null;
+    private static bool TryParseBytes(string? value, out long parsed)
+    {
+        if (!string.IsNullOrWhiteSpace(value) &&
+            long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed))
+            return true;
 
-        var number = long.Parse(match.Groups["num"].Value);
-        return match.Groups["unit"].Value.ToLowerInvariant() switch
+        var match = Regex.Match(value ?? string.Empty, @"^(?<num>\d+)(?<unit>[kmg])b?$", RegexOptions.IgnoreCase);
+        if (!match.Success ||
+            !long.TryParse(match.Groups["num"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
         {
-            "k" => number * 1024,
-            "m" => number * 1024 * 1024,
-            "g" => number * 1024 * 1024 * 1024,
-            _ => null
+            parsed = default;
+            return false;
+        }
+
+        var multiplier = match.Groups["unit"].Value.ToLowerInvariant() switch
+        {
+            "k" => 1024L,
+            "m" => 1024L * 1024,
+            "g" => 1024L * 1024 * 1024,
+            _ => 0L
         };
+        try
+        {
+            parsed = checked(number * multiplier);
+            return true;
+        }
+        catch (OverflowException)
+        {
+            parsed = default;
+            return false;
+        }
     }
 
     private static List<string> GetStringList(Dictionary<object, object?> map, string key)

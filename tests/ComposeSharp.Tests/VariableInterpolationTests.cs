@@ -103,11 +103,13 @@ public sealed class VariableInterpolationTests
             """,
             directory =>
             {
-                var exception = Assert.Throws<InvalidOperationException>(
+                var exception = Assert.Throws<ComposeValidationException>(
                     () => new ComposeFileLoader().Load(directory, "compose.yaml"));
 
                 Assert.Contains("COMPOSESHARP_REQUIRED_IMAGE", exception.Message);
                 Assert.Contains(Path.Combine(directory, "compose.yaml"), exception.Message);
+                Assert.Equal("$", exception.PropertyPath);
+                Assert.IsType<InvalidOperationException>(exception.InnerException);
             });
     }
 
