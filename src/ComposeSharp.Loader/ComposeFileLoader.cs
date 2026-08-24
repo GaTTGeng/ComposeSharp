@@ -134,11 +134,13 @@ public sealed class ComposeFileLoader
     private sealed record ValidationContext(
         string PrimarySource,
         IReadOnlyDictionary<string, string> Provenance,
-        string? ServiceName = null)
+        string? ServiceName = null,
+        string? DisplayServicePath = null,
+        string? ProvenanceServicePath = null)
     {
         public string SourceFor(string path)
         {
-            var candidate = path;
+            var candidate = ToProvenancePath(path);
             while (!string.IsNullOrEmpty(candidate))
             {
                 if (Provenance.TryGetValue(candidate, out var source))
@@ -152,7 +154,29 @@ public sealed class ComposeFileLoader
             return PrimarySource;
         }
 
-        public ValidationContext ForService(string serviceName) => this with { ServiceName = serviceName };
+        public ValidationContext ForService(
+            string serviceName,
+            string displayServicePath,
+            string provenanceServicePath) => this with
+        {
+            ServiceName = serviceName,
+            DisplayServicePath = displayServicePath,
+            ProvenanceServicePath = provenanceServicePath
+        };
+
+        private string ToProvenancePath(string displayPath)
+        {
+            if (DisplayServicePath is null || ProvenanceServicePath is null ||
+                !displayPath.StartsWith(DisplayServicePath, StringComparison.Ordinal))
+            {
+                return displayPath;
+            }
+
+            var suffix = displayPath[DisplayServicePath.Length..];
+            return suffix.Length == 0 || suffix[0] is '.' or '['
+                ? $"{ProvenanceServicePath}{suffix}"
+                : displayPath;
+        }
     }
 
     private static Dictionary<string, string> BuildProvenance(
@@ -175,7 +199,7 @@ public sealed class ComposeFileLoader
             case Dictionary<object, object?> map:
                 foreach (var (key, value) in map)
                 {
-                    var memberPath = string.IsNullOrEmpty(path) ? key.ToString()! : $"{path}.{key}";
+                    var memberPath = AppendPathSegment(path, key.ToString()!);
                     result[memberPath] = composePath;
                     AddProvenance(value, memberPath, composePath, result);
                 }
@@ -215,7 +239,7 @@ public sealed class ComposeFileLoader
         foreach (var (keyNode, overlayValue) in overlayMap)
         {
             var key = keyNode.ToString()!;
-            var memberPath = string.IsNullOrEmpty(path) ? key : $"{path}.{key}";
+            var memberPath = AppendPathSegment(path, key);
             TryGetValue(mergedMap, key, out var mergedValue);
             if (!TryGetValue(baseMap, key, out var baseValue))
             {
@@ -284,6 +308,16 @@ public sealed class ComposeFileLoader
            path.StartsWith($"{prefix}.", StringComparison.Ordinal) ||
            path.StartsWith($"{prefix}[", StringComparison.Ordinal);
 
+    private static string AppendPathSegment(string path, string segment)
+    {
+        if (segment.Length > 0 && segment.All(character => char.IsLetterOrDigit(character) || character is '_' or '-'))
+            return string.IsNullOrEmpty(path) ? segment : $"{path}.{segment}";
+
+        var escaped = segment.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal);
+        return $"{path}[\"{escaped}\"]";
+    }
+
     private static void ValidateProject(Dictionary<object, object?> root, ValidationContext context)
     {
         if (!TryGetValue(root, "services", out var servicesValue))
@@ -298,7 +332,10 @@ public sealed class ComposeFileLoader
         {
             var serviceName = nameNode.ToString() ?? string.Empty;
             var servicePath = $"services.{serviceName}";
-            var serviceContext = context.ForService(serviceName);
+            var serviceContext = context.ForService(
+                serviceName,
+                servicePath,
+                AppendPathSegment("services", serviceName));
             if (serviceValue is not Dictionary<object, object?> service)
                 throw Validation(serviceContext, servicePath, $"expected a YAML mapping, but found {DescribeNode(serviceValue)}.");
 
@@ -435,6 +472,17 @@ public sealed class ComposeFileLoader
             if (slash == text.Length - 1 || text[(slash + 1)..] is not ("tcp" or "udp" or "sctp"))
                 return false;
             text = text[..slash];
+        }
+
+        if (text.StartsWith("[", StringComparison.Ordinal))
+        {
+            var closingBracket = text.IndexOf(']');
+            if (closingBracket <= 1 || closingBracket == text.Length - 1 || text[closingBracket + 1] != ':')
+                return false;
+
+            var host = text[1..closingBracket];
+            var ports = text[(closingBracket + 2)..].Split(':');
+            return IPAddress.TryParse(host, out _) && ports.Length == 2 && ports.All(IsValidPortNumber);
         }
 
         var parts = text.Split(':');
@@ -637,7 +685,7 @@ public sealed class ComposeFileLoader
         {
             var key = keyObject.ToString() ?? throw new NotSupportedException(
                 $"Compose map keys in '{overlayPath}' must be strings.");
-            var memberPath = string.IsNullOrEmpty(path) ? key : $"{path}.{key}";
+            var memberPath = AppendPathSegment(path, key);
 
             if (!TryGetValue(merged, key, out var baseValue))
             {

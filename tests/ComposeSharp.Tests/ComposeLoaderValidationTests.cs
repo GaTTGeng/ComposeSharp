@@ -69,6 +69,19 @@ public sealed class ComposeLoaderValidationTests
         AssertServiceDiagnostic(exception, files.PrimaryPath, "api", path, message);
     }
 
+    [Fact]
+    public void Load_BracketedIpv6PortMapping_IsAccepted()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    ports:\n      - '[::1]:8080:80'\n");
+
+        var project = new ComposeFileLoader().Load(files.DirectoryPath, "compose.yaml");
+
+        var port = Assert.Single(Assert.Single(project.Services).Ports);
+        Assert.Equal("8080", port.HostPort);
+        Assert.Equal("80/tcp", port.ContainerPort);
+    }
+
     [Theory]
     [InlineData("healthcheck:\n      interval: eventually", "services.api.healthcheck.interval")]
     [InlineData("stop_grace_period: eventually", "services.api.stop_grace_period")]
@@ -162,6 +175,18 @@ public sealed class ComposeLoaderValidationTests
         var exception = Assert.Throws<ComposeValidationException>(() => files.LoadMerged());
 
         AssertServiceDiagnostic(exception, files.OverlayPath!, "api", "services.api.build", "scalar or YAML mapping");
+    }
+
+    [Fact]
+    public void LoadMerged_DottedServiceName_DoesNotOverwriteSiblingFieldProvenance()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: []\n",
+            "services:\n  api.image:\n    image: app\n");
+
+        var exception = Assert.Throws<ComposeValidationException>(() => files.LoadMerged());
+
+        AssertServiceDiagnostic(exception, files.PrimaryPath, "api", "services.api.image", "scalar");
     }
 
     [Theory]
