@@ -55,6 +55,7 @@ jobs:
           --configuration ${{ env.CONFIGURATION }}
           --no-build
           --no-restore
+          -p:TestTfmsInParallel=false
           --logger trx
           --results-directory TestResults
 
