@@ -91,7 +91,12 @@ jobs:
         run: dotnet build ComposeSharp.sln --configuration ${{ env.CONFIGURATION }} --no-restore
 
       - name: Test
-        run: dotnet test ComposeSharp.sln --configuration ${{ env.CONFIGURATION }} --no-build --no-restore
+        run: >
+          dotnet test ComposeSharp.sln
+          --configuration ${{ env.CONFIGURATION }}
+          --no-build
+          --no-restore
+          -p:TestTfmsInParallel=false
 
       - name: Pack
         run: >
