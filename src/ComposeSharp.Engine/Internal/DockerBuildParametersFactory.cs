@@ -4,6 +4,9 @@ using Docker.DotNet.Models;
 
 namespace ComposeSharp.Engine.Internal;
 
+/// <summary>
+/// Maps a service's build configuration (plus caller overrides) onto Docker Engine image build parameters.
+/// </summary>
 internal static class DockerBuildParametersFactory
 {
     public static ImageBuildParameters Create(ServiceDefinition service, ComposeBuildOptions? options)
@@ -19,6 +22,8 @@ internal static class DockerBuildParametersFactory
             SuppressOutput = options?.Quiet == true,
             NoCache = options?.NoCache == true || build.NoCache == true,
             Pull = options?.Pull == true || build.Pull == true ? "true" : null,
+            // The caller rewrites Dockerfile to the path inside the build-context archive
+            // (see DockerBuildContextArchive) before the build request is sent.
             Dockerfile = build.Dockerfile,
             BuildArgs = MergeBuildArgs(build.Args, options?.BuildArgs),
             Labels = MergeStrings(build.Labels, options?.Labels),
@@ -32,6 +37,8 @@ internal static class DockerBuildParametersFactory
         };
     }
 
+    // A null-valued build arg means "take the value from the process environment",
+    // matching Compose build-arg semantics; explicit option overrides win last.
     private static Dictionary<string, string>? MergeBuildArgs(
         IReadOnlyDictionary<string, string?>? configured,
         IReadOnlyDictionary<string, string>? overrides)
@@ -78,6 +85,7 @@ internal static class DockerBuildParametersFactory
         return result;
     }
 
+    // Docker Engine builds accept one platform per request, so multi-platform lists are rejected instead of silently dropped.
     private static string? GetSinglePlatform(string serviceName, IReadOnlyList<string>? platforms)
     {
         if (platforms is not { Count: > 1 })

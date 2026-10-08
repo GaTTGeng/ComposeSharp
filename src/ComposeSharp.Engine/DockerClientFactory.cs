@@ -3,8 +3,10 @@ using Docker.DotNet;
 
 namespace ComposeSharp.Engine;
 
+/// <summary>Creates Docker API clients for the platform's default or a caller-supplied daemon endpoint.</summary>
 internal sealed class DockerClientFactory
 {
+    /// <summary>Creates a client connected to the given socket path, or the platform default when null.</summary>
     public DockerClient CreateClient(string? socketPath = null)
     {
         var endpoint = GetDockerSocketEndpoint(socketPath);
@@ -15,6 +17,7 @@ internal sealed class DockerClientFactory
     {
         if (string.IsNullOrWhiteSpace(socketPath))
         {
+            // Windows uses a named pipe; Unix-likes use a domain socket.
             return RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? "npipe://./pipe/docker_engine"
                 : "unix:///var/run/docker.sock";
@@ -26,6 +29,7 @@ internal sealed class DockerClientFactory
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
+            // Accept native \\\\.\\pipe\\ paths by rewriting them to the npipe:// URI form Docker.DotNet expects.
             const string namedPipePrefix = @"\\.\pipe\";
             if (socketPath.StartsWith(namedPipePrefix, StringComparison.OrdinalIgnoreCase))
                 return "npipe://./pipe/" + socketPath[namedPipePrefix.Length..];

@@ -3,8 +3,13 @@ using ComposeSharp.Loader.Interpolation;
 
 namespace ComposeSharp.Tests;
 
+/// <summary>
+/// Covers Compose variable interpolation: value precedence, default/escape syntax, and the
+/// validation diagnostics raised when a required variable is missing.
+/// </summary>
 public sealed class VariableInterpolationTests
 {
+    // Precedence rule: the process environment wins over values from the project's .env file.
     [Fact]
     public void Expand_PrefersProcessEnvironmentOverDotEnv()
     {
@@ -20,6 +25,8 @@ public sealed class VariableInterpolationTests
         });
     }
 
+    // .env supplies quoted values for interpolation, but service env_file entries only reach the
+    // container environment and are never used as interpolation sources.
     [Fact]
     public void Load_UsesDotEnvSupportsQuotedValuesAndKeepsEnvFileOutOfInterpolation()
     {
@@ -48,6 +55,7 @@ public sealed class VariableInterpolationTests
             });
     }
 
+    // Covers unset expansion, both default forms, and $$ escaping of a literal dollar sign.
     [Theory]
     [InlineData("${MISSING}", "")]
     [InlineData("${MISSING-default}", "default")]
@@ -71,6 +79,7 @@ public sealed class VariableInterpolationTests
         });
     }
 
+    // A selected fallback value is itself expanded, so nested ${VAR} references resolve.
     [Fact]
     public void Expand_ExpandsVariablesInSelectedFallbackValues()
     {
@@ -90,6 +99,8 @@ public sealed class VariableInterpolationTests
         });
     }
 
+    // Interpolation failures surface as validation errors at the document root ("$") and name
+    // both the missing variable and the compose file that referenced it.
     [Fact]
     public void Load_RequiredVariableFailureNamesVariableAndComposeFile()
     {
@@ -113,6 +124,7 @@ public sealed class VariableInterpolationTests
             });
     }
 
+    // Writes .env, service.env, and compose.yaml into a temp directory and runs an assertion on the loaded project.
     private static void WithFixture(
         string dotEnv,
         string envFile,
@@ -135,6 +147,7 @@ public sealed class VariableInterpolationTests
         }
     }
 
+    // Same fixture as above, but hands the temp directory to the assertion (e.g. for path checks).
     private static void WithFixture(
         string dotEnv,
         string envFile,

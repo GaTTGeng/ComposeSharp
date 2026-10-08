@@ -5,8 +5,14 @@ using System.Text.RegularExpressions;
 
 namespace ComposeSharp.Engine.Internal;
 
+/// <summary>
+/// Packs a build-context directory into a tar stream for the Docker Engine build API,
+/// honoring <c>.dockerignore</c> rules and preserving symlinks and Unix file modes.
+/// </summary>
 internal static class DockerBuildContextArchive
 {
+    // Reserved tar entry name used to stage a Dockerfile that lives outside the build context
+    // (the engine's build API can only reference Dockerfiles present in the archive).
     private const string ExternalDockerfileArchivePathPrefix = "__external_dockerfile__";
     private const int LinuxOperationNotPermittedError = 1;
     private const int LinuxFunctionNotImplementedError = 38;
@@ -40,6 +46,9 @@ internal static class DockerBuildContextArchive
         {
             using (var writer = new TarWriter(archive, leaveOpen: true))
             {
+                // When the Dockerfile's real path is outside the context but a link to it sits
+                // inside, the in-context link entry is replaced by a real copy staged under the
+                // reserved external-dockerfile name so the build finds a regular file.
                 var linkedDockerfilePath = isExternalDockerfile && IsWithinDirectory(directory, dockerfilePath)
                     ? dockerfilePath
                     : null;
@@ -61,6 +70,8 @@ internal static class DockerBuildContextArchive
         }
     }
 
+    // Returns the path the Dockerfile will have inside the tar stream: its context-relative path
+    // when it lives in the context, otherwise a free reserved name for the staged external copy.
     public static string GetDockerfileArchivePath(string directory, string? dockerfile)
     {
         var dockerfileSourcePath = GetDockerfileSourcePath(directory, dockerfile);
@@ -83,6 +94,8 @@ internal static class DockerBuildContextArchive
         foreach (var path in Directory.EnumerateFileSystemEntries(directory).OrderBy(path => path, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            // Never pack the temporary archive itself, and drop the in-context Dockerfile link
+            // when its content is staged separately under the reserved name.
             if (PathsAreEqual(path, temporaryArchivePath))
                 continue;
             if (linkedDockerfilePath is not null && PathsAreEqual(path, linkedDockerfilePath))
@@ -98,6 +111,8 @@ internal static class DockerBuildContextArchive
                             DockerIgnoreRule.IsIgnored(relativePath, ignoreRules);
             if (isIgnored)
             {
+                // Ignored directories are still entered when a later negation (!) rule might
+                // re-include a descendant, or when the staged Dockerfile lives inside them.
                 if (isDirectory && !isSymbolicLink &&
                     (ContainsArchivePath(relativePath, dockerfileArchivePath) ||
                      DockerIgnoreRule.ShouldTraverseIgnoredDirectory(relativePath, ignoreRules)))
@@ -147,6 +162,7 @@ internal static class DockerBuildContextArchive
                string.Equals(ResolveFileSystemPath(leftPath), ResolveFileSystemPath(rightPath), comparison);
     }
 
+    // Picks the first reserved name that does not collide with an entry already in the context.
     private static string GetAvailableExternalDockerfileArchivePath(string directory)
     {
         for (var suffix = 0; ; suffix++)
@@ -220,6 +236,7 @@ internal static class DockerBuildContextArchive
         if (string.IsNullOrWhiteSpace(linkTarget))
             throw new IOException($"Unable to read symbolic link target for '{path}'.");
 
+        // Windows reports relative link targets with backslashes; the tar format expects forward slashes.
         if (OperatingSystem.IsWindows() && !Path.IsPathRooted(linkTarget))
             linkTarget = linkTarget.Replace('\\', '/');
 
@@ -249,6 +266,8 @@ internal static class DockerBuildContextArchive
         };
     }
 
+    // statx is preferred on Linux but is unavailable on older kernels or under restricted
+    // seccomp/EPERM policies, so those errors fall back to lstat with per-architecture layouts.
     private static uint GetLinuxFileMode(string path)
     {
         try
@@ -434,6 +453,8 @@ internal static class DockerBuildContextArchive
     {
         public static IReadOnlyList<DockerIgnoreRule> Read(string directory, string dockerfileSourcePath)
         {
+            // A Dockerfile-specific <Dockerfile>.dockerignore takes precedence over the
+            // context-root .dockerignore, matching the engine's own lookup rules.
             var dockerfileIgnorePath = dockerfileSourcePath + ".dockerignore";
             var path = PathExists(dockerfileIgnorePath)
                 ? dockerfileIgnorePath

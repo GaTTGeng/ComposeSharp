@@ -5,6 +5,10 @@ using ComposeSharp.Loader.Models;
 
 namespace ComposeSharp.Tests;
 
+/// <summary>
+/// Covers profile-based service selection for project lifecycle operations, plus the image-pull
+/// auth helpers used alongside service selection.
+/// </summary>
 public sealed class ProfileServiceSelectorTests
 {
     [Fact]
@@ -78,6 +82,7 @@ public sealed class ProfileServiceSelectorTests
         Assert.Equal(["app"], services.Select(service => service.Name));
     }
 
+    // A service is selected when it has no profiles or matches any active profile (OR semantics).
     [Fact]
     public void Select_IncludesServicesMatchingAnyActiveProfile()
     {
@@ -104,6 +109,7 @@ public sealed class ProfileServiceSelectorTests
         Assert.Empty(services);
     }
 
+    // Explicitly named services bypass profile filtering entirely, matching Docker Compose CLI behavior.
     [Fact]
     public void Select_ExplicitServiceBypassesProfileFiltering()
     {
@@ -112,6 +118,7 @@ public sealed class ProfileServiceSelectorTests
         Assert.Equal(["debug"], services.Select(service => service.Name));
     }
 
+    // Sample project with one unprofiled service and three profile-tagged services.
     private static ComposeProject CreateProject() => new(
         WorkingDirectory: ".",
         Services: [

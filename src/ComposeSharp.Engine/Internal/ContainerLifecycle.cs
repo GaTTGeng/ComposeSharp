@@ -8,11 +8,19 @@ using Docker.DotNet.Models;
 
 namespace ComposeSharp.Engine.Internal;
 
+/// <summary>
+/// Creates, reconciles, and removes the containers of a Compose project.
+/// Containers are addressed through project/service labels only, so unrelated Docker workloads are never touched.
+/// </summary>
 internal sealed class ContainerLifecycle
 {
     private readonly LabelHelper _labels = new();
     private readonly NetworkManager _networks = new();
 
+    /// <summary>
+    /// Creates and starts one container for a service, labeling it as replica <paramref name="index"/>
+    /// (or as a one-off when <paramref name="oneOff"/> is set).
+    /// </summary>
     public async Task<string> CreateAndStartAsync(
         DockerClient client, string projectName, ComposeProject project, ServiceDefinition service,
         string name, int index, bool oneOff, CancellationToken ct)
@@ -48,6 +56,13 @@ internal sealed class ContainerLifecycle
         return response.ID;
     }
 
+    /// <summary>
+    /// Brings one service to the desired replica count and yields human-readable progress lines.
+    /// </summary>
+    /// <remarks>
+    /// Reconciliation is recreate-based: every existing container of the service is removed before
+    /// the desired replicas are created, which keeps container names and replica indexes stable.
+    /// </remarks>
     public async IAsyncEnumerable<string> ReconcileServiceAsync(
         DockerClient client, string projectName, ComposeProject project, ServiceDefinition service,
         int replicas, bool pullAlways, DockerRegistryAuth? auth,
@@ -71,6 +86,8 @@ internal sealed class ContainerLifecycle
 
         for (var i = 1; i <= replicas; i++)
         {
+            // A single replica may honor the service's container_name; scaled services always use
+            // the project-service-index pattern so each replica gets a stable unique name.
             var name = replicas == 1 && !string.IsNullOrWhiteSpace(service.ContainerName)
                 ? service.ContainerName!
                 : $"{projectName}-{service.Name}-{i}";
@@ -199,6 +216,9 @@ internal sealed class ContainerLifecycle
         return await ListProjectContainersAsync(client, projectName, all, ct);
     }
 
+    /// <summary>
+    /// Finds a running container of a service; <paramref name="index"/> selects a replica by its 1-based position.
+    /// </summary>
     public async Task<ContainerListResponse> FindRunningContainerAsync(
         DockerClient client, string projectName, string serviceName, int? index, CancellationToken ct)
     {
@@ -279,10 +299,15 @@ internal sealed class ContainerLifecycle
             Interval = healthcheck.Interval ?? TimeSpan.Zero,
             Timeout = healthcheck.Timeout ?? TimeSpan.Zero,
             Retries = healthcheck.Retries ?? 0,
+            // Docker's API expects nanoseconds here, unlike the TimeSpan fields above.
             StartPeriod = (long)((healthcheck.StartPeriod ?? TimeSpan.Zero).TotalMilliseconds * 1_000_000)
         };
     }
 
+    /// <summary>
+    /// Resolves a short volume syntax into a bind string: path-like sources become absolute host paths
+    /// relative to the working directory, bare names become project-prefixed named volumes.
+    /// </summary>
     public static string ResolveVolume(string projectName, string workingDirectory, string value)
     {
         var parts = value.Split(':');

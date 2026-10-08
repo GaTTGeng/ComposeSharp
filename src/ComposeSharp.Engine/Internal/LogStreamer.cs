@@ -7,6 +7,10 @@ using Docker.DotNet.Models;
 
 namespace ComposeSharp.Engine.Internal;
 
+/// <summary>
+/// Reads and streams container logs for a project's services, either as plain text or
+/// line-by-line through an <see cref="ILogConsumer"/>.
+/// </summary>
 internal sealed class LogStreamer
 {
     public async Task<string> ReadLogsAsync(DockerClient client, string containerId, string tail, bool follow, CancellationToken ct)
@@ -31,6 +35,7 @@ internal sealed class LogStreamer
             return;
         }
 
+        // With a consumer each container is followed concurrently so interleaved output keeps its order per service.
         var tasks = containers.Select(container => Task.Run(async () =>
         {
             try
@@ -52,6 +57,8 @@ internal sealed class LogStreamer
         using var stream = await client.Containers.GetContainerLogsAsync(containerId, false,
             new ContainerLogsParameters { ShowStdout = true, ShowStderr = true, Follow = true, Tail = tail }, ct);
 
+        // The log stream is a raw byte stream with no framing, so partial reads are buffered
+        // until a newline yields a complete line.
         var buffer = new byte[8192];
         var pending = new StringBuilder();
         while (true)
