@@ -205,12 +205,27 @@ internal sealed class ContainerLifecycle
         var containers = await ListServiceContainersAsync(client, projectName, serviceName, false, ct);
         var running = containers.Where(c => string.Equals(c.State, "running", StringComparison.OrdinalIgnoreCase)).ToList();
 
-        if (index.HasValue && index.Value > 0)
-            return running.ElementAtOrDefault(index.Value - 1)
+        if (index is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(index), index, "Container indexes are 1-based.");
+
+        if (index.HasValue)
+            return FindByContainerNumber(running, index.Value)
                 ?? throw new InvalidOperationException($"No running container at index {index} for service '{serviceName}'.");
 
-        return running.FirstOrDefault()
+        return running.OrderBy(GetContainerNumber).ThenBy(container => container.ID, StringComparer.Ordinal).FirstOrDefault()
             ?? throw new InvalidOperationException($"No running container found for service '{serviceName}'.");
+    }
+
+    internal static ContainerListResponse? FindByContainerNumber(
+        IEnumerable<ContainerListResponse> containers, int index)
+        => containers.FirstOrDefault(container => GetContainerNumber(container) == index);
+
+    private static int GetContainerNumber(ContainerListResponse container)
+    {
+        var labels = container.Labels ?? new Dictionary<string, string>();
+        return labels.TryGetValue(ComposeConstants.ContainerNumberLabel, out var value) && int.TryParse(value, out var number)
+            ? number
+            : int.MaxValue;
     }
 
     private HostConfig BuildHostConfig(string projectName, ComposeProject project, ServiceDefinition service)

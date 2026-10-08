@@ -21,7 +21,7 @@ internal static class ContainerArchive
 
                 if (Directory.Exists(sourcePath))
                 {
-                    WriteDirectory(writer, sourcePath, name, cancellationToken);
+                    await WriteDirectoryAsync(writer, sourcePath, name, cancellationToken);
                 }
                 else
                 {
@@ -52,6 +52,8 @@ internal static class ContainerArchive
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
         var destination = Path.GetFullPath(destinationPath);
+        if (Directory.Exists(destination))
+            EnsureNoReparsePoint(destination);
         Directory.CreateDirectory(destination);
         var destinationPrefix = Path.TrimEndingDirectorySeparator(destination) + Path.DirectorySeparatorChar;
         long bytesCopied = 0;
@@ -96,14 +98,14 @@ internal static class ContainerArchive
         return bytesCopied;
     }
 
-    private static void WriteDirectory(TarWriter writer, string directoryPath, string archivePath, CancellationToken cancellationToken)
+    private static async Task WriteDirectoryAsync(TarWriter writer, string directoryPath, string archivePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var directory = new PaxTarEntry(TarEntryType.Directory, archivePath)
         {
             ModificationTime = Directory.GetLastWriteTimeUtc(directoryPath)
         };
-        writer.WriteEntry(directory);
+        await writer.WriteEntryAsync(directory, cancellationToken);
 
         foreach (var entryPath in Directory.EnumerateFileSystemEntries(directoryPath))
         {
@@ -112,24 +114,12 @@ internal static class ContainerArchive
             var entryName = Path.GetFileName(entryPath);
             var childArchivePath = $"{archivePath}/{entryName}";
             if (Directory.Exists(entryPath))
-                WriteDirectory(writer, entryPath, childArchivePath, cancellationToken);
+                await WriteDirectoryAsync(writer, entryPath, childArchivePath, cancellationToken);
             else if (File.Exists(entryPath))
-                WriteFile(writer, entryPath, childArchivePath, cancellationToken);
+                await WriteFileAsync(writer, entryPath, childArchivePath, cancellationToken);
             else
                 throw new IOException($"The copy source contains an unsupported filesystem entry: '{entryPath}'.");
         }
-    }
-
-    private static void WriteFile(TarWriter writer, string sourcePath, string archivePath, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        using var stream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.SequentialScan);
-        var entry = new PaxTarEntry(TarEntryType.RegularFile, archivePath)
-        {
-            DataStream = stream,
-            ModificationTime = File.GetLastWriteTimeUtc(sourcePath)
-        };
-        writer.WriteEntry(entry);
     }
 
     private static async Task WriteFileAsync(TarWriter writer, string sourcePath, string archivePath, CancellationToken cancellationToken)
@@ -141,7 +131,7 @@ internal static class ContainerArchive
             DataStream = stream,
             ModificationTime = File.GetLastWriteTimeUtc(sourcePath)
         };
-        writer.WriteEntry(entry);
+        await writer.WriteEntryAsync(entry, cancellationToken);
     }
 
     private static FileStream CreateTemporaryArchive()
