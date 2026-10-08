@@ -78,6 +78,42 @@ public class ContainerArchiveTests
     }
 
     [Fact]
+    public async Task ExtractToDirectoryAsync_RejectsDanglingSymlinkArchiveTargets()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var destination = Path.Combine(Path.GetTempPath(), $"archive-dangling-link-{Guid.NewGuid():N}");
+        var link = Path.Combine(destination, "link");
+        var missingTarget = Path.Combine(Path.GetTempPath(), $"archive-missing-target-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(destination);
+        File.CreateSymbolicLink(link, missingTarget);
+
+        var archive = new MemoryStream();
+        using (var writer = new TarWriter(archive, TarEntryFormat.Pax, leaveOpen: true))
+        {
+            writer.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, "link/payload.txt")
+            {
+                DataStream = new MemoryStream(Encoding.UTF8.GetBytes("payload"))
+            });
+        }
+        archive.Position = 0;
+
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(() => ContainerArchive.ExtractToDirectoryAsync(
+                archive, destination, CancellationToken.None));
+            Assert.False(File.Exists(missingTarget));
+        }
+        finally
+        {
+            archive.Dispose();
+            File.Delete(link);
+            Directory.Delete(destination, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task CreateFromPathAsync_PreservesUnixModes()
     {
         if (OperatingSystem.IsWindows())

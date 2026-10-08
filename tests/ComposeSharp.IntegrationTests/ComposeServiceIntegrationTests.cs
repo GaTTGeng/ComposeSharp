@@ -277,6 +277,7 @@ public class ComposeServiceIntegrationTests
         var sourcePath = Path.Combine(directory, "fixture.txt");
         var copiedDirectory = Path.Combine(directory, "copied");
         var exportPath = Path.Combine(directory, "filesystem.tar");
+        var stoppedExportPath = Path.Combine(directory, "stopped-filesystem.tar");
         const string contents = "archive-data";
         await File.WriteAllTextAsync(sourcePath, contents);
         await File.WriteAllTextAsync(Path.Combine(directory, "compose.yaml"), """
@@ -329,6 +330,28 @@ public class ComposeServiceIntegrationTests
                     hasCopiedFile = true;
             }
             Assert.True(hasCopiedFile);
+
+            await service.StopAsync(context);
+            var copiedToStoppedContainer = await service.CopyAsync(context, new ComposeCopyOptions
+            {
+                Source = sourcePath,
+                Destination = "app:/data"
+            });
+            Assert.Equal(contents.Length, copiedToStoppedContainer.BytesCopied);
+
+            var copiedFromStoppedContainer = await service.CopyAsync(context, new ComposeCopyOptions
+            {
+                Source = "app:/data",
+                Destination = Path.Combine(directory, "stopped-copy")
+            });
+            Assert.Equal(contents, await File.ReadAllTextAsync(Path.Combine(directory, "stopped-copy", "data", "fixture.txt")));
+
+            await service.ExportAsync(context, new ComposeExportOptions
+            {
+                Service = "app",
+                OutputPath = stoppedExportPath
+            });
+            Assert.True(new FileInfo(stoppedExportPath).Length > 0);
         }
         finally
         {

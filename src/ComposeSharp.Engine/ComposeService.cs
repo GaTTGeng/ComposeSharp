@@ -284,7 +284,7 @@ public sealed class ComposeService : IComposeService
 
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var containerPath = source.IsContainer ? source : destination;
-        var container = await _containers.FindRunningContainerAsync(
+        var container = await _containers.FindContainerForArchiveAsync(
             client, context.ProjectName, containerPath.Service!, options.Index, cancellationToken, options.All);
 
         if (source.IsContainer)
@@ -553,7 +553,7 @@ public sealed class ComposeService : IComposeService
         ArgumentException.ThrowIfNullOrWhiteSpace(options.OutputPath);
 
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        var container = await _containers.FindRunningContainerAsync(
+        var container = await _containers.FindContainerForArchiveAsync(
             client, context.ProjectName, options.Service, options.Index, cancellationToken);
         var outputPath = Path.GetFullPath(options.OutputPath);
         var outputDirectory = Path.GetDirectoryName(outputPath);
