@@ -9,8 +9,15 @@ using ComposeSharp.Loader;
 
 namespace ComposeSharp.Tests;
 
+/// <summary>
+/// Covers Docker build parameter mapping (compose build settings plus operation options) and
+/// build-context archive creation, including dockerignore matching, Dockerfile staging, and
+/// symlink/special-file handling. Platform-specific cases return early on unsupported systems.
+/// </summary>
 public sealed class DockerBuildParametersFactoryTests
 {
+    // Operation options override same-named values from the service build block; unspecified
+    // operation values fall back to the compose definition.
     [Fact]
     public void Create_MapsSupportedBuildAndOperationSettings()
     {
@@ -135,6 +142,7 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 
+    // A bare build-arg name is resolved from the process environment; "NAME=" stays an explicit empty value.
     [Fact]
     public void Create_ResolvesValuelessBuildArgsFromTheEnvironment()
     {
@@ -352,6 +360,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 
+    // Dockerignore '?' and character classes match one Unicode scalar, not one UTF-16 code unit,
+    // so supplementary-plane characters (e.g. emoji) are treated as a single match unit.
     [Fact]
     public void CreateArchive_MatchesUnicodeScalarsForDockerIgnoreQuestionMarks()
     {
@@ -540,6 +550,7 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 
+    // A descending character-class range matches nothing; its negated form therefore matches everything.
     [Fact]
     public void CreateArchive_TreatsDescendingDockerIgnoreCharacterClassRangesAsEmpty()
     {
@@ -568,6 +579,7 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 
+    // Comment detection runs before trimming, so an indented "#..." line is a pattern (not a comment).
     [Fact]
     public void CreateArchive_HonorsLeadingWhitespaceInDockerIgnorePatterns()
     {
@@ -872,6 +884,7 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 
+    // A Dockerfile outside the build context is staged into the archive under a reserved path.
     [Fact]
     public void CreateArchive_StagesDockerfileOutsideTheContext()
     {
@@ -1416,6 +1429,7 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 
+    // statx falls back to lstat only for ENOSYS (38) and EPERM (1); other errors are not masked.
     [Theory]
     [InlineData(1, true)]
     [InlineData(38, true)]
@@ -1430,9 +1444,11 @@ public sealed class DockerBuildParametersFactoryTests
         Assert.Equal(expected, actual);
     }
 
+    // P/Invoke for creating FIFOs in the named-pipe archive tests (Linux/macOS only).
     [DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]
     private static extern int MkFifo(string path, uint mode);
 
+    // Returns the entry names produced by DockerBuildContextArchive.Create for a context directory.
     private static IReadOnlyList<string> ReadArchiveEntries(string directory, string? dockerfile = null)
     {
         using var archive = DockerBuildContextArchive.Create(directory, dockerfile);
@@ -1444,6 +1460,7 @@ public sealed class DockerBuildParametersFactoryTests
         return entries;
     }
 
+    // Loads a single-service compose document and returns its service definition.
     private static ComposeSharp.Loader.Models.ServiceDefinition LoadService(string compose)
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-parameters-{Guid.NewGuid():N}");

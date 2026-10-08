@@ -3,8 +3,13 @@ using ComposeSharp.Loader.Models;
 
 namespace ComposeSharp.Tests;
 
+/// <summary>
+/// Covers loader field-mapping conformance against YAML fixtures and the multi-file merge rules
+/// applied when override documents are stacked on a base compose file.
+/// </summary>
 public sealed class ComposeLoaderConformanceTests
 {
+    // Fixture names under tests/ComposeSharp.Tests/Fixtures, each exercising one compatibility area.
     public static IEnumerable<object[]> Fixtures()
     {
         yield return ["build-definition"];
@@ -14,6 +19,7 @@ public sealed class ComposeLoaderConformanceTests
         yield return ["service-resources"];
     }
 
+    // Each fixture's expectations are kept in one switch so a scenario name maps 1:1 to its assertions.
     [Theory]
     [MemberData(nameof(Fixtures))]
     public void Load_Fixture_MapsExpectedComposeFields(string scenario)
@@ -99,6 +105,7 @@ public sealed class ComposeLoaderConformanceTests
         });
     }
 
+    // Loads a fixture and fails with the loader exception text when the scenario cannot be parsed.
     private static ComposeProject LoadFixture(string scenario, string fixtureDirectory, string composeFile)
     {
         ComposeProject? loadedProject = null;
@@ -107,12 +114,16 @@ public sealed class ComposeLoaderConformanceTests
         return Assert.IsType<ComposeProject>(loadedProject);
     }
 
+    // Wraps fixture assertions so a mismatch is reported together with the scenario and source path.
     private static void AssertFixture(string scenario, string composeFile, Action assertion)
     {
         var exception = Record.Exception(assertion);
         Assert.True(exception is null, $"Fixture '{scenario}' from '{composeFile}' mapped unexpected fields: {exception}");
     }
 
+    // Locks the merge rules for stacked files: scalars and keyed maps are overridden by the overlay,
+    // sequence fields append (ports/volumes/networks/secrets/configs), and top-level resource names
+    // union across files while later duplicates win by name/target.
     [Fact]
     public void LoadMerged_Fixture_AppliesDocumentedFieldRules()
     {
@@ -143,6 +154,8 @@ public sealed class ComposeLoaderConformanceTests
         Assert.Equal(["app-secret", "app-secret-override"], project.Secrets);
     }
 
+    // Custom YAML merge tags (e.g. !reset) are not part of the supported merge vocabulary and must
+    // fail with the offending tag and the overlay file path in the message.
     [Fact]
     public void LoadMerged_RejectsUnsupportedMergeTagWithSourceFile()
     {
@@ -166,6 +179,7 @@ public sealed class ComposeLoaderConformanceTests
         }
     }
 
+    // Windows-style bind mounts are keyed by container target path, so the overlay replaces the base entry.
     [Fact]
     public void LoadMerged_ReplacesWindowsBindMountByContainerTarget()
     {
@@ -197,6 +211,7 @@ public sealed class ComposeLoaderConformanceTests
         }
     }
 
+    // Merge-tag-looking text is only rejected when it appears as a real YAML tag, not in comments or block scalars.
     [Fact]
     public void Load_AllowsMergeTagTextInCommentsAndBlockScalars()
     {
@@ -223,6 +238,8 @@ public sealed class ComposeLoaderConformanceTests
         }
     }
 
+    // List-form dictionary fields (sysctls, build args, extra_hosts, annotations) merge by setting
+    // name/hostname/key rather than appending blindly.
     [Fact]
     public void LoadMerged_ReplacesListFormSysctlsBySettingName()
     {
@@ -395,6 +412,7 @@ public sealed class ComposeLoaderConformanceTests
         }
     }
 
+    // Colon-form build extra_hosts merge by hostname, not by the whole "host:ip" string.
     [Fact]
     public void LoadMerged_ReplacesColonFormBuildExtraHostByHostname()
     {

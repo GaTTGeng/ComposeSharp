@@ -7,10 +7,16 @@ using System.Formats.Tar;
 
 namespace ComposeSharp.IntegrationTests;
 
+/// <summary>
+/// Docker-backed smoke tests for ComposeService lifecycle, build, and profile behavior.
+/// These tests require a reachable Docker daemon and return early when Docker is unavailable,
+/// so a green run without Docker is not proof of Docker behavior.
+/// </summary>
 public class ComposeServiceIntegrationTests
 {
     private static readonly bool DockerAvailable = CheckDockerAvailable();
 
+    // Probes `docker info` once per test class; a missing CLI or unreachable daemon disables the Docker cases.
     private static bool CheckDockerAvailable()
     {
         try
@@ -53,6 +59,7 @@ public class ComposeServiceIntegrationTests
         Assert.NotNull(result);
     }
 
+    // Pure loader path; does not need Docker, so it has no DockerAvailable guard.
     [Fact]
     public void LoadProject_ParsesConfig()
     {
@@ -81,6 +88,7 @@ public class ComposeServiceIntegrationTests
         Directory.Delete(dir, recursive: true);
     }
 
+    // Operation build args override the compose build args ("configured" is replaced by "overridden").
     [Fact]
     public async Task BuildAsync_BuildsConfiguredTargetThroughDockerEngine()
     {
@@ -199,6 +207,9 @@ public class ComposeServiceIntegrationTests
         }
     }
 
+    // Default-context lifecycle operations act only on services selected without profiles, while an
+    // explicit service name reaches profiled services; Down on the default context leaves the
+    // profiled container untouched.
     [Fact]
     public async Task LifecycleOperations_ApplyProfilesAndAllowExplicitServiceSelection()
     {
@@ -460,6 +471,7 @@ public class ComposeServiceIntegrationTests
         }
     }
 
+    // Collects build statuses and container log lines for assertions.
     private sealed class TestLogConsumer : ILogConsumer
     {
         public List<string> Logs { get; } = [];

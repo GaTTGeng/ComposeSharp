@@ -4,21 +4,28 @@ using Docker.DotNet.Models;
 
 namespace ComposeSharp.Engine.Internal;
 
+/// <summary>
+/// Maps a service's build configuration (plus caller overrides) onto Docker Engine image build parameters.
+/// </summary>
 internal static class DockerBuildParametersFactory
 {
     public static ImageBuildParameters Create(ServiceDefinition service, ComposeBuildOptions? options)
     {
         var build = service.Build ?? throw new ArgumentException($"Service '{service.Name}' does not have a build configuration.", nameof(service));
+        // Tag the image with its service image name (or service name) plus any extra tags.
         var tags = new List<string> { service.Image ?? service.Name };
         if (build.Tags is not null)
             tags.AddRange(build.Tags);
 
+        // Caller options override the file-level build configuration field by field.
         return new ImageBuildParameters
         {
             Tags = tags.Distinct(StringComparer.Ordinal).ToList(),
             SuppressOutput = options?.Quiet == true,
             NoCache = options?.NoCache == true || build.NoCache == true,
             Pull = options?.Pull == true || build.Pull == true ? "true" : null,
+            // The caller rewrites Dockerfile to the path inside the build-context archive
+            // (see DockerBuildContextArchive) before the build request is sent.
             Dockerfile = build.Dockerfile,
             BuildArgs = MergeBuildArgs(build.Args, options?.BuildArgs),
             Labels = MergeStrings(build.Labels, options?.Labels),
@@ -32,6 +39,8 @@ internal static class DockerBuildParametersFactory
         };
     }
 
+    // A null-valued build arg means "take the value from the process environment",
+    // matching Compose build-arg semantics; explicit option overrides win last.
     private static Dictionary<string, string>? MergeBuildArgs(
         IReadOnlyDictionary<string, string?>? configured,
         IReadOnlyDictionary<string, string>? overrides)
@@ -70,6 +79,7 @@ internal static class DockerBuildParametersFactory
         var result = configured is null
             ? new Dictionary<string, string>(StringComparer.Ordinal)
             : new Dictionary<string, string>(configured, StringComparer.Ordinal);
+        // Option overrides win over configured values.
         if (overrides is not null)
         {
             foreach (var (key, value) in overrides)
@@ -78,6 +88,7 @@ internal static class DockerBuildParametersFactory
         return result;
     }
 
+    // Docker Engine builds accept one platform per request, so multi-platform lists are rejected instead of silently dropped.
     private static string? GetSinglePlatform(string serviceName, IReadOnlyList<string>? platforms)
     {
         if (platforms is not { Count: > 1 })
@@ -92,6 +103,7 @@ internal static class DockerBuildParametersFactory
         if (string.IsNullOrWhiteSpace(value))
             return null;
 
+        // Split the trailing letter suffix from the leading integer, then apply the unit multiplier.
         var text = value.Trim();
         var suffixStart = text.Length;
         while (suffixStart > 0 && char.IsLetter(text[suffixStart - 1]))

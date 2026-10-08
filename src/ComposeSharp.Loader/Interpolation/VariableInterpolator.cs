@@ -2,6 +2,11 @@ using System.Text.RegularExpressions;
 
 namespace ComposeSharp.Loader.Interpolation;
 
+/// <summary>
+/// Compose-style variable interpolation for raw YAML text, applied before parsing.
+/// Supports <c>$NAME</c>, <c>${NAME}</c>, <c>$$</c> escaping, and the Compose default
+/// operators (<c>:-</c>, <c>-</c>, <c>:?</c>, <c>?</c>, <c>:+</c>, <c>+</c>).
+/// </summary>
 public static partial class VariableInterpolator
 {
     [GeneratedRegex(@"\$\$|\$\{(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:(?<op>:\?|:\+|:-|\+|-|\?)(?<default>[^}]*))?\}|\$(?<shellName>[A-Za-z_][A-Za-z0-9_]*)")]
@@ -13,6 +18,9 @@ public static partial class VariableInterpolator
     /// Per-service <c>env_file</c> entries are container environment inputs and are deliberately not
     /// interpolation sources.
     /// </summary>
+    /// <param name="text">Raw YAML text to expand.</param>
+    /// <param name="dotenv">Values from the project's <c>.env</c> file, used only when the process environment has no value.</param>
+    /// <param name="strict">Reserved for stricter unresolved-variable behavior; currently has no effect.</param>
     public static string Expand(
         string text,
         IReadOnlyDictionary<string, string> dotenv,
@@ -20,6 +28,7 @@ public static partial class VariableInterpolator
     {
         return VariablePattern().Replace(text, match =>
         {
+            // $$ escapes to a literal dollar; bare $NAME resolves without any default operator.
             if (match.Value == "$$") return "$";
 
             if (match.Groups["shellName"].Success)
@@ -31,6 +40,8 @@ public static partial class VariableInterpolator
 
             var value = ResolveVariable(name, dotenv);
 
+            // Colon operators treat empty string as unset; bare operators only treat missing as unset.
+            // Alternate/default values are expanded recursively so nested ${} inside them works.
             return op switch
             {
                 ":-" => string.IsNullOrEmpty(value) ? Expand(defaultValue, dotenv) : value,

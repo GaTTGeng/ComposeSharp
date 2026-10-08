@@ -5,6 +5,11 @@ using Docker.DotNet.Models;
 
 namespace ComposeSharp.Engine.Internal;
 
+/// <summary>
+/// Builds and queries the Compose labels that mark Docker resources as owned by a project.
+/// Resource ownership is constrained to these labels: the engine only lists and mutates resources
+/// carrying its project/service labels and never scans or modifies arbitrary Docker resources.
+/// </summary>
 internal sealed class LabelHelper
 {
     public Dictionary<string, string> CreateServiceLabels(string projectName, ServiceDefinition service, int index, bool oneOff = false)
@@ -13,8 +18,12 @@ internal sealed class LabelHelper
         {
             [ComposeConstants.ProjectLabel] = projectName,
             [ComposeConstants.ServiceLabel] = service.Name,
+            // ContainerNumber is the 1-based replica index; one-off run containers use 0 and
+            // OneOff=true so service reconciliation can ignore them when scaling or recreating.
             [ComposeConstants.ContainerNumberLabel] = index.ToString(),
             [ComposeConstants.OneOffLabel] = oneOff.ToString(),
+            // Fingerprint of the fields that imply a container recreate; kept as a label so the
+            // configuration drift is visible on the container itself.
             [ComposeConstants.ConfigHashLabel] = CreateConfigHash(service)
         };
 
@@ -42,6 +51,7 @@ internal sealed class LabelHelper
     public static Dictionary<string, IDictionary<string, bool>> ProjectLabelFilter(string projectName)
         => LabelFilter(ComposeConstants.ProjectLabel, projectName);
 
+    // Both labels must match so a service name reused in another project is never touched.
     public static Dictionary<string, IDictionary<string, bool>> ServiceLabelFilter(string projectName, string serviceName)
         => new()
         {
