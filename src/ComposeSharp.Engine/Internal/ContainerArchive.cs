@@ -55,8 +55,8 @@ internal static class ContainerArchive
         if (Directory.Exists(destination))
             EnsureNoReparsePoint(destination);
         Directory.CreateDirectory(destination);
-        var destinationPrefix = Path.TrimEndingDirectorySeparator(destination) + Path.DirectorySeparatorChar;
         long bytesCopied = 0;
+        var directoryModes = new List<(string Path, UnixFileMode Mode)>();
 
         // TarReader's substreams rely on seeking when the HTTP response is chunked. Spool the
         // daemon response first so large archives stay off the managed heap and entries read fully.
@@ -70,14 +70,36 @@ internal static class ContainerArchive
             cancellationToken.ThrowIfCancellationRequested();
             var relativeName = entry.Name.Replace('/', Path.DirectorySeparatorChar);
             var target = Path.GetFullPath(Path.Combine(destination, relativeName));
-            if (!target.StartsWith(destinationPrefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) &&
-                !string.Equals(target, destination, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            if (!IsContainedPath(destination, target))
                 throw new InvalidDataException($"Docker returned an archive entry outside the destination directory: '{entry.Name}'.");
             EnsureNoReparsePointInPath(destination, target);
 
             if (entry.EntryType == TarEntryType.Directory)
             {
                 Directory.CreateDirectory(target);
+                directoryModes.Add((target, entry.Mode));
+                continue;
+            }
+
+            if (entry.EntryType == TarEntryType.HardLink)
+            {
+                if (string.IsNullOrWhiteSpace(entry.LinkName))
+                    throw new InvalidDataException($"Docker returned a hard link without a target: '{entry.Name}'.");
+                var linkName = entry.LinkName.Replace('/', Path.DirectorySeparatorChar);
+                var linkTarget = Path.GetFullPath(Path.Combine(destination, linkName));
+                if (!IsContainedPath(destination, linkTarget))
+                    throw new InvalidDataException($"Docker returned a hard link outside the destination directory: '{entry.LinkName}'.");
+                EnsureNoReparsePointInPath(destination, linkTarget);
+                if (!File.Exists(linkTarget))
+                    throw new InvalidDataException($"Docker returned a hard link before its target: '{entry.LinkName}'.");
+                var linkParent = Path.GetDirectoryName(target);
+                if (string.IsNullOrEmpty(linkParent))
+                    throw new InvalidDataException($"Docker returned an invalid archive entry path: '{entry.Name}'.");
+                Directory.CreateDirectory(linkParent);
+                await MaterializeHardLinkAsync(linkTarget, target, cancellationToken);
+                if (!OperatingSystem.IsWindows())
+                    File.SetUnixFileMode(target, File.GetUnixFileMode(linkTarget));
+                bytesCopied += new FileInfo(linkTarget).Length;
                 continue;
             }
 
@@ -88,14 +110,46 @@ internal static class ContainerArchive
             if (string.IsNullOrEmpty(parent))
                 throw new InvalidDataException($"Docker returned an invalid archive entry path: '{entry.Name}'.");
             Directory.CreateDirectory(parent);
-            await using var output = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None,
-                81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
-            if (entry.DataStream is not null)
-                await entry.DataStream.CopyToAsync(output, cancellationToken);
+            await using (var output = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None,
+                             81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                if (entry.DataStream is not null)
+                    await entry.DataStream.CopyToAsync(output, cancellationToken);
+            }
             bytesCopied += entry.Length;
+            ApplyUnixMode(target, entry.Mode);
         }
 
+        foreach (var (path, mode) in directoryModes.OrderByDescending(directory => directory.Path.Length))
+            ApplyUnixMode(path, mode);
+
         return bytesCopied;
+    }
+
+    internal static bool IsContainedPath(string destinationPath, string targetPath)
+    {
+        var destination = Path.GetFullPath(destinationPath);
+        var target = Path.GetFullPath(targetPath);
+        var relative = Path.GetRelativePath(destination, target);
+        return relative == "." ||
+               (!Path.IsPathRooted(relative) && relative != ".." &&
+                !relative.StartsWith(".." + Path.DirectorySeparatorChar, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) &&
+                !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+    }
+
+    private static void ApplyUnixMode(string path, UnixFileMode mode)
+    {
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path, mode);
+    }
+
+    private static async Task MaterializeHardLinkAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken)
+    {
+        await using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var destination = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None,
+            81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await source.CopyToAsync(destination, cancellationToken);
     }
 
     private static async Task WriteDirectoryAsync(TarWriter writer, string directoryPath, string archivePath, CancellationToken cancellationToken)
