@@ -108,8 +108,33 @@ internal sealed class ContainerLifecycle
         var timeoutParam = new ContainerStopParameters { WaitBeforeKillSeconds = (uint)(timeout ?? 10) };
         foreach (var container in containers)
         {
-            try { await client.Containers.StopContainerAsync(container.ID, timeoutParam, ct); }
+            try
+            {
+                await client.Containers.StopContainerAsync(container.ID, timeoutParam, ct);
+                // The stop endpoint can respond before list/inspect report a terminal state;
+                // confirm the container is no longer running so callers never observe a stale "running".
+                await WaitUntilNotRunningAsync(client, container.ID, ct);
+            }
             catch (DockerApiException) { }
+        }
+    }
+
+    // Bounded poll: Docker state updates are usually immediate after stop, but list/inspect can lag briefly.
+    private static async Task WaitUntilNotRunningAsync(DockerClient client, string containerId, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            try
+            {
+                var inspect = await client.Containers.InspectContainerAsync(containerId, ct);
+                if (inspect.State?.Running != true) return;
+            }
+            catch (DockerApiException)
+            {
+                // Removed containers are already terminal.
+                return;
+            }
+            await Task.Delay(100, ct);
         }
     }
 
