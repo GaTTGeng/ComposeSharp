@@ -3,10 +3,10 @@ namespace ComposeSharp.Api;
 /// <summary>Options for copying files between the host and a service container.</summary>
 public sealed record ComposeCopyOptions
 {
-    /// <summary>Copy source: a host path, or a <c>container:path</c> reference.</summary>
+    /// <summary>Copy source: a host path, or a <c>service:/container/path</c> reference.</summary>
     public required string Source { get; init; }
 
-    /// <summary>Copy destination: a host path, or a <c>container:path</c> reference.</summary>
+    /// <summary>Copy destination: a host path, or a <c>service:/container/path</c> reference.</summary>
     public required string Destination { get; init; }
 
     /// <summary>Follow symlinks in the source location instead of copying them as links.</summary>

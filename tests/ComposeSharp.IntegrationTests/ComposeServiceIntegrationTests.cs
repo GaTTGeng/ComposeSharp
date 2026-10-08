@@ -3,6 +3,7 @@ using ComposeSharp.Engine;
 using ComposeSharp.Loader;
 using Docker.DotNet;
 using Docker.DotNet.Models;
+using System.Formats.Tar;
 
 namespace ComposeSharp.IntegrationTests;
 
@@ -274,6 +275,155 @@ public class ComposeServiceIntegrationTests
             try { await service.DownAsync(profileContext); }
             finally { Directory.Delete(directory, recursive: true); }
         }
+    }
+
+    [Fact]
+    public async Task CopyAndExportAsync_UseDockerArchiveEndpoints()
+    {
+        if (!DockerAvailable) return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"archive-transfer-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var projectName = $"archive-transfer-{Guid.NewGuid():N}";
+        var sourcePath = Path.Combine(directory, "fixture.txt");
+        var copiedDirectory = Path.Combine(directory, "copied");
+        var exportPath = Path.Combine(directory, "filesystem.tar");
+        var stoppedExportPath = Path.Combine(directory, "stopped-filesystem.tar");
+        const string contents = "archive-data";
+        await File.WriteAllTextAsync(sourcePath, contents);
+        await File.WriteAllTextAsync(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sh", "-c", "mkdir -p /data && sleep 300"]
+                deploy:
+                  replicas: 2
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+            var intoContainer = await service.CopyAsync(context, new ComposeCopyOptions
+            {
+                Source = sourcePath,
+                Destination = "app:/data"
+            });
+            Assert.Equal(contents.Length * 2, intoContainer.BytesCopied);
+            Assert.Equal(0, intoContainer.ExitCode);
+
+            var outOfContainer = await service.CopyAsync(context, new ComposeCopyOptions
+            {
+                Source = "app:/data",
+                Destination = copiedDirectory
+            });
+            Assert.True(outOfContainer.IsDirectory);
+            Assert.Equal(contents.Length, outOfContainer.BytesCopied);
+            Assert.Equal(contents, await File.ReadAllTextAsync(Path.Combine(copiedDirectory, "data", "fixture.txt")));
+
+            var secondReplicaDirectory = Path.Combine(directory, "copied-replica-two");
+            await service.CopyAsync(context, new ComposeCopyOptions
+            {
+                Source = "app:/data",
+                Destination = secondReplicaDirectory,
+                Index = 2
+            });
+            Assert.Equal(contents, await File.ReadAllTextAsync(Path.Combine(secondReplicaDirectory, "data", "fixture.txt")));
+
+            await service.ExportAsync(context, new ComposeExportOptions
+            {
+                Service = "app",
+                OutputPath = exportPath
+            });
+            Assert.True(new FileInfo(exportPath).Length > 0);
+            using var tar = new TarReader(File.OpenRead(exportPath));
+            var hasCopiedFile = false;
+            TarEntry? entry;
+            while ((entry = tar.GetNextEntry()) is not null)
+            {
+                if (entry.Name.Replace('\\', '/').TrimStart('/').EndsWith("data/fixture.txt", StringComparison.Ordinal))
+                    hasCopiedFile = true;
+            }
+            Assert.True(hasCopiedFile);
+
+            await service.StopAsync(context);
+            var copiedToStoppedContainer = await service.CopyAsync(context, new ComposeCopyOptions
+            {
+                Source = sourcePath,
+                Destination = "app:/data"
+            });
+            Assert.Equal(contents.Length * 2, copiedToStoppedContainer.BytesCopied);
+
+            var copiedFromStoppedContainer = await service.CopyAsync(context, new ComposeCopyOptions
+            {
+                Source = "app:/data",
+                Destination = Path.Combine(directory, "stopped-copy")
+            });
+            Assert.Equal(contents, await File.ReadAllTextAsync(Path.Combine(directory, "stopped-copy", "data", "fixture.txt")));
+
+            await service.ExportAsync(context, new ComposeExportOptions
+            {
+                Service = "app",
+                OutputPath = stoppedExportPath
+            });
+            Assert.True(new FileInfo(stoppedExportPath).Length > 0);
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task CopyAsync_RejectsAmbiguousAndCancelledRequestsBeforeConnecting()
+    {
+        var service = new ComposeService();
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "archive-validation",
+            WorkingDirectory = Path.GetTempPath()
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.CopyAsync(context, new ComposeCopyOptions
+        {
+            Source = "source.txt",
+            Destination = "destination.txt"
+        }));
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.CopyAsync(context, new ComposeCopyOptions
+        {
+            Source = "source.txt",
+            Destination = "app:/data"
+        }, cancellation.Token));
+    }
+
+    [Fact]
+    public async Task ExportAsync_ThrowsWhenCancelledBeforeConnecting()
+    {
+        var service = new ComposeService();
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "archive-validation",
+            WorkingDirectory = Path.GetTempPath()
+        };
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.ExportAsync(context, new ComposeExportOptions
+        {
+            Service = "app",
+            OutputPath = Path.Combine(Path.GetTempPath(), "archive.tar")
+        }, cancellation.Token));
     }
 
     [Fact]

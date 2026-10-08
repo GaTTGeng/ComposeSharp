@@ -60,8 +60,9 @@ public interface IComposeService
 
     /// <summary>Copies files between the host and a service container.</summary>
     /// <remarks>
-    /// Currently starts the local <c>docker</c> executable to perform the copy; a managed Docker API
-    /// implementation is planned. Result content and byte counts are not populated.
+    /// Uses the Docker Engine archive endpoints. Exactly one side of the copy must use the
+    /// <c>service:/container/path</c> form; the other side is a host path. Byte counts are reported
+    /// in <see cref="CopyResult.BytesCopied"/>.
     /// </remarks>
     Task<CopyResult> CopyAsync(ComposeProjectContext context, ComposeCopyOptions options, CancellationToken cancellationToken = default);
 
@@ -112,8 +113,8 @@ public interface IComposeService
 
     /// <summary>Exports a service container's filesystem to a local archive.</summary>
     /// <remarks>
-    /// Currently starts the local <c>docker</c> executable to perform the export; a managed Docker API
-    /// implementation is planned.
+    /// Uses the Docker Engine export endpoint and supports replica selection via the options
+    /// rather than assuming the replica-1 container name.
     /// </remarks>
     Task ExportAsync(ComposeProjectContext context, ComposeExportOptions options, CancellationToken cancellationToken = default);
 

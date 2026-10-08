@@ -364,22 +364,73 @@ public sealed class ComposeService : IComposeService
     /// Copies a file or directory between the host and a service container.
     /// </summary>
     /// <remarks>
-    /// Known limitation: this starts the <c>docker</c> executable (<c>docker cp</c>) instead of a managed
-    /// Docker API; <c>BytesCopied</c> is therefore always 0. Should move toward a managed API.
+    /// Uses the Docker Engine archive endpoints: <c>service:/path</c> forms name a container path,
+    /// plain paths name a host path, and exactly one side must be a container path.
     /// </remarks>
-    public Task<CopyResult> CopyAsync(ComposeProjectContext context, ComposeCopyOptions options, CancellationToken cancellationToken = default)
+    public async Task<CopyResult> CopyAsync(ComposeProjectContext context, ComposeCopyOptions options, CancellationToken cancellationToken = default)
     {
-        // Known limitation: shells out to the docker executable ("docker cp") instead of a managed
-        // Docker API, so byte counts are unavailable and only the process exit code is reported.
-        var psi = new System.Diagnostics.ProcessStartInfo("docker", $"cp {options.Source} {options.Destination}")
+        // Exactly one side is a container path ("service:/path"); parse and validate both first.
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(options);
+        var source = ContainerCopyPath.Parse(options.Source);
+        var destination = ContainerCopyPath.Parse(options.Destination);
+        if (source.IsContainer == destination.IsContainer)
+            throw new ArgumentException("Exactly one copy path must use the 'service:/container/path' form.", nameof(options));
+
+        using var client = _clientFactory.CreateClient(context.SocketPath);
+
+        // Container → host: stream the container archive out and extract it to the host path.
+        if (source.IsContainer)
         {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
+            var container = await _containers.FindContainerForArchiveAsync(
+                client, context.ProjectName, source.Service!, options.Index, cancellationToken, options.All);
+            var pathParameters = new GetArchiveFromContainerParameters { Path = source.Path! };
+            var stat = await client.Containers.GetArchiveFromContainerAsync(
+                container.ID,
+                pathParameters,
+                true,
+                cancellationToken);
+            var response = await client.Containers.GetArchiveFromContainerAsync(
+                container.ID, pathParameters, false, cancellationToken);
+            await using var archive = response.Stream;
+            var bytesCopied = await ContainerArchive.ExtractToDirectoryAsync(
+                archive, destination.Path!, cancellationToken);
+            return new CopyResult
+            {
+                IsDirectory = (stat.Stat.Mode & ContainerArchive.DirectoryMode) == ContainerArchive.DirectoryMode,
+                BytesCopied = bytesCopied,
+                ExitCode = 0
+            };
+        }
+
+        var sourcePath = Path.GetFullPath(source.Path!);
+        if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+            throw new FileNotFoundException("The local copy source does not exist.", sourcePath);
+
+        await using var localArchive = await ContainerArchive.CreateFromPathAsync(sourcePath, cancellationToken);
+        var bytes = ContainerArchive.GetContentLength(sourcePath);
+        var targetContainers = await _containers.ListContainersForArchiveAsync(
+            client, context.ProjectName, destination.Service!, cancellationToken, options.All);
+        if (options.Index is { } index)
+            targetContainers = [ContainerLifecycle.SelectContainerForArchive(targetContainers, destination.Service!, index)];
+        else if (targetContainers.Count == 0)
+            throw new InvalidOperationException($"No container found for service '{destination.Service}'.");
+
+        foreach (var container in targetContainers)
+        {
+            localArchive.Position = 0;
+            await client.Containers.ExtractArchiveToContainerAsync(
+                container.ID,
+                new ContainerPathStatParameters { Path = destination.Path!, AllowOverwriteDirWithFile = false },
+                localArchive,
+                cancellationToken);
+        }
+        return new CopyResult
+        {
+            IsDirectory = Directory.Exists(sourcePath),
+            BytesCopied = checked(bytes * targetContainers.Count),
+            ExitCode = 0
         };
-        var proc = System.Diagnostics.Process.Start(psi);
-        proc?.WaitForExit();
-        return Task.FromResult(new CopyResult { BytesCopied = 0, ExitCode = proc?.ExitCode ?? -1 });
     }
 
     /// <summary>Pauses the containers of the selected services.</summary>
@@ -650,21 +701,30 @@ public sealed class ComposeService : IComposeService
 
     /// <summary>Writes a container filesystem tarball for a service replica to <c>OutputPath</c>.</summary>
     /// <remarks>
-    /// Known limitation: this starts the <c>docker</c> executable (<c>docker export</c>) instead of a
-    /// managed Docker API and assumes the replica-1 container name. Should move toward a managed API.
+    /// Uses the Docker Engine export endpoint and supports replica selection via <c>Index</c>
+    /// rather than assuming the replica-1 container name.
     /// </remarks>
-    public Task ExportAsync(ComposeProjectContext context, ComposeExportOptions options, CancellationToken cancellationToken = default)
+    public async Task ExportAsync(ComposeProjectContext context, ComposeExportOptions options, CancellationToken cancellationToken = default)
     {
-        // Known limitation: shells out to the docker executable ("docker export") instead of a managed
-        // Docker API, and assumes the replica-1 container name.
-        var psi = new System.Diagnostics.ProcessStartInfo("docker", $"export {context.ProjectName}-{options.Service}-1 -o {options.OutputPath}")
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        var proc = System.Diagnostics.Process.Start(psi);
-        proc?.WaitForExit();
-        return Task.CompletedTask;
+        // Validate inputs, then resolve the target container and stream its filesystem to the output file.
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.Service);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.OutputPath);
+
+        using var client = _clientFactory.CreateClient(context.SocketPath);
+        var container = await _containers.FindContainerForArchiveAsync(
+            client, context.ProjectName, options.Service, options.Index, cancellationToken);
+        var outputPath = Path.GetFullPath(options.OutputPath);
+        var outputDirectory = Path.GetDirectoryName(outputPath);
+        if (string.IsNullOrEmpty(outputDirectory))
+            throw new ArgumentException("The output path must include a parent directory.", nameof(options));
+        Directory.CreateDirectory(outputDirectory);
+
+        await using var archive = await client.Containers.ExportContainerAsync(container.ID, cancellationToken);
+        await using var output = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None,
+            81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await archive.CopyToAsync(output, cancellationToken);
     }
 
     /// <summary>Creates an image from a service container and returns the resulting image reference.</summary>

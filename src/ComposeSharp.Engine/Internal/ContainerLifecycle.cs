@@ -229,18 +229,92 @@ internal sealed class ContainerLifecycle
     /// Finds a running container of a service; <paramref name="index"/> selects a replica by its 1-based position.
     /// </summary>
     public async Task<ContainerListResponse> FindRunningContainerAsync(
-        DockerClient client, string projectName, string serviceName, int? index, CancellationToken ct)
+        DockerClient client, string projectName, string serviceName, int? index, CancellationToken ct, bool includeOneOff = false)
     {
-        var containers = await ListServiceContainersAsync(client, projectName, serviceName, false, ct);
-        // Only running containers are candidates; index selects among them 1-based.
-        var running = containers.Where(c => string.Equals(c.State, "running", StringComparison.OrdinalIgnoreCase)).ToList();
+        // Running containers only; index selects among them 1-based via the shared selector.
+        return await FindServiceContainerAsync(client, projectName, serviceName, index, ct,
+            includeStopped: false, includeOneOff);
+    }
 
-        if (index.HasValue && index.Value > 0)
-            return running.ElementAtOrDefault(index.Value - 1)
-                ?? throw new InvalidOperationException($"No running container at index {index} for service '{serviceName}'.");
+    public async Task<ContainerListResponse> FindContainerForArchiveAsync(
+        DockerClient client, string projectName, string serviceName, int? index, CancellationToken ct, bool includeOneOff = false)
+    {
+        var containers = await ListContainersForArchiveAsync(client, projectName, serviceName, ct, includeOneOff);
+        return SelectContainerForArchive(containers, serviceName, index);
+    }
 
-        return running.FirstOrDefault()
-            ?? throw new InvalidOperationException($"No running container found for service '{serviceName}'.");
+    public async Task<IReadOnlyList<ContainerListResponse>> ListContainersForArchiveAsync(
+        DockerClient client, string projectName, string serviceName, CancellationToken ct, bool includeOneOff = false)
+    {
+        var containers = await ListServiceContainersAsync(client, projectName, serviceName, true, ct);
+        return FilterEligibleContainers(containers, includeStopped: true, includeOneOff)
+            .OrderBy(GetContainerNumber)
+            .ThenBy(container => container.ID, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    internal static ContainerListResponse SelectContainerForArchive(
+        IReadOnlyList<ContainerListResponse> containers, string serviceName, int? index)
+    {
+        if (index is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(index), index, "Container indexes are 1-based.");
+
+        if (index.HasValue)
+            return FindByContainerNumber(containers, index.Value)
+                ?? throw new InvalidOperationException($"No container at index {index} for service '{serviceName}'.");
+
+        return containers.FirstOrDefault()
+            ?? throw new InvalidOperationException($"No container found for service '{serviceName}'.");
+    }
+
+    private async Task<ContainerListResponse> FindServiceContainerAsync(
+        DockerClient client, string projectName, string serviceName, int? index, CancellationToken ct,
+        bool includeStopped, bool includeOneOff)
+    {
+        var containers = await ListServiceContainersAsync(client, projectName, serviceName, includeStopped, ct);
+        var eligible = FilterEligibleContainers(containers, includeStopped, includeOneOff).ToList();
+
+        if (index is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(index), index, "Container indexes are 1-based.");
+
+        if (index.HasValue)
+            return FindByContainerNumber(eligible, index.Value)
+                ?? throw new InvalidOperationException($"No {(includeStopped ? "container" : "running container")} at index {index} for service '{serviceName}'.");
+
+        return eligible.OrderBy(GetContainerNumber).ThenBy(container => container.ID, StringComparer.Ordinal).FirstOrDefault()
+            ?? throw new InvalidOperationException($"No {(includeStopped ? "container" : "running container")} found for service '{serviceName}'.");
+    }
+
+    internal static ContainerListResponse? FindByContainerNumber(
+        IEnumerable<ContainerListResponse> containers, int index)
+        => containers.FirstOrDefault(container => GetContainerNumber(container) == index);
+
+    internal static IEnumerable<ContainerListResponse> FilterOneOffContainers(
+        IEnumerable<ContainerListResponse> containers, bool includeOneOff)
+    {
+        if (includeOneOff)
+            return containers;
+
+        return containers.Where(container =>
+        {
+            var labels = container.Labels ?? new Dictionary<string, string>();
+            return !labels.TryGetValue(ComposeConstants.OneOffLabel, out var value) ||
+                   !bool.TryParse(value, out var isOneOff) ||
+                   !isOneOff;
+        });
+    }
+
+    internal static IEnumerable<ContainerListResponse> FilterEligibleContainers(
+        IEnumerable<ContainerListResponse> containers, bool includeStopped, bool includeOneOff)
+        => FilterOneOffContainers(containers, includeOneOff)
+            .Where(container => includeStopped || string.Equals(container.State, "running", StringComparison.OrdinalIgnoreCase));
+
+    private static int GetContainerNumber(ContainerListResponse container)
+    {
+        var labels = container.Labels ?? new Dictionary<string, string>();
+        return labels.TryGetValue(ComposeConstants.ContainerNumberLabel, out var value) && int.TryParse(value, out var number)
+            ? number
+            : int.MaxValue;
     }
 
     private HostConfig BuildHostConfig(string projectName, ComposeProject project, ServiceDefinition service)
