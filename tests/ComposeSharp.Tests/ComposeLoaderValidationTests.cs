@@ -3,6 +3,10 @@ using YamlDotNet.Core;
 
 namespace ComposeSharp.Tests;
 
+/// <summary>
+/// Covers loader validation diagnostics: every rejected document or property must report the
+/// source file, service name (when applicable), property path, and a message naming the defect.
+/// </summary>
 public sealed class ComposeLoaderValidationTests
 {
     [Fact]
@@ -69,6 +73,7 @@ public sealed class ComposeLoaderValidationTests
         AssertServiceDiagnostic(exception, files.PrimaryPath, "api", path, message);
     }
 
+    // Bracketed IPv6 host syntax ([::1]:8080:80) is accepted; the default protocol suffix is appended to the container port.
     [Fact]
     public void Load_BracketedIpv6PortMapping_IsAccepted()
     {
@@ -140,6 +145,7 @@ public sealed class ComposeLoaderValidationTests
         AssertServiceDiagnostic(exception, files.PrimaryPath, "api", path, message);
     }
 
+    // YAML syntax errors keep the parser's line/column and surface the parser exception as the inner exception.
     [Fact]
     public void Load_MalformedYaml_RetainsParserLocationAndInnerException()
     {
@@ -177,6 +183,8 @@ public sealed class ComposeLoaderValidationTests
         AssertServiceDiagnostic(exception, files.OverlayPath!, "api", "services.api.build", "scalar or YAML mapping");
     }
 
+    // Provenance rule: a service whose name contains dots must not steal field-level source attribution
+    // from a sibling field of a similarly named service.
     [Fact]
     public void LoadMerged_DottedServiceName_DoesNotOverwriteSiblingFieldProvenance()
     {
@@ -206,6 +214,8 @@ public sealed class ComposeLoaderValidationTests
         AssertServiceDiagnostic(exception, files.OverlayPath!, "api", path, "image");
     }
 
+    // Merged lists keep per-item provenance: an invalid base item still reports the base file even
+    // after the overlay appends further items.
     [Fact]
     public void LoadMerged_InvalidBaseListItem_ReportsBaseSourceAfterOverlayAppend()
     {
@@ -219,6 +229,7 @@ public sealed class ComposeLoaderValidationTests
             exception, files.PrimaryPath, "api", "services.api.ports[0]", "short port mapping");
     }
 
+    // Appended overlay items report the overlay file and their index in the merged list.
     [Fact]
     public void LoadMerged_InvalidAppendedListItem_ReportsOverlaySource()
     {
@@ -232,6 +243,7 @@ public sealed class ComposeLoaderValidationTests
             exception, files.OverlayPath!, "api", "services.api.ports[1]", "short port mapping");
     }
 
+    // Asserts project-level diagnostics carry the source file and root property path but no service name.
     private static void AssertProjectDiagnostic(
         ComposeValidationException exception,
         string source,
@@ -245,6 +257,7 @@ public sealed class ComposeLoaderValidationTests
         Assert.Contains(Path.GetFullPath(source), exception.Message, StringComparison.Ordinal);
     }
 
+    // Asserts service-level diagnostics carry source file, service name, property path, and message text.
     private static void AssertServiceDiagnostic(
         ComposeValidationException exception,
         string source,
@@ -260,6 +273,7 @@ public sealed class ComposeLoaderValidationTests
         Assert.Contains(service, exception.Message, StringComparison.Ordinal);
     }
 
+    // Disposable temp compose project with an optional override file for merge scenarios.
     private sealed class ComposeFiles : IDisposable
     {
         public ComposeFiles(string primary, string? overlay = null)

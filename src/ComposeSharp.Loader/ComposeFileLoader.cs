@@ -9,15 +9,37 @@ using YamlDotNet.Serialization;
 
 namespace ComposeSharp.Loader;
 
+/// <summary>
+/// Loads Compose-shaped YAML into typed <see cref="Models"/> with interpolation, validation,
+/// and multi-file overlay support.
+/// Parsing works on plain YAML mappings so diagnostics can carry source-file provenance;
+/// unsupported Compose constructs are retained where modeled and rejected only when unsafe to guess.
+/// </summary>
 public sealed class ComposeFileLoader
 {
+    /// <summary>
+    /// Loads one Compose file, resolving default file names when the given name does not exist.
+    /// </summary>
     public ComposeProject Load(string workingDirectory, string composeFileName)
     {
+        // Pipeline: resolve the file, load/interpolate/parse it with provenance, then map to models.
         var composePath = ResolveComposePath(workingDirectory, composeFileName);
         var document = LoadDocument(composePath);
         return ParseProject(composePath, document.Root, document.Environment, document.Provenance);
     }
 
+    /// <summary>
+    /// Loads and merges Compose files in order: the first file is the base document and each
+    /// later file is an overlay.
+    /// </summary>
+    /// <remarks>
+    /// The merge is an incremental subset of Compose merge semantics (see docs/merge-semantics.md),
+    /// not the full Compose Specification: mappings merge recursively and same-named services are
+    /// merged field by field rather than wholesale-replaced, but <c>command</c>, <c>entrypoint</c>,
+    /// and <c>healthcheck.test</c> replace rather than merge, and <c>!reset</c>/<c>!override</c>
+    /// tags are rejected. Paths and validation errors are reported against the file that
+    /// contributed the offending value.
+    /// </remarks>
     public ComposeProject LoadMerged(string workingDirectory, IReadOnlyList<string> composeFiles)
     {
         if (composeFiles.Count == 0)
@@ -25,6 +47,8 @@ public sealed class ComposeFileLoader
         if (composeFiles.Count == 1)
             return Load(workingDirectory, composeFiles[0]);
 
+        // Stage: fold every file into one document, then validate and map once at the end.
+        // The first file seeds the base map; each later file overlays it with its own provenance.
         Dictionary<object, object?>? mergedRoot = null;
         string? primaryComposePath = null;
         IReadOnlyDictionary<string, string>? primaryEnvironment = null;
@@ -32,6 +56,8 @@ public sealed class ComposeFileLoader
         foreach (var file in composeFiles)
         {
             var composePath = ResolveComposePath(workingDirectory, file);
+            // Each file is interpolated against the .env beside it before merging, so overlays
+            // never see the base file's variables and vice versa.
             var document = LoadDocument(composePath);
             if (mergedRoot is null)
             {
@@ -49,11 +75,19 @@ public sealed class ComposeFileLoader
             }
         }
 
+        // The primary file owns path resolution and carries the service definitions' display paths.
         return ParseProject(primaryComposePath!, mergedRoot!, primaryEnvironment!, provenance!);
     }
 
+    /// <summary>
+    /// Reads one Compose file: loads the adjacent <c>.env</c>, interpolates variables,
+    /// rejects unsupported merge tags, and deserializes the YAML mapping with provenance.
+    /// </summary>
     private static LoadedDocument LoadDocument(string composePath)
     {
+        // Stage: .env load -> variable interpolation -> merge-tag rejection -> YAML map + provenance.
+        // The project .env (adjacent to the compose file) is an interpolation source only;
+        // per-service env_file entries are container inputs and are handled later in ParseService.
         var env = LoadDotEnv(Path.Combine(Path.GetDirectoryName(composePath)!, ".env"));
         var raw = File.ReadAllText(composePath);
         string expanded;
@@ -63,6 +97,7 @@ public sealed class ComposeFileLoader
         }
         catch (InvalidOperationException exception)
         {
+            // Interpolation runs before parsing, so only the document path is meaningful here.
             throw new ComposeValidationException(
                 composePath, "$", $"interpolation failed: {exception.Message}", innerException: exception);
         }
@@ -73,6 +108,7 @@ public sealed class ComposeFileLoader
             var root = deserializer.Deserialize<Dictionary<object, object?>>(expanded)
                        ?? throw new ComposeValidationException(composePath, "$", "the document is empty.");
 
+            // Provenance is built from the deserialized tree, so every member and list index gets a path.
             return new LoadedDocument(root, env, BuildProvenance(root, composePath));
         }
         catch (ComposeValidationException)
@@ -81,6 +117,7 @@ public sealed class ComposeFileLoader
         }
         catch (YamlException exception)
         {
+            // YamlDotNet coordinates are preserved verbatim so callers can point at the exact node.
             throw new ComposeValidationException(
                 composePath,
                 "$",
@@ -91,16 +128,23 @@ public sealed class ComposeFileLoader
         }
     }
 
+    /// <summary>
+    /// Validates the merged document and maps it onto the typed project model.
+    /// Top-level volumes/networks/secrets/configs reduce to name lists; service maps become
+    /// <see cref="ServiceDefinition"/> instances.
+    /// </summary>
     private ComposeProject ParseProject(
         string composePath,
         Dictionary<object, object?> root,
         IReadOnlyDictionary<string, string> env,
         IReadOnlyDictionary<string, string> provenance)
     {
+        // Stage: structural validation first (so bad shapes fail with provenance), then model mapping.
         var validation = new ValidationContext(composePath, provenance);
         ValidateProject(root, validation);
         var servicesMap = (Dictionary<object, object?>)root["services"]!;
 
+        // Top-level resource maps contribute only their declared names to the project model.
         var volumes = ParseNameList(root, "volumes");
         var networks = ParseNameList(root, "networks");
         var secrets = ParseNameList(root, "secrets");
@@ -126,11 +170,19 @@ public sealed class ComposeFileLoader
             extensions);
     }
 
+    /// <summary>A deserialized YAML document with its interpolation environment and provenance map.</summary>
+    /// <param name="Root">Deserialized YAML mapping tree.</param>
+    /// <param name="Environment">Values from the <c>.env</c> file beside this document.</param>
+    /// <param name="Provenance">Property path to source Compose file mapping for diagnostics.</param>
     private sealed record LoadedDocument(
         Dictionary<object, object?> Root,
         IReadOnlyDictionary<string, string> Environment,
         Dictionary<string, string> Provenance);
 
+    /// <summary>
+    /// Validation state that resolves a property path back to the Compose file that contributed it,
+    /// so errors name the overlay file when an overlay introduced the bad value.
+    /// </summary>
     private sealed record ValidationContext(
         string PrimarySource,
         IReadOnlyDictionary<string, string> Provenance,
@@ -138,8 +190,14 @@ public sealed class ComposeFileLoader
         string? DisplayServicePath = null,
         string? ProvenanceServicePath = null)
     {
+        /// <summary>
+        /// Returns the source file for a display path, walking up list indices and members
+        /// until a recorded path is found; falls back to the primary file.
+        /// </summary>
         public string SourceFor(string path)
         {
+            // Strip trailing [index] / .member segments until a recorded path is found;
+            // unrecorded detail inherits the source of its nearest recorded ancestor.
             var candidate = ToProvenancePath(path);
             while (!string.IsNullOrEmpty(candidate))
             {
@@ -154,15 +212,19 @@ public sealed class ComposeFileLoader
             return PrimarySource;
         }
 
+        /// <summary>
+        /// Narrows the context to one service. Display and provenance paths diverge when the
+        /// service name needs escaping in provenance keys (dots, quotes, and similar).
+        /// </summary>
         public ValidationContext ForService(
             string serviceName,
             string displayServicePath,
             string provenanceServicePath) => this with
-        {
-            ServiceName = serviceName,
-            DisplayServicePath = displayServicePath,
-            ProvenanceServicePath = provenanceServicePath
-        };
+            {
+                ServiceName = serviceName,
+                DisplayServicePath = displayServicePath,
+                ProvenanceServicePath = provenanceServicePath
+            };
 
         private string ToProvenancePath(string displayPath)
         {
@@ -179,6 +241,10 @@ public sealed class ComposeFileLoader
         }
     }
 
+    /// <summary>
+    /// Records which Compose file contributed each property path in a single document,
+    /// using <c>.</c> members, <c>[index]</c> list items, and <c>["key"]</c> for escaped keys.
+    /// </summary>
     private static Dictionary<string, string> BuildProvenance(
         Dictionary<object, object?> root,
         string composePath)
@@ -194,6 +260,8 @@ public sealed class ComposeFileLoader
         string composePath,
         Dictionary<string, string> result)
     {
+        // Depth-first walk: each map member and list index records its own path, then recurses
+        // so nested values get full paths rather than inheriting only the root entry.
         switch (node)
         {
             case Dictionary<object, object?> map:
@@ -215,6 +283,10 @@ public sealed class ComposeFileLoader
         }
     }
 
+    /// <summary>
+    /// Rebuilds provenance after an overlay merge: overlay-contributed nodes are re-attributed
+    /// to the overlay file so later diagnostics name the file that introduced the value.
+    /// </summary>
     private static Dictionary<string, string> MergeProvenance(
         Dictionary<object, object?> baseDocument,
         Dictionary<object, object?> overlay,
@@ -243,10 +315,12 @@ public sealed class ComposeFileLoader
             TryGetValue(mergedMap, key, out var mergedValue);
             if (!TryGetValue(baseMap, key, out var baseValue))
             {
+                // Key only in the overlay: the overlay owns the whole subtree.
                 ReplaceProvenance(result, overlayProvenance, memberPath, memberPath);
                 continue;
             }
 
+            // Shared maps recurse so nested overlay changes are re-attributed node by node.
             if (baseValue is Dictionary<object, object?> baseChild &&
                 overlayValue is Dictionary<object, object?> overlayChild &&
                 mergedValue is Dictionary<object, object?> mergedChild)
@@ -262,6 +336,8 @@ public sealed class ComposeFileLoader
                 !ReplacementListFields.Contains(GetLeaf(memberPath)) &&
                 !memberPath.EndsWith(".healthcheck.test", StringComparison.Ordinal))
             {
+                // Merged lists interleave entries from both files, so overlay indices must be
+                // remapped onto merged indices via the same merge key MergeList uses.
                 for (var overlayIndex = 0; overlayIndex < overlayList.Count; overlayIndex++)
                 {
                     var keyValue = GetListMergeKey(overlayList[overlayIndex], memberPath);
@@ -279,16 +355,22 @@ public sealed class ComposeFileLoader
                 continue;
             }
 
+            // Scalar replacement, shape change, or wholesale-replace list: overlay takes the path.
             ReplaceProvenance(result, overlayProvenance, memberPath, memberPath);
         }
     }
 
+    /// <summary>
+    /// Replaces provenance at (and below) <paramref name="targetPrefix"/> with the overlay
+    /// entries at (and below) <paramref name="sourcePrefix"/>, rebasing path suffixes.
+    /// </summary>
     private static void ReplaceProvenance(
         Dictionary<string, string> target,
         IReadOnlyDictionary<string, string> source,
         string sourcePrefix,
         string targetPrefix)
     {
+        // Drop stale entries under the target first, then rebase overlay paths onto the merged tree.
         foreach (var key in target.Keys
                      .Where(key => IsPathAtOrBelow(key, targetPrefix))
                      .ToList())
@@ -308,6 +390,10 @@ public sealed class ComposeFileLoader
            path.StartsWith($"{prefix}.", StringComparison.Ordinal) ||
            path.StartsWith($"{prefix}[", StringComparison.Ordinal);
 
+    /// <summary>
+    /// Appends a path segment, using <c>["escaped"]</c> form for keys that are not plain
+    /// identifiers so dotted service names cannot masquerade as nested members in provenance paths.
+    /// </summary>
     private static string AppendPathSegment(string path, string segment)
     {
         if (segment.Length > 0 && segment.All(character => char.IsLetterOrDigit(character) || character is '_' or '-'))
@@ -318,13 +404,20 @@ public sealed class ComposeFileLoader
         return $"{path}[\"{escaped}\"]";
     }
 
+    /// <summary>
+    /// Structural validation of the project root: requires a services mapping and checks each
+    /// service has an image or build. Runs before typed parsing so malformed shapes fail with
+    /// provenance-rich diagnostics rather than cast errors.
+    /// </summary>
     private static void ValidateProject(Dictionary<object, object?> root, ValidationContext context)
     {
+        // Require services first; without it the per-service walk below has nothing to anchor on.
         if (!TryGetValue(root, "services", out var servicesValue))
             throw Validation(context, "services", "the required services mapping is missing.");
         if (servicesValue is not Dictionary<object, object?> services)
             throw Validation(context, "services", $"expected a YAML mapping, but found {DescribeNode(servicesValue)}.");
 
+        // Top-level resource sections only need to be mappings when present.
         foreach (var projectMap in new[] { "volumes", "networks", "secrets", "configs" })
             ValidateOptionalMap(root, projectMap, projectMap, context);
 
@@ -332,6 +425,7 @@ public sealed class ComposeFileLoader
         {
             var serviceName = nameNode.ToString() ?? string.Empty;
             var servicePath = $"services.{serviceName}";
+            // Display path stays readable while the provenance path escapes odd service names.
             var serviceContext = context.ForService(
                 serviceName,
                 servicePath,
@@ -343,11 +437,16 @@ public sealed class ComposeFileLoader
         }
     }
 
+    /// <summary>
+    /// Validates one service's field shapes and typed values (durations, byte sizes, booleans).
+    /// Reports the deepest provenance-owned path so multi-file loads blame the right file.
+    /// </summary>
     private static void ValidateService(
         Dictionary<object, object?> service,
         string path,
         ValidationContext context)
     {
+        // Stage 1: presence rules (image/build) and top-level field shapes.
         ValidateOptionalScalar(service, "image", $"{path}.image", context);
         ValidateBuild(service, path, context);
 
@@ -358,6 +457,8 @@ public sealed class ComposeFileLoader
             var imagePath = $"{path}.image";
             var buildPath = $"{path}.build";
             var serviceSource = context.SourceFor(path);
+            // If an overlay owns the image/build path (it replaced or removed the base value),
+            // point at that path instead of the service root so the overlay is blamed.
             var failurePath = context.SourceFor(imagePath) != serviceSource
                 ? imagePath
                 : context.SourceFor(buildPath) != serviceSource
@@ -373,6 +474,8 @@ public sealed class ComposeFileLoader
         ValidateOptionalMap(service, "logging", $"{path}.logging", context);
         ValidateScalarOrMap(service, "extends", $"{path}.extends", context);
 
+        // Stage 2: nested blocks get shape checks and typed conversions one level at a time,
+        // so a bad leaf reports its own provenance path rather than the parent map's.
         ValidateOptionalMapPath(service, "deploy", $"{path}.deploy", context, deploy =>
         {
             ValidateOptionalMap(deploy, "resources", $"{path}.deploy.resources", context);
@@ -419,6 +522,7 @@ public sealed class ComposeFileLoader
             ValidateDurations(healthcheck, $"{path}.healthcheck", context, "interval", "timeout", "start_period");
         });
 
+        // Stage 3: flat service-level scalars checked as durations, byte sizes, or booleans.
         ValidateDurations(service, path, context, "stop_grace_period");
         foreach (var byteField in new[] { "shm_size", "mem_limit", "memswap_limit", "mem_reservation" })
             ValidateBytes(service, byteField, $"{path}.{byteField}", context);
@@ -443,11 +547,16 @@ public sealed class ComposeFileLoader
         ValidateBoolean(buildMap, "no_cache", $"{path}.build.no_cache", context);
     }
 
+    /// <summary>
+    /// Validates short-syntax port mappings. Long port syntax is a documented limitation and is
+    /// rejected here rather than silently misparsed.
+    /// </summary>
     private static void ValidatePorts(Dictionary<object, object?> service, string path, ValidationContext context)
     {
         if (!TryGetValue(service, "ports", out var value) || value is null)
             return;
         var portsPath = $"{path}.ports";
+        // Ports must be a list; each entry is one short-syntax mapping string.
         if (value is not List<object?> ports)
             throw Validation(context, portsPath, $"expected a YAML list, but found {DescribeNode(value)}.");
 
@@ -463,8 +572,13 @@ public sealed class ComposeFileLoader
         }
     }
 
+    /// <summary>
+    /// Accepts the supported short port forms: <c>[container]</c>, <c>[host:]container</c>,
+    /// <c>[ip:]host:container</c>, optional <c>/protocol</c>, and bracketed IPv6 hosts.
+    /// </summary>
     private static bool IsValidPort(string value)
     {
+        // Strip quotes and the trailing /protocol first so colon counting only sees the address part.
         var text = value.Trim('"', '\'');
         var slash = text.LastIndexOf('/');
         if (slash >= 0)
@@ -474,6 +588,7 @@ public sealed class ComposeFileLoader
             text = text[..slash];
         }
 
+        // IPv6 hosts are bracketed so their inner colons do not split the mapping.
         if (text.StartsWith("[", StringComparison.Ordinal))
         {
             var closingBracket = text.IndexOf(']');
@@ -485,6 +600,7 @@ public sealed class ComposeFileLoader
             return IPAddress.TryParse(host, out _) && ports.Length == 2 && ports.All(IsValidPortNumber);
         }
 
+        // Colon count selects the form: container, host:container, or ip:host:container.
         var parts = text.Split(':');
         return parts.Length switch
         {
@@ -504,6 +620,7 @@ public sealed class ComposeFileLoader
         ValidationContext context,
         Action<Dictionary<object, object?>> validate)
     {
+        // Shape gate runs before the nested validator so a wrong type fails on the map path itself.
         if (!TryGetValue(map, key, out var value) || value is null)
             return;
         if (value is not Dictionary<object, object?> child)
@@ -558,6 +675,7 @@ public sealed class ComposeFileLoader
         ValidationContext context,
         params string[] keys)
     {
+        // Absent keys are fine; present values must be scalars the duration parser accepts.
         foreach (var key in keys)
         {
             if (!TryGetValue(map, key, out var value) || value is null)
@@ -574,12 +692,15 @@ public sealed class ComposeFileLoader
         string path,
         ValidationContext context)
     {
+        // Byte fields accept plain integers or k/m/g units; anything else is a conversion failure.
         if (!TryGetValue(map, key, out var value) || value is null)
             return;
         if (!IsScalar(value) || !TryParseBytes(value.ToString(), out _))
             throw ConversionValidation(context, path, value, "a supported byte value");
     }
 
+    // Boolean/integer/double validators share one shape: missing is fine, present must be a
+    // parseable scalar, and failures attach source + service via ConversionValidation.
     private static void ValidateBoolean(
         Dictionary<object, object?> map,
         string key,
@@ -616,9 +737,17 @@ public sealed class ComposeFileLoader
             throw ConversionValidation(context, path, value, "a numeric value");
     }
 
+    /// <summary>
+    /// Builds a shape/type validation failure, attributing it to the provenance source of
+    /// <paramref name="path"/> and attaching the service name when one is in scope.
+    /// </summary>
     private static ComposeValidationException Validation(ValidationContext context, string path, string message)
         => new(context.SourceFor(path), path, message, context.ServiceName);
 
+    /// <summary>
+    /// Builds a scalar-conversion failure. The inner <see cref="FormatException"/> preserves the
+    /// raw value and expected type for programmatic consumers while the outer message stays concise.
+    /// </summary>
     private static ComposeValidationException ConversionValidation(
         ValidationContext context,
         string path,
@@ -645,8 +774,13 @@ public sealed class ComposeFileLoader
         _ => $"scalar '{value}'"
     };
 
+    /// <summary>
+    /// Resolves a compose file name, falling back to the conventional names
+    /// (<c>compose.yml</c>, <c>compose.yaml</c>, <c>docker-compose.yaml</c>, <c>docker-compose.yml</c>).
+    /// </summary>
     private static string ResolveComposePath(string workingDirectory, string composeFileName)
     {
+        // Exact name wins; only when it is missing do the conventional file names apply.
         var composePath = Path.GetFullPath(Path.Combine(workingDirectory, composeFileName));
         if (File.Exists(composePath)) return composePath;
 
@@ -660,12 +794,18 @@ public sealed class ComposeFileLoader
         throw new FileNotFoundException("Compose file was not found.", composePath);
     }
 
+    // Multi-file merge policy (docs/merge-semantics.md): the first file is the base and each
+    // later file is an overlay. This is an incremental subset of Compose merge semantics, not
+    // full Compose Specification compatibility. Mappings merge recursively — including
+    // same-named services, which merge field by field rather than wholesale-replacing — while
+    // command/entrypoint and healthcheck.test always take the overlay list.
     private static readonly HashSet<string> ReplacementListFields = new(StringComparer.Ordinal)
     {
         "command",
         "entrypoint"
     };
 
+    /// <summary>Merges an overlay document onto a base document under the documented merge policy.</summary>
     private static Dictionary<object, object?> MergeDocuments(
         Dictionary<object, object?> baseDocument,
         Dictionary<object, object?> overlay,
@@ -674,12 +814,17 @@ public sealed class ComposeFileLoader
         return MergeMap(baseDocument, overlay, "", overlayPath);
     }
 
+    /// <summary>
+    /// Merges overlay keys into a clone of the base map. Keys absent from the base are taken
+    /// whole; shared keys recurse through <see cref="MergeNode"/>.
+    /// </summary>
     private static Dictionary<object, object?> MergeMap(
         Dictionary<object, object?> baseMap,
         Dictionary<object, object?> overlay,
         string path,
         string overlayPath)
     {
+        // Clone first so neither input document is mutated by the merge.
         var merged = CloneMap(baseMap);
         foreach (var (keyObject, overlayValue) in overlay)
         {
@@ -687,6 +832,7 @@ public sealed class ComposeFileLoader
                 $"Compose map keys in '{overlayPath}' must be strings.");
             var memberPath = AppendPathSegment(path, key);
 
+            // New keys are taken whole; shared keys recurse through MergeNode for pair-wise rules.
             if (!TryGetValue(merged, key, out var baseValue))
             {
                 merged[key] = CloneNode(overlayValue);
@@ -699,6 +845,10 @@ public sealed class ComposeFileLoader
         return merged;
     }
 
+    /// <summary>
+    /// Dispatches on the pair of YAML shapes: maps merge recursively, lists merge by key,
+    /// and everything else takes the overlay value.
+    /// </summary>
     private static object? MergeNode(object? baseValue, object? overlayValue, string path, string overlayPath)
     {
         if (baseValue is Dictionary<object, object?> baseMap && overlayValue is Dictionary<object, object?> overlayMap)
@@ -711,11 +861,19 @@ public sealed class ComposeFileLoader
         return CloneNode(overlayValue);
     }
 
+    /// <summary>
+    /// Merges lists by identity key: an overlay entry with a matching key replaces the base
+    /// entry in place; new keys are appended. Fields in <see cref="ReplacementListFields"/> and
+    /// <c>healthcheck.test</c> replace wholesale instead, matching Compose.
+    /// </summary>
     private static List<object?> MergeList(List<object?> baseList, List<object?> overlayList, string path)
     {
+        // Replacement fields short-circuit: the overlay list wins wholesale, no key matching.
         if (ReplacementListFields.Contains(GetLeaf(path)) || path.EndsWith(".healthcheck.test", StringComparison.Ordinal))
             return CloneList(overlayList);
 
+        // Keyed merge: overlay entries match base entries by identity key and replace in place;
+        // unmatched overlay keys are appended after the base entries.
         var merged = CloneList(baseList);
         foreach (var item in overlayList)
         {
@@ -731,6 +889,12 @@ public sealed class ComposeFileLoader
         return merged;
     }
 
+    /// <summary>
+    /// Computes the identity key used to match list entries across files:
+    /// dictionary-style entries key on the name before the separator,
+    /// volumes/secrets/configs key on the container target path, and other lists key on the
+    /// whole entry.
+    /// </summary>
     private static string GetListMergeKey(object? item, string path)
     {
         var text = item?.ToString() ?? string.Empty;
@@ -738,6 +902,7 @@ public sealed class ComposeFileLoader
         if ((leaf is "environment" or "labels" or "sysctls" or "args" or "extra_hosts" or "annotations") &&
             item is not Dictionary<object, object?>)
         {
+            // extra_hosts also allow host:ip, so ':' is a fallback separator there only.
             var separator = GetDictionaryEntrySeparator(text, leaf == "extra_hosts");
             return separator < 0 ? text : text[..separator];
         }
@@ -755,6 +920,11 @@ public sealed class ComposeFileLoader
         return text;
     }
 
+    /// <summary>
+    /// Extracts the container-side target from a short volume/secret/config string.
+    /// Windows drive letters introduce an extra colon that must not be mistaken for the
+    /// source:target separator, so single-letter drive prefixes are skipped deliberately.
+    /// </summary>
     private static string? GetShortSyntaxTarget(string value)
     {
         var firstSeparator = value.IndexOf(':');
@@ -781,6 +951,10 @@ public sealed class ComposeFileLoader
         return modeSeparator < 0 ? value[targetStart..] : value[targetStart..modeSeparator];
     }
 
+    /// <summary>
+    /// Finds the name/value separator of a dictionary-style list entry: '=' is preferred;
+    /// ':' is only accepted when <paramref name="allowColonSeparator"/> (extra_hosts' host:ip form).
+    /// </summary>
     private static int GetDictionaryEntrySeparator(string value, bool allowColonSeparator)
     {
         var separator = value.IndexOf('=');
@@ -789,12 +963,14 @@ public sealed class ComposeFileLoader
 
     private static string GetLeaf(string path)
     {
+        // Leaf name only: merge policy keys off the field name, not the full path.
         var separator = path.LastIndexOf('.');
         return separator < 0 ? path : path[(separator + 1)..];
     }
 
     private static bool TryGetValue(Dictionary<object, object?> map, string key, out object? value)
     {
+        // Linear scan with ToString comparison: YAML keys may arrive as non-string scalars.
         foreach (var (candidate, candidateValue) in map)
         {
             if (string.Equals(candidate.ToString(), key, StringComparison.Ordinal))
@@ -821,8 +997,14 @@ public sealed class ComposeFileLoader
         _ => value
     };
 
+    /// <summary>
+    /// Rejects the Compose merge tags <c>!reset</c> and <c>!override</c>. These are not supported
+    /// by the documented merge policy, and failing loudly is safer than silently applying the
+    /// wrong interpretation; the error names the offending source file.
+    /// </summary>
     private static void RejectUnsupportedMergeTags(string yaml, string composePath)
     {
+        // Inspect the raw event stream because tags are dropped once YAML is deserialized.
         var parser = new Parser(new StringReader(yaml));
         while (parser.MoveNext())
         {
@@ -835,6 +1017,10 @@ public sealed class ComposeFileLoader
         }
     }
 
+    /// <summary>
+    /// Maps one validated service YAML mapping onto <see cref="ServiceDefinition"/>.
+    /// Retains more Compose fields than the engine applies; see docs/compose-field-matrix.md.
+    /// </summary>
     private ServiceDefinition ParseService(
         string serviceName,
         Dictionary<object, object?> map,
@@ -847,6 +1033,10 @@ public sealed class ComposeFileLoader
         if (image is null && build is null)
             throw new NotSupportedException($"Service '{serviceName}' must specify either 'image' or 'build'.");
 
+        // env_file entries are container environment inputs: their values are read here and
+        // inlined into Environment. They are deliberately NOT interpolation sources for the
+        // YAML text (only the project's .env next to the compose file is), and inline
+        // `environment` entries are appended after so they win on duplicate keys when applied.
         var serviceEnv = new List<string>();
         foreach (var envFile in GetStringList(map, "env_file"))
         {
@@ -856,11 +1046,14 @@ public sealed class ComposeFileLoader
         serviceEnv.AddRange(ReadEnvironment(map));
 
         var dependsOnRaw = ReadDependsOn(map);
+        // Profiles are retained as data; service selection by profile happens in the engine.
         var profiles = GetStringList(map, "profiles");
         var deploy = ParseDeployConfig(map);
         var logging = ParseLoggingConfig(map);
         var (extendsService, extendsFile) = ParseExtends(map);
 
+        // command/entrypoint pass through GetStringList, so scalar shell-form strings become
+        // one-element lists and list-form exec commands stay as written.
         return new ServiceDefinition(
             Name: serviceName,
             Image: image,
@@ -920,15 +1113,21 @@ public sealed class ComposeFileLoader
             Memory: GetLongBytes(map, "mem_limit"),
             MemorySwap: GetLongBytes(map, "memswap_limit"),
             MemoryReservation: GetLongBytes(map, "mem_reservation"),
+            // Retained as 1 only when true; an explicit false collapses to "unset" by design.
             OomKillDisable: GetBool(map, "oom_kill_disable") ?? false ? 1L : null,
             OomScoreAdj: GetString(map, "oom_score_adj"),
             GroupAdd: GetStringList(map, "group_add"),
+            // `restart: on-failure:3` style keeps the retry count separately; the engine does not send it yet.
             RestartMaxRetries: GetString(map, "restart")?.Contains(":") == true
                 ? GetString(map, "restart")!.Split(':').Last()
                 : null,
             Annotations: GetStringDictionary(map, "annotations"));
     }
 
+    /// <summary>
+    /// Parses <c>build</c> in either form: a scalar is shorthand for the build context path,
+    /// a mapping carries the full build configuration.
+    /// </summary>
     private static BuildConfig? ParseBuildConfig(Dictionary<object, object?> map)
     {
         if (!map.TryGetValue("build", out var buildValue) || buildValue is null)
@@ -963,6 +1162,10 @@ public sealed class ComposeFileLoader
         return null;
     }
 
+    /// <summary>
+    /// Parses the <c>deploy</c> block. Only <c>replicas</c> is applied by the engine today;
+    /// the remaining settings are retained for inspection.
+    /// </summary>
     private static DeployConfig? ParseDeployConfig(Dictionary<object, object?> map)
     {
         if (!map.TryGetValue("deploy", out var deployValue) || deployValue is not Dictionary<object, object?> deployMap)
@@ -1063,6 +1266,11 @@ public sealed class ComposeFileLoader
         return new LoggingConfig(Driver: GetString(m, "driver"), Options: GetStringDictionaryOrNull(m, "options"));
     }
 
+    /// <summary>
+    /// Reads <c>extends</c> in string or mapping form. The reference is recorded only:
+    /// it is never resolved or merged, and a service built solely on <c>extends</c> still
+    /// needs its own image or build.
+    /// </summary>
     private static (string? Service, string? File) ParseExtends(Dictionary<object, object?> map)
     {
         if (!map.TryGetValue("extends", out var val) || val is null)
@@ -1077,6 +1285,10 @@ public sealed class ComposeFileLoader
         return (null, null);
     }
 
+    /// <summary>
+    /// Reads <c>depends_on</c> as a name list or a mapping. Mapping form keeps the keys only:
+    /// per-dependency conditions are modeled but not yet acted upon by the engine.
+    /// </summary>
     private static List<string> ReadDependsOn(Dictionary<object, object?> map)
     {
         if (!map.TryGetValue("depends_on", out var value) || value is null)
@@ -1091,8 +1303,15 @@ public sealed class ComposeFileLoader
         return [];
     }
 
+    /// <summary>
+    /// Parses a dotenv-style file into a case-insensitive map. Used both for the project's
+    /// <c>.env</c> (an interpolation source) and for <c>env_file</c> entries (container inputs).
+    /// A missing file yields an empty map.
+    /// </summary>
     private static Dictionary<string, string> LoadDotEnv(string path)
     {
+        // Stage: skip blanks/comments, strip an optional `export ` prefix, then split on the
+        // first '='; later duplicate keys overwrite earlier ones in the result map.
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (!File.Exists(path)) return result;
 
@@ -1110,18 +1329,27 @@ public sealed class ComposeFileLoader
         return result;
     }
 
+    /// <summary>
+    /// Unquotes a dotenv value. Double quotes unescape <c>\"</c>, single quotes are literal,
+    /// and unquoted values drop trailing <c> #comment</c> tails — the common dotenv conventions.
+    /// </summary>
     private static string ParseDotEnvValue(string rawValue)
     {
         var value = rawValue.Trim();
+        // Double-quoted keeps escapes; single-quoted is literal; neither strips inline comments.
         if (value.Length >= 2 && value[0] == '"' && value[^1] == '"')
             return value[1..^1].Replace("\\\"", "\"", StringComparison.Ordinal);
         if (value.Length >= 2 && value[0] == '\'' && value[^1] == '\'')
             return value[1..^1];
 
+        // Unquoted values treat a ` #...` tail as a comment; `#` glued to the value is kept.
         var commentIndex = value.IndexOf(" #", StringComparison.Ordinal);
         return commentIndex >= 0 ? value[..commentIndex].TrimEnd() : value;
     }
 
+    /// <summary>
+    /// Flattens the inline <c>environment</c> block (list or mapping form) to <c>KEY=VALUE</c> strings.
+    /// </summary>
     private static List<string> ReadEnvironment(Dictionary<object, object?> map)
     {
         if (!map.TryGetValue("environment", out var value) || value is null) return [];
@@ -1140,8 +1368,13 @@ public sealed class ComposeFileLoader
         return GetStringList(map, "ports").Select(ParsePort).ToList();
     }
 
+    /// <summary>
+    /// Parses a short port mapping. Container port keeps its <c>/protocol</c> suffix;
+    /// a missing host part yields a null host port (container-only exposure).
+    /// </summary>
     private static ComposePort ParsePort(string value)
     {
+        // Peel the /protocol suffix first, then let colon count pick host/container positions.
         var protocol = "tcp";
         var text = value.Trim('"', '\'');
         var slash = text.LastIndexOf('/');
@@ -1151,6 +1384,7 @@ public sealed class ComposeFileLoader
             text = text[..slash];
         }
 
+        // Three or more segments: an IP prefix is dropped and the last two are host:container.
         var parts = text.Split(':', StringSplitOptions.RemoveEmptyEntries);
         return parts.Length switch
         {
@@ -1161,11 +1395,16 @@ public sealed class ComposeFileLoader
         };
     }
 
+    /// <summary>
+    /// Parses a <c>healthcheck</c> mapping. A scalar <c>test</c> is normalized to
+    /// <c>["CMD-SHELL", ...]</c>, matching Compose's shell-form semantics.
+    /// </summary>
     private static ComposeHealthcheck? ReadHealthcheck(Dictionary<object, object?> map)
     {
         var healthMap = GetMap(map, "healthcheck");
         if (healthMap is null) return null;
 
+        // test: list form is exec/CMD as written; scalar form is shell syntax and gets CMD-SHELL.
         var disabled = GetBool(healthMap, "disable") ?? false;
         var test = GetStringList(healthMap, "test");
         if (test.Count == 0 && GetString(healthMap, "test") is { } testString)
@@ -1179,13 +1418,22 @@ public sealed class ComposeFileLoader
             ParseDuration(GetString(healthMap, "start_period")));
     }
 
+    /// <summary>
+    /// Parses a duration string, returning null when the value is absent or unsupported.
+    /// </summary>
     internal static TimeSpan? ParseDuration(string? value)
     {
         return TryParseDuration(value, out var parsed) ? parsed : null;
     }
 
+    /// <summary>
+    /// Accepts .NET <see cref="TimeSpan"/> syntax or a single whole-number unit
+    /// (<c>ms</c>/<c>s</c>/<c>m</c>/<c>h</c>). Fractional and multi-component Compose durations
+    /// are a documented limitation and are rejected rather than approximated.
+    /// </summary>
     private static bool TryParseDuration(string? value, out TimeSpan parsed)
     {
+        // Prefer .NET TimeSpan syntax, then fall back to a single whole number + unit suffix.
         if (!string.IsNullOrWhiteSpace(value) &&
             TimeSpan.TryParse(value, CultureInfo.InvariantCulture, out parsed))
             return true;
@@ -1200,6 +1448,7 @@ public sealed class ComposeFileLoader
 
         try
         {
+            // Unit switch converts to TimeSpan; overflow on huge numbers is a parse failure.
             parsed = match.Groups["unit"].Value.ToLowerInvariant() switch
             {
                 "ms" => TimeSpan.FromMilliseconds(number),
@@ -1217,6 +1466,9 @@ public sealed class ComposeFileLoader
         }
     }
 
+    /// <summary>
+    /// Extracts the declared names of a top-level resource mapping (volumes, networks, secrets, configs).
+    /// </summary>
     private static IReadOnlyList<string> ParseNameList(Dictionary<object, object?> root, string key)
     {
         if (!root.TryGetValue(key, out var value) || value is not Dictionary<object, object?> dict)
@@ -1224,6 +1476,11 @@ public sealed class ComposeFileLoader
         return dict.Keys.Select(x => x.ToString()!).ToList();
     }
 
+    /// <summary>
+    /// Collects string-valued <c>x-*</c> extension fields at the document root.
+    /// Non-string extensions are skipped: they carry no engine meaning and would only
+    /// complicate the typed surface.
+    /// </summary>
     private static IReadOnlyDictionary<string, string> ParseExtensions(Dictionary<object, object?> root)
     {
         var result = new Dictionary<string, string>();
@@ -1259,8 +1516,13 @@ public sealed class ComposeFileLoader
         return TryParseBytes(value, out var parsed) ? parsed : null;
     }
 
+    /// <summary>
+    /// Accepts plain integer bytes or a whole number with a binary <c>k</c>/<c>m</c>/<c>g</c> unit
+    /// (optional trailing <c>b</c>). Decimal byte values are a documented limitation.
+    /// </summary>
     private static bool TryParseBytes(string? value, out long parsed)
     {
+        // Plain integer bytes parse first; the unit form is only tried when that fails.
         if (!string.IsNullOrWhiteSpace(value) &&
             long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed))
             return true;
@@ -1273,6 +1535,7 @@ public sealed class ComposeFileLoader
             return false;
         }
 
+        // Binary multipliers (1024-based); overflow is reported as a failed parse.
         var multiplier = match.Groups["unit"].Value.ToLowerInvariant() switch
         {
             "k" => 1024L,
@@ -1291,6 +1554,10 @@ public sealed class ComposeFileLoader
             return false;
         }
     }
+
+    // YAML-shape-tolerant getters below: lists accept scalar-or-mapping forms Compose allows
+    // (e.g. environment as list of KEY=VAL strings or a mapping), and missing keys yield
+    // empty/null rather than throwing so optional fields stay optional.
 
     private static List<string> GetStringList(Dictionary<object, object?> map, string key)
     {
@@ -1312,6 +1579,10 @@ public sealed class ComposeFileLoader
         return list.Count > 0 ? list : null;
     }
 
+    /// <summary>
+    /// Reads a mapping-shaped string dictionary, also accepting list entries like
+    /// <c>KEY=VAL</c> (<c>host:ip</c> for <c>extra_hosts</c>) with separator-less entries kept as keys.
+    /// </summary>
     private static IReadOnlyDictionary<string, string> GetStringDictionary(Dictionary<object, object?> map, string key)
     {
         if (!map.TryGetValue(key, out var value) || value is null)
@@ -1344,6 +1615,10 @@ public sealed class ComposeFileLoader
         return dict.Count > 0 ? dict : null;
     }
 
+    /// <summary>
+    /// Reads build args as a mapping or a list of <c>KEY=VAL</c> strings. A list entry without
+    /// a separator becomes a valueless arg (inherit from the process environment at build time).
+    /// </summary>
     private static IReadOnlyDictionary<string, string?>? GetBuildArgs(Dictionary<object, object?> map)
     {
         if (!map.TryGetValue("args", out var value) || value is null)

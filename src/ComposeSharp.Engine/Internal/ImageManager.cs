@@ -5,14 +5,20 @@ using Docker.DotNet.Models;
 
 namespace ComposeSharp.Engine.Internal;
 
+/// <summary>
+/// Pulls, pushes, and inspects the images referenced by a project's services.
+/// </summary>
 internal sealed class ImageManager
 {
+    // Docker Hub is only used when auth is present but carries no ServerAddress:
+    // the daemon expects the legacy index URL rather than a registry hostname.
     private const string DockerHubRegistryAddress = "https://index.docker.io/v1/";
 
     private readonly DockerClientFactory _factory = new();
 
     public async Task PullImageAsync(DockerClient client, DockerRegistryAuth? auth, string image, CancellationToken ct)
     {
+        // The create/pull API wants repository and tag as separate fields.
         var (fromImage, tag) = SplitImage(image);
         await client.Images.CreateImageAsync(
             new ImagesCreateParameters { FromImage = fromImage, Tag = tag },
@@ -36,6 +42,7 @@ internal sealed class ImageManager
         await client.Images.PushImageAsync(fromImage, new ImagePushParameters { Tag = tag }, CreateAuthConfig(auth), new Progress<JSONMessage>(), ct);
     }
 
+    // Images are discovered through project containers rather than a daemon-wide image scan.
     public async Task<IReadOnlyList<Api.ImageSummary>> ListImagesAsync(DockerClient client, string projectName, IReadOnlyList<string>? services, CancellationToken ct)
     {
         var containers = await client.Containers.ListContainersAsync(new ContainersListParameters
@@ -58,6 +65,7 @@ internal sealed class ImageManager
 
             if (!seen.Add(container.ImageID)) continue;
 
+            // Inspect for size/created; a concurrent delete is tolerated by skipping the image.
             try
             {
                 var inspect = await client.Images.InspectImageAsync(container.ImageID, ct);
@@ -87,6 +95,8 @@ internal sealed class ImageManager
                 : DockerHubRegistryAddress
         };
 
+    // A colon is only a tag separator after the last slash; otherwise registry ports
+    // (e.g. "registry:5000/app") would be mistaken for tags.
     public static (string FromImage, string Tag) SplitImage(string image)
     {
         var slash = image.LastIndexOf('/');

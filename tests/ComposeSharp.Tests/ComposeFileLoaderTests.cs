@@ -5,6 +5,10 @@ using Xunit.Abstractions;
 
 namespace ComposeSharp.Tests;
 
+/// <summary>
+/// Covers basic ComposeFileLoader parsing of common compose fields, plus smoke checks that pin
+/// public-contract constants and the IComposeService API surface.
+/// </summary>
 public class ComposeFileLoaderTests
 {
     private readonly ITestOutputHelper _output;
@@ -147,6 +151,7 @@ public class ComposeFileLoaderTests
         Directory.Delete(dir, recursive: true);
     }
 
+    // Profile tags are preserved on the model; profile filtering is applied later by service selection.
     [Fact]
     public void Load_WithProfiles()
     {
@@ -199,6 +204,7 @@ public class ComposeFileLoaderTests
         Directory.Delete(dir, recursive: true);
     }
 
+    // Pins the Docker Compose label keys used to scope engine resources to a project.
     [Fact]
     public void ComposeConstants_LabelsExist()
     {
@@ -216,6 +222,7 @@ public class ComposeFileLoaderTests
         Assert.False(fail.Succeeded);
     }
 
+    // Smoke check that the public IComposeService surface remains intact across renames/refactors.
     [Fact]
     public void IComposeService_MethodsExist()
     {
