@@ -111,11 +111,12 @@ internal sealed class ContainerLifecycle
             try
             {
                 await client.Containers.StopContainerAsync(container.ID, timeoutParam, ct);
-                // The stop endpoint can respond before list/inspect report a terminal state;
-                // confirm the container is no longer running so callers never observe a stale "running".
-                await WaitUntilNotRunningAsync(client, container.ID, ct);
             }
-            catch (DockerApiException) { }
+            catch (DockerApiException) { continue; }
+
+            // The stop endpoint can respond before list/inspect report a terminal state;
+            // confirm the container is no longer running so callers never observe a stale "running".
+            await WaitUntilNotRunningAsync(client, container.ID, ct);
         }
     }
 
