@@ -52,8 +52,7 @@ internal static class ContainerArchive
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
         var destination = Path.GetFullPath(destinationPath);
-        if (Directory.Exists(destination))
-            EnsureNoReparsePoint(destination);
+        EnsureNoReparsePointInAncestors(destination);
         Directory.CreateDirectory(destination);
         long bytesCopied = 0;
         var directoryModes = new List<(string Path, UnixFileMode Mode)>();
@@ -159,6 +158,8 @@ internal static class ContainerArchive
         {
             ModificationTime = Directory.GetLastWriteTimeUtc(directoryPath)
         };
+        if (!OperatingSystem.IsWindows())
+            directory.Mode = File.GetUnixFileMode(directoryPath);
         await writer.WriteEntryAsync(directory, cancellationToken);
 
         foreach (var entryPath in Directory.EnumerateFileSystemEntries(directoryPath))
@@ -185,6 +186,8 @@ internal static class ContainerArchive
             DataStream = stream,
             ModificationTime = File.GetLastWriteTimeUtc(sourcePath)
         };
+        if (!OperatingSystem.IsWindows())
+            entry.Mode = File.GetUnixFileMode(sourcePath);
         await writer.WriteEntryAsync(entry, cancellationToken);
     }
 
@@ -199,6 +202,34 @@ internal static class ContainerArchive
     {
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
             throw new IOException($"Copying symbolic links or reparse points is not supported: '{path}'.");
+    }
+
+    private static void EnsureNoReparsePointInAncestors(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var root = Path.GetPathRoot(fullPath)!;
+        var current = root;
+        var relative = Path.GetRelativePath(root, fullPath);
+        foreach (var segment in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            FileAttributes attributes;
+            try
+            {
+                attributes = File.GetAttributes(current);
+            }
+            catch (FileNotFoundException)
+            {
+                break;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                break;
+            }
+
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException($"The extraction destination traverses a local symbolic link or reparse point: '{current}'.");
+        }
     }
 
     private static void EnsureNoReparsePointInPath(string destination, string target)

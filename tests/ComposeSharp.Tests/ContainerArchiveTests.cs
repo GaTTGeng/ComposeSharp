@@ -53,4 +53,61 @@ public class ContainerArchiveTests
                 Directory.Delete(destination, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task ExtractToDirectoryAsync_RejectsSymlinkAncestors()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var parent = Path.Combine(Path.GetTempPath(), $"archive-link-{Guid.NewGuid():N}");
+        var target = Path.Combine(parent, "target");
+        var link = Path.Combine(parent, "link");
+        Directory.CreateDirectory(target);
+        Directory.CreateSymbolicLink(link, target);
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(() => ContainerArchive.ExtractToDirectoryAsync(
+                new MemoryStream(), Path.Combine(link, "nested"), CancellationToken.None));
+        }
+        finally
+        {
+            Directory.Delete(link);
+            Directory.Delete(parent, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CreateFromPathAsync_PreservesUnixModes()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var sourceDirectory = Path.Combine(Path.GetTempPath(), $"archive-mode-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceDirectory);
+        var sourceFile = Path.Combine(sourceDirectory, "run.sh");
+        await File.WriteAllTextAsync(sourceFile, "#!/bin/sh\n");
+        var directoryMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        var fileMode = directoryMode | UnixFileMode.GroupRead | UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+        File.SetUnixFileMode(sourceDirectory, directoryMode);
+        File.SetUnixFileMode(sourceFile, fileMode);
+
+        try
+        {
+            await using var archive = await ContainerArchive.CreateFromPathAsync(sourceDirectory, CancellationToken.None);
+            using var reader = new TarReader(archive, leaveOpen: true);
+            var directory = reader.GetNextEntry(copyData: false);
+            var file = reader.GetNextEntry(copyData: false);
+
+            Assert.NotNull(directory);
+            Assert.NotNull(file);
+            Assert.Equal(directoryMode, directory.Mode);
+            Assert.Equal(fileMode, file.Mode);
+        }
+        finally
+        {
+            File.SetUnixFileMode(sourceDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            Directory.Delete(sourceDirectory, recursive: true);
+        }
+    }
 }

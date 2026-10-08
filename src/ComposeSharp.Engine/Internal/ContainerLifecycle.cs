@@ -200,10 +200,12 @@ internal sealed class ContainerLifecycle
     }
 
     public async Task<ContainerListResponse> FindRunningContainerAsync(
-        DockerClient client, string projectName, string serviceName, int? index, CancellationToken ct)
+        DockerClient client, string projectName, string serviceName, int? index, CancellationToken ct, bool includeOneOff = false)
     {
         var containers = await ListServiceContainersAsync(client, projectName, serviceName, false, ct);
-        var running = containers.Where(c => string.Equals(c.State, "running", StringComparison.OrdinalIgnoreCase)).ToList();
+        var running = FilterOneOffContainers(containers, includeOneOff)
+            .Where(c => string.Equals(c.State, "running", StringComparison.OrdinalIgnoreCase))
+            .ToList();
 
         if (index is <= 0)
             throw new ArgumentOutOfRangeException(nameof(index), index, "Container indexes are 1-based.");
@@ -219,6 +221,21 @@ internal sealed class ContainerLifecycle
     internal static ContainerListResponse? FindByContainerNumber(
         IEnumerable<ContainerListResponse> containers, int index)
         => containers.FirstOrDefault(container => GetContainerNumber(container) == index);
+
+    internal static IEnumerable<ContainerListResponse> FilterOneOffContainers(
+        IEnumerable<ContainerListResponse> containers, bool includeOneOff)
+    {
+        if (includeOneOff)
+            return containers;
+
+        return containers.Where(container =>
+        {
+            var labels = container.Labels ?? new Dictionary<string, string>();
+            return !labels.TryGetValue(ComposeConstants.OneOffLabel, out var value) ||
+                   !bool.TryParse(value, out var isOneOff) ||
+                   !isOneOff;
+        });
+    }
 
     private static int GetContainerNumber(ContainerListResponse container)
     {

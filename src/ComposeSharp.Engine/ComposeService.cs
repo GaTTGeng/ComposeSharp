@@ -285,7 +285,7 @@ public sealed class ComposeService : IComposeService
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var containerPath = source.IsContainer ? source : destination;
         var container = await _containers.FindRunningContainerAsync(
-            client, context.ProjectName, containerPath.Service!, options.Index, cancellationToken);
+            client, context.ProjectName, containerPath.Service!, options.Index, cancellationToken, options.All);
 
         if (source.IsContainer)
         {
