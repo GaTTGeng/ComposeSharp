@@ -30,6 +30,7 @@ internal sealed class NetworkManager
     {
         // Even a project that declares no networks gets a "default" so services always have a network.
         var networks = project.Networks.Count > 0 ? project.Networks : (IReadOnlyList<string>)["default"];
+        // Networks are ensured first, then named volumes; both creates are idempotent.
         foreach (var network in networks)
             await EnsureNetworkAsync(client, GetNetworkName(projectName, network), projectName, ct);
 
@@ -62,11 +63,13 @@ internal sealed class NetworkManager
                 Labels = new Dictionary<string, string> { [ComposeSharp.Api.ComposeConstants.ProjectLabel] = projectName }
             }, ct);
         }
+        // An existing volume is not an error: creation is idempotent by design.
         catch (DockerApiException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict) { }
     }
 
     public async Task CleanupVolumesAsync(DockerClient client, string projectName, CancellationToken ct)
     {
+        // Label filter keeps cleanup on project-owned volumes only.
         var volumes = await client.Volumes.ListAsync(new VolumesListParameters
         {
             Filters = LabelHelper.ProjectLabelFilter(projectName)
@@ -90,6 +93,7 @@ internal sealed class NetworkManager
 
     public static string GetPrimaryNetworkName(string projectName, ComposeProject project, ServiceDefinition service)
     {
+        // Preference order: first service network, then first project network, then "default".
         var network = service.Networks.FirstOrDefault()
                       ?? project.Networks.FirstOrDefault()
                       ?? "default";

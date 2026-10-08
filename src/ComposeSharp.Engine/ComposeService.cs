@@ -28,6 +28,7 @@ public sealed class ComposeService : IComposeService
     /// </summary>
     public async Task BuildAsync(ComposeProjectContext context, ComposeBuildOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Load project -> open client -> keep only services that define a build section.
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var targetServices = ProfileServiceSelector
@@ -37,6 +38,7 @@ public sealed class ComposeService : IComposeService
 
         foreach (var service in targetServices)
         {
+            // Resolve the build context directory and API parameters for this service.
             var build = service.Build!;
             var contextDirectory = Path.GetFullPath(Path.Combine(project.WorkingDirectory, build.Context ?? build.ContextDirectory ?? "."));
             var parameters = DockerBuildParametersFactory.Create(service, options);
@@ -46,6 +48,7 @@ public sealed class ComposeService : IComposeService
             // (they are staged under a reserved archive name).
             var dockerfileArchivePath = DockerBuildContextArchive.GetDockerfileArchivePath(contextDirectory, dockerfile);
             parameters.Dockerfile = dockerfileArchivePath;
+            // Stage the context tar stream, progress sink, and optional registry credentials.
             await using var archive = DockerBuildContextArchive.Create(
                 contextDirectory, dockerfile, dockerfileArchivePath, cancellationToken);
             var progress = new BuildProgress(service.Name, options?.LogConsumer);
@@ -53,6 +56,7 @@ public sealed class ComposeService : IComposeService
                 ? new[] { ImageManager.CreateAuthConfig(auth) }
                 : [];
 
+            // Execute the build, then surface any error the progress stream captured.
             await client.Images.BuildImageFromDockerfileAsync(
                 parameters,
                 archive,
@@ -69,9 +73,11 @@ public sealed class ComposeService : IComposeService
     /// </summary>
     public async Task UpAsync(ComposeProjectContext context, ComposeUpOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Load project -> open client.
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
 
+        // Ensure project networks and volumes exist before any containers are created.
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
 
         // Ordered so dependencies are created before their dependents (see OrderServices).
@@ -86,9 +92,11 @@ public sealed class ComposeService : IComposeService
             else if (service.Deploy?.Replicas is { } r)
                 replicas = r;
 
+            // Honor the "always" pull policy before reconciling the service.
             if (options?.Pull == "always" && service.Image is not null)
                 await _images.PullImageAsync(client, context.RegistryAuth, service.Image, cancellationToken);
 
+            // Reconcile containers toward the desired replica count and report progress lines.
             await foreach (var line in _containers.ReconcileServiceAsync(
                 client, context.ProjectName, project, service, replicas,
                 options?.Pull == "always", context.RegistryAuth, cancellationToken))
@@ -107,16 +115,20 @@ public sealed class ComposeService : IComposeService
     /// </remarks>
     public async Task DownAsync(ComposeProjectContext context, ComposeDownOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Resolve the service selection first; a missing Compose file falls back to label-only mode.
         var selection = SelectExistingServices(context, options?.Services);
         var targetServiceNames = selection.ServiceNames?.ToHashSet(StringComparer.Ordinal);
         using var client = _clientFactory.CreateClient(context.SocketPath);
+        // Default stop grace is 10 seconds before the container is killed.
         var timeout = options?.TimeoutSeconds.HasValue == true
             ? new ContainerStopParameters { WaitBeforeKillSeconds = (uint)options.TimeoutSeconds.Value }
             : new ContainerStopParameters { WaitBeforeKillSeconds = 10 };
 
+        // Limit the teardown to the selected services via the service label.
         var containers = await _containers.ListProjectContainersAsync(client, context.ProjectName, true, cancellationToken);
         containers = FilterContainersByService(containers, targetServiceNames);
 
+        // Stop then force-remove each container; a missing/already-stopped container is not an error.
         foreach (var container in containers)
         {
             try { await client.Containers.StopContainerAsync(container.ID, timeout, cancellationToken); }
@@ -124,6 +136,8 @@ public sealed class ComposeService : IComposeService
             await _containers.RemoveContainerAsync(client, container.ID, true, cancellationToken);
         }
 
+        // Networks (and volumes only when asked) are removed only for a full-project down so
+        // a partial teardown cannot break services that keep running.
         if (selection.IncludesAllDefinedServices)
         {
             await _networks.CleanupNetworksAsync(client, context.ProjectName, cancellationToken);
@@ -138,20 +152,25 @@ public sealed class ComposeService : IComposeService
     /// </summary>
     public async Task CreateAsync(ComposeProjectContext context, ComposeCreateOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Load project -> open client -> ensure networks/volumes exist.
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
 
+        // Create services in dependency order so dependents come after their depends_on targets.
         var targetServices = GetOrderedServices(project, context.Profiles, options?.Services);
         foreach (var service in targetServices)
         {
+            // Replica count comes from an explicit Scale option, else default to 1.
             var replicas = 1;
             if (options?.Scale is { Count: > 0 } scale && scale.TryGetValue(service.Name, out var s))
                 replicas = s;
 
+            // Skip recreation when NoRecreate is set and the service already has containers.
             var existing = await _containers.ListServiceContainersAsync(client, context.ProjectName, service.Name, true, cancellationToken);
             if (options?.NoRecreate == true && existing.Count > 0) continue;
 
+            // Replace existing containers rather than reconciling in place.
             foreach (var c in existing)
                 await _containers.RemoveContainerAsync(client, c.ID, true, cancellationToken);
 
@@ -161,6 +180,7 @@ public sealed class ComposeService : IComposeService
                 var name = replicas == 1 && !string.IsNullOrWhiteSpace(service.ContainerName)
                     ? service.ContainerName!
                     : $"{context.ProjectName}-{service.Name}-{i}";
+                // Create without pulling; image pulls are PullAsync/UpAsync's concern.
                 await _containers.CreateAndStartAsync(client, context.ProjectName, project, service, name, i, false, cancellationToken);
             }
         }
@@ -169,6 +189,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Starts existing containers of the selected services.</summary>
     public async Task StartAsync(ComposeProjectContext context, ComposeStartOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Filter by selected services, then start their existing containers.
         var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await _containers.StartContainersAsync(client, context.ProjectName, services, cancellationToken);
@@ -177,6 +198,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Stops existing containers of the selected services, waiting up to <c>TimeoutSeconds</c> before killing them.</summary>
     public async Task StopAsync(ComposeProjectContext context, ComposeStopOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Filter by selected services; TimeoutSeconds null falls through to the lifecycle default grace period.
         var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await _containers.StopContainersAsync(client, context.ProjectName, services, options?.TimeoutSeconds, cancellationToken);
@@ -185,6 +207,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Restarts existing containers of the selected services.</summary>
     public async Task RestartAsync(ComposeProjectContext context, ComposeRestartOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Filter by selected services; restart reuses the same stop-grace timeout default as StopAsync.
         var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await _containers.RestartContainersAsync(client, context.ProjectName, services, options?.TimeoutSeconds, cancellationToken);
@@ -193,6 +216,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Pulls the images of the selected services.</summary>
     public async Task PullAsync(ComposeProjectContext context, ComposePullOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Load project -> open client -> profile-filter services, then pull their images.
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var targetServices = ProfileServiceSelector.Select(project, context.Profiles, options?.Services);
@@ -205,12 +229,14 @@ public sealed class ComposeService : IComposeService
     /// <remarks>Per-service push failures are swallowed when <c>IgnoreFailures</c> is set.</remarks>
     public async Task PushAsync(ComposeProjectContext context, ComposePushOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Load project -> open client -> profile-filter services.
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var targetServices = ProfileServiceSelector.Select(project, context.Profiles, options?.Services);
 
         foreach (var service in targetServices)
         {
+            // Only services with a concrete image reference can be pushed.
             if (service.Image is not null)
             {
                 try { await _images.PushImageAsync(client, context.RegistryAuth, service.Image, cancellationToken); }
@@ -222,6 +248,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Sends a signal (default SIGKILL) to the containers of the selected services.</summary>
     public async Task KillAsync(ComposeProjectContext context, ComposeKillOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Filter by selected services, then signal their containers (default SIGKILL).
         var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await _containers.KillContainersAsync(client, context.ProjectName, services, options?.Signal ?? "SIGKILL", cancellationToken);
@@ -237,24 +264,30 @@ public sealed class ComposeService : IComposeService
     /// </remarks>
     public async Task<string> RunAsync(ComposeProjectContext context, string serviceName, ComposeRunOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Load project and resolve the single target service (profile-filtered).
         var project = LoadProjectInternal(context);
         var service = ProfileServiceSelector.Select(project, context.Profiles, [serviceName]).SingleOrDefault()
             ?? throw new InvalidOperationException($"Service '{serviceName}' not found.");
 
+        // One-off containers still need the project networks/volumes in place.
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
 
+        // Unique default name plus replica index 0 and the one-off label keep reconciliation from adopting this container.
         var name = options?.Name ?? $"{context.ProjectName}-{serviceName}-run-{Guid.NewGuid().ToString()[..8]}";
         var containerId = await _containers.CreateAndStartAsync(client, context.ProjectName, project, service, name, 0, true, cancellationToken);
 
+        // Detached mode returns as soon as the container is running.
         if (options?.Detach == true) return containerId;
 
+        // Attached mode captures the combined stdout/stderr stream and echoes it to the console.
         using var stream = await client.Containers.GetContainerLogsAsync(containerId, false,
             new ContainerLogsParameters { ShowStdout = true, ShowStderr = true, Follow = true, Tail = "all" }, cancellationToken);
         var (stdout, stderr) = await stream.ReadOutputToEndAsync(cancellationToken);
         Console.Write(stdout);
         Console.Error.Write(stderr);
 
+        // Default cleanup removes the one-off container unless Remove is explicitly false.
         if (options?.Remove != false)
             await _containers.RemoveContainerAsync(client, containerId, true, cancellationToken);
 
@@ -264,6 +297,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Removes containers of the selected services, optionally stopping them first.</summary>
     public async Task RemoveAsync(ComposeProjectContext context, ComposeRemoveOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Filter by selected services; optionally stop first so removal does not hit running containers.
         var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
         if (options?.Stop == true)
@@ -274,9 +308,11 @@ public sealed class ComposeService : IComposeService
     /// <summary>Runs a command inside a running container of a service and returns its exit code and output.</summary>
     public async Task<ExecResult> ExecAsync(ComposeProjectContext context, string serviceName, ComposeExecOptions options, CancellationToken cancellationToken = default)
     {
+        // Resolve the target running container (replica index honored).
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var container = await _containers.FindRunningContainerAsync(client, context.ProjectName, serviceName, options.Index, cancellationToken);
 
+        // Create the exec process with both output streams attached so they can be captured.
         var exec = await client.Exec.ExecCreateContainerAsync(container.ID, new ContainerExecCreateParameters
         {
             AttachStderr = true,
@@ -295,6 +331,7 @@ public sealed class ComposeService : IComposeService
             return new ExecResult { ExitCode = 0 };
         }
 
+        // Attached execs drain the multiplexed stdout/stderr stream, then read the exit code from inspect.
         using var stream = await client.Exec.StartAndAttachContainerExecAsync(exec.ID, false, cancellationToken);
         var (stdout, stderr) = await stream.ReadOutputToEndAsync(cancellationToken);
         var inspect = await client.Exec.InspectContainerExecAsync(exec.ID, cancellationToken);
@@ -304,6 +341,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Streams a running container's combined output to the console until the stream ends.</summary>
     public async Task AttachAsync(ComposeProjectContext context, string serviceName, ComposeAttachOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Resolve the target running container, then open its multiplexed output stream.
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var container = await _containers.FindRunningContainerAsync(client, context.ProjectName, serviceName, options?.Index, cancellationToken);
 
@@ -311,6 +349,7 @@ public sealed class ComposeService : IComposeService
             new ContainerAttachParameters { Stream = true, Stdout = options?.Stdout ?? true, Stderr = options?.Stderr ?? true, Stdin = options?.Stdin ?? false },
             cancellationToken);
 
+        // Pump the stream to the console until EOF or cancellation.
         var buffer = new byte[8192];
         while (true)
         {
@@ -330,6 +369,8 @@ public sealed class ComposeService : IComposeService
     /// </remarks>
     public Task<CopyResult> CopyAsync(ComposeProjectContext context, ComposeCopyOptions options, CancellationToken cancellationToken = default)
     {
+        // Known limitation: shells out to the docker executable ("docker cp") instead of a managed
+        // Docker API, so byte counts are unavailable and only the process exit code is reported.
         var psi = new System.Diagnostics.ProcessStartInfo("docker", $"cp {options.Source} {options.Destination}")
         {
             RedirectStandardOutput = true,
@@ -344,6 +385,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Pauses the containers of the selected services.</summary>
     public async Task PauseAsync(ComposeProjectContext context, ComposePauseOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Filter by selected services, then pause their containers.
         var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await _containers.PauseContainersAsync(client, context.ProjectName, services, cancellationToken);
@@ -352,6 +394,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Resumes paused containers of the selected services.</summary>
     public async Task UnPauseAsync(ComposeProjectContext context, ComposePauseOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Filter by selected services, then resume their paused containers.
         var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await _containers.UnPauseContainersAsync(client, context.ProjectName, services, cancellationToken);
@@ -360,11 +403,13 @@ public sealed class ComposeService : IComposeService
     /// <summary>Lists the project's containers (including stopped ones by default) as status summaries.</summary>
     public async Task<IReadOnlyList<ContainerSummary>> PsAsync(ComposeProjectContext context, ComposePsOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Filter by selected services; All defaults to true so stopped containers are included.
         var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var containers = await _containers.ListProjectContainersAsync(client, context.ProjectName, options?.All ?? true, cancellationToken);
         containers = FilterContainersByService(containers, services);
 
+        // Project Docker list responses into status summaries.
         var result = new List<ContainerSummary>();
         foreach (var container in containers)
         {
@@ -405,6 +450,7 @@ public sealed class ComposeService : IComposeService
     /// <remarks>Only label-owned resources are considered; unlabeled containers are never reported.</remarks>
     public async Task<IReadOnlyList<Stack>> ListAsync(ComposeListOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Query every container carrying the project label; unlabeled containers are never reported.
         using var client = _clientFactory.CreateClient();
         var containers = await client.Containers.ListContainersAsync(new ContainersListParameters
         {
@@ -415,6 +461,7 @@ public sealed class ComposeService : IComposeService
             }
         }, cancellationToken);
 
+        // Collapse the label values into distinct stack names.
         return containers
             .Select(c => c.Labels != null && c.Labels.TryGetValue(ComposeConstants.ProjectLabel, out var p) ? p : null)
             .Where(p => p is not null)
@@ -427,12 +474,14 @@ public sealed class ComposeService : IComposeService
     /// <remarks>Known limitation: currently a placeholder that always returns an empty list.</remarks>
     public Task<IReadOnlyList<ContainerProcSummary>> TopAsync(ComposeProjectContext context, ComposeTopOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Placeholder: process listing is not implemented yet, so always return empty.
         return Task.FromResult<IReadOnlyList<ContainerProcSummary>>([]);
     }
 
     /// <summary>Lists the images used by the project's containers.</summary>
     public async Task<IReadOnlyList<ImageSummary>> ImagesAsync(ComposeProjectContext context, ComposeImagesOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Filter by selected services, then collect the images their containers use.
         var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
         return await _images.ListImagesAsync(client, context.ProjectName, services, cancellationToken);
@@ -441,9 +490,11 @@ public sealed class ComposeService : IComposeService
     /// <summary>Resolves the host address and port published for a container port of a running service.</summary>
     public async Task<(string Host, int Port)> PortAsync(ComposeProjectContext context, string serviceName, int containerPort, ComposePortOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Resolve the running container, then inspect its published port bindings.
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var container = await _containers.FindRunningContainerAsync(client, context.ProjectName, serviceName, options?.Index, cancellationToken);
 
+        // Match bindings by "port/protocol" (tcp when no protocol is given).
         var inspect = await client.Containers.InspectContainerAsync(container.ID, cancellationToken);
         var ports = inspect.NetworkSettings?.Ports ?? new Dictionary<string, IList<PortBinding>>();
         var key = $"{containerPort}/{options?.Protocol ?? "tcp"}";
@@ -457,10 +508,12 @@ public sealed class ComposeService : IComposeService
     /// <summary>Streams or prints logs of the selected services' containers.</summary>
     public async Task LogsAsync(ComposeProjectContext context, ComposeLogsOptions? options = null, ILogConsumer? consumer = null, CancellationToken cancellationToken = default)
     {
+        // Resolve existing services first so logs only cover selected containers.
         var effectiveOptions = (options ?? new ComposeLogsOptions()) with
         {
             Services = SelectExistingServices(context, options?.Services).ServiceNames
         };
+        // LogStreamer follows the live stream when requested, otherwise dumps the retained log buffer.
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await _logs.LogsAsync(client, context.ProjectName, effectiveOptions, consumer, cancellationToken);
     }
@@ -472,10 +525,12 @@ public sealed class ComposeService : IComposeService
     /// </remarks>
     public async IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // Filter by selected services and stamp the poll window start.
         var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var since = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
+        // Poll loop: each cycle snapshots container state instead of subscribing to the Docker event stream.
         while (!cancellationToken.IsCancellationRequested)
         {
             var containers = await _containers.ListProjectContainersAsync(client, context.ProjectName, true, cancellationToken);
@@ -499,6 +554,7 @@ public sealed class ComposeService : IComposeService
                 };
             }
 
+            // Fixed 2s interval between snapshots.
             await Task.Delay(2000, cancellationToken);
         }
     }
@@ -506,16 +562,19 @@ public sealed class ComposeService : IComposeService
     /// <summary>Adjusts the replica count of the given services and reports desired versus running containers.</summary>
     public async Task<IReadOnlyList<ServiceStatus>> ScaleAsync(ComposeProjectContext context, ComposeScaleOptions options, CancellationToken cancellationToken = default)
     {
+        // Load project -> open client -> ensure infrastructure so new replicas can attach.
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
 
+        // For each requested service, reconcile toward the new replica count and report desired vs running.
         var result = new List<ServiceStatus>();
         foreach (var (serviceName, replicas) in options.Services)
         {
             var service = ProfileServiceSelector.Select(project, context.Profiles, [serviceName]).SingleOrDefault()
                 ?? throw new InvalidOperationException($"Service '{serviceName}' not found.");
 
+            // Reconcile creates missing replicas and removes surplus ones (replica diffing lives in the lifecycle helper).
             await foreach (var _ in _containers.ReconcileServiceAsync(
                 client, context.ProjectName, project, service, replicas, false, context.RegistryAuth, cancellationToken)) { }
 
@@ -530,11 +589,13 @@ public sealed class ComposeService : IComposeService
     /// <summary>Waits for the selected services' containers to exit and returns their exit codes.</summary>
     public async Task<WaitResult> WaitAsync(ComposeProjectContext context, ComposeWaitOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Only running containers of the selected services are awaited.
         var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var containers = await _containers.ListProjectContainersAsync(client, context.ProjectName, false, cancellationToken);
         containers = FilterContainersByService(containers, services);
 
+        // Wait on all containers in parallel; a Docker failure is recorded as exit code -1.
         var exitCodes = new Dictionary<string, int>();
         var tasks = containers.Select(async container =>
         {
@@ -547,6 +608,7 @@ public sealed class ComposeService : IComposeService
         }).ToArray();
 
         await Task.WhenAll(tasks);
+        // Aggregate code is the first non-zero exit code, else 0.
         return new WaitResult { ExitCodes = exitCodes, Code = exitCodes.Values.FirstOrDefault(c => c != 0) };
     }
 
@@ -557,6 +619,7 @@ public sealed class ComposeService : IComposeService
     /// </remarks>
     public async IAsyncEnumerable<WatchEvent> WatchAsync(ComposeProjectContext context, ComposeWatchOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // Load project and select services; only those with a build context can be watched.
         var project = LoadProjectInternal(context);
         var targetServices = ProfileServiceSelector.Select(project, context.Profiles, options?.Services);
 
@@ -566,6 +629,7 @@ public sealed class ComposeService : IComposeService
             var watchDir = Path.GetFullPath(Path.Combine(context.WorkingDirectory, service.Build.Context));
             if (!Directory.Exists(watchDir)) continue;
 
+            // One event per service: complete on the first file change or on cancellation.
             var tcs = new TaskCompletionSource<bool>();
             cancellationToken.Register(() => tcs.TrySetResult(true));
 
@@ -579,6 +643,7 @@ public sealed class ComposeService : IComposeService
 
             await tcs.Task;
 
+            // Signals that a rebuild may be needed; does not rebuild or sync files itself.
             yield return new WatchEvent { ServiceName = service.Name, Action = "rebuild", Path = watchDir };
         }
     }
@@ -590,6 +655,8 @@ public sealed class ComposeService : IComposeService
     /// </remarks>
     public Task ExportAsync(ComposeProjectContext context, ComposeExportOptions options, CancellationToken cancellationToken = default)
     {
+        // Known limitation: shells out to the docker executable ("docker export") instead of a managed
+        // Docker API, and assumes the replica-1 container name.
         var psi = new System.Diagnostics.ProcessStartInfo("docker", $"export {context.ProjectName}-{options.Service}-1 -o {options.OutputPath}")
         {
             UseShellExecute = false,
@@ -607,11 +674,14 @@ public sealed class ComposeService : IComposeService
     /// </remarks>
     public Task<string> CommitAsync(ComposeProjectContext context, ComposeCommitOptions options, CancellationToken cancellationToken = default)
     {
+        // Known limitation: shells out to the docker executable ("docker commit") instead of a managed
+        // Docker API, and assumes the replica-1 container name.
         var reference = options.Reference ?? $"{context.ProjectName}-{options.Service}:latest";
         var args = $"commit {context.ProjectName}-{options.Service}-1 {reference}";
         if (options.Author is not null) args += $" --author \"{options.Author}\"";
         if (options.Message is not null) args += $" --message \"{options.Message}\"";
 
+        // The new image reference is the process's standard output.
         var psi = new System.Diagnostics.ProcessStartInfo("docker", args)
         {
             RedirectStandardOutput = true,
@@ -627,6 +697,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Renders the project's services and depends_on edges as a Graphviz digraph.</summary>
     public Task<string> VizAsync(ComposeProjectContext context, CancellationToken cancellationToken = default)
     {
+        // Load project, then render profile-selected services and depends_on edges as digraph text.
         var project = LoadProjectInternal(context);
         var sb = new StringBuilder();
         sb.AppendLine($"digraph {context.ProjectName} {{");
@@ -634,6 +705,7 @@ public sealed class ComposeService : IComposeService
         foreach (var service in ProfileServiceSelector.Select(project, context.Profiles))
         {
             sb.AppendLine($"  \"{service.Name}\" [label=\"{service.Name}\\n{service.Image ?? "build"}\"];");
+            // One edge per depends_on entry.
             foreach (var dep in service.DependsOn)
                 sb.AppendLine($"  \"{service.Name}\" -> \"{dep}\";");
         }
@@ -645,12 +717,14 @@ public sealed class ComposeService : IComposeService
     /// <remarks>Known limitation: this only summarizes the loaded project; nothing is generated on disk.</remarks>
     public Task<ComposeProjectConfig> GenerateAsync(ComposeProjectContext context, ComposeGenerateOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Placeholder for real generation: returns the profile-filtered project summary only.
         return Task.FromResult(LoadProject(context));
     }
 
     /// <summary>Lists the project-labeled volumes on the daemon.</summary>
     public async Task<IReadOnlyList<VolumesSummary>> VolumesAsync(ComposeProjectContext context, ComposeVolumesOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // List only volumes owned by this project's label, then map to summaries.
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var volumes = await client.Volumes.ListAsync(new VolumesListParameters
         {
@@ -672,6 +746,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Loads the project and returns its configuration with services filtered by the active profiles.</summary>
     public ComposeProjectConfig LoadProject(ComposeProjectContext context)
     {
+        // Load from disk, then project only the profile-selected services plus top-level resource lists.
         var project = LoadProjectInternal(context);
         return new ComposeProjectConfig
         {
@@ -692,13 +767,17 @@ public sealed class ComposeService : IComposeService
     /// </remarks>
     public async Task PublishAsync(ComposeProjectContext context, string repository, ComposePublishOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // Load project -> open client -> profile-filter services.
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
 
+        // Tag each service image into the target repository as <repository>:<serviceName>.
+        // Local tagging only; pushing to a registry is intentionally left to the caller.
         foreach (var service in ProfileServiceSelector.Select(project, context.Profiles))
         {
             if (service.Image is not null)
             {
+                // Missing/untagged source images are skipped rather than failing the publish.
                 try
                 {
                     await client.Images.TagImageAsync(service.Image, new ImageTagParameters { RepositoryName = repository, Tag = service.Name }, cancellationToken);
@@ -710,6 +789,7 @@ public sealed class ComposeService : IComposeService
 
     private ComposeProject LoadProjectInternal(ComposeProjectContext context)
     {
+        // Single entry point for Compose file loading; all public methods funnel through here.
         return _loader.Load(context.WorkingDirectory, context.ComposeFileName);
     }
 
@@ -719,6 +799,7 @@ public sealed class ComposeService : IComposeService
         ComposeProjectContext context,
         IReadOnlyList<string>? explicitServices)
     {
+        // Try to load the project; the catch below handles the no-Compose-file case.
         ComposeProject project;
         try
         {
@@ -731,6 +812,8 @@ public sealed class ComposeService : IComposeService
                 : new ExistingServiceSelection(ServiceNames: null, IncludesAllDefinedServices: true);
         }
 
+        // Profile-filter the definitions, and flag "all defined services" only when nothing was
+        // explicitly requested and the selection covers every service in the file.
         var selected = ProfileServiceSelector.Select(project, context.Profiles, explicitServices);
         return new ExistingServiceSelection(
             selected.Select(service => service.Name).ToList(),
@@ -765,6 +848,7 @@ public sealed class ComposeService : IComposeService
         IReadOnlyList<string>? profiles,
         IReadOnlyList<string>? services)
     {
+        // Profile-filter first, then apply depends_on ordering.
         return OrderServices(ProfileServiceSelector.Select(project, profiles, services));
     }
 
@@ -776,11 +860,13 @@ public sealed class ComposeService : IComposeService
         var remaining = services.ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
         while (remaining.Count > 0)
         {
+            // Ready = every depends_on entry already scheduled.
             var ready = remaining.Values
                 .Where(service => service.DependsOn.All(dep => !remaining.ContainsKey(dep)))
                 .ToList();
             if (ready.Count == 0)
             {
+                // Cycle fallback: drain the rest in dictionary order instead of failing.
                 result.AddRange(remaining.Values);
                 break;
             }
@@ -801,6 +887,7 @@ public sealed class ComposeService : IComposeService
 
         public void Report(JSONMessage value)
         {
+            // Capture the first build error message; forward every progress line to the consumer.
             var message = value.ErrorMessage ?? value.Error?.Message ?? value.Stream ?? value.ProgressMessage ?? value.Status;
             if (!string.IsNullOrWhiteSpace(value.ErrorMessage ?? value.Error?.Message))
                 Interlocked.CompareExchange(ref _error, message, null);
@@ -811,6 +898,7 @@ public sealed class ComposeService : IComposeService
 
         public void ThrowIfFailed()
         {
+            // Rethrow after the stream completes, since the build call itself does not fail on build errors.
             var error = Volatile.Read(ref _error);
             if (error is not null)
                 throw new InvalidOperationException($"Docker build for service '{serviceName}' failed: {error}");

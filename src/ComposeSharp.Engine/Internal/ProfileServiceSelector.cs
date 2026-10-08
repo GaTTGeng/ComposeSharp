@@ -18,6 +18,7 @@ internal static class ProfileServiceSelector
         // 3. Otherwise a service is selected when it has no profiles or matches any active profile.
         if (explicitServices is { Count: > 0 })
         {
+            // Explicit-service bypass: no profile filtering is applied at all.
             return project.Services
                 .Where(service => explicitServices.Contains(service.Name))
                 .ToList();
@@ -25,11 +26,13 @@ internal static class ProfileServiceSelector
 
         if (profiles is not { Count: > 0 })
         {
+            // No active profiles: only profile-less services run.
             return project.Services
                 .Where(service => service.Profiles.Count == 0)
                 .ToList();
         }
 
+        // OR-semantics: matching any single active profile is enough to select the service.
         var activeProfiles = new HashSet<string>(profiles, StringComparer.Ordinal);
         return project.Services
             .Where(service => service.Profiles.Count == 0 || service.Profiles.Any(activeProfiles.Contains))

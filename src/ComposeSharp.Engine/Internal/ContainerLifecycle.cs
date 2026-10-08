@@ -26,8 +26,10 @@ internal sealed class ContainerLifecycle
         string name, int index, bool oneOff, CancellationToken ct)
     {
         var labels = _labels.CreateServiceLabels(projectName, service, index, oneOff);
+        // Host-side mounts, port bindings, and network attachment are assembled first.
         var hostConfig = BuildHostConfig(projectName, project, service);
 
+        // Map the Compose service model onto Docker's create parameters in one shot.
         var parameters = new CreateContainerParameters
         {
             Image = service.Image ?? throw new InvalidOperationException($"Service '{service.Name}' has no image."),
@@ -70,6 +72,7 @@ internal sealed class ContainerLifecycle
     {
         if (replicas < 0) throw new ArgumentOutOfRangeException(nameof(replicas));
 
+        // Stage 1: refresh the image first so recreated containers pick up the new digest.
         if (pullAlways && service.Image is not null)
         {
             yield return $"Pulling {service.Image}";
@@ -77,6 +80,8 @@ internal sealed class ContainerLifecycle
             await imageManager.PullImageAsync(client, auth, service.Image, ct);
         }
 
+        // Stage 2: recreate-based reconcile removes every existing service container before
+        // creating replacements, which keeps container names and replica indexes stable.
         var existing = await ListServiceContainersAsync(client, projectName, service.Name, true, ct);
         foreach (var container in existing)
         {
@@ -84,6 +89,7 @@ internal sealed class ContainerLifecycle
             yield return $"Removed {container.Names.FirstOrDefault()?.TrimStart('/') ?? container.ID[..12]}";
         }
 
+        // Stage 3: create the desired replicas with 1-based indexes.
         for (var i = 1; i <= replicas; i++)
         {
             // A single replica may honor the service's container_name; scaled services always use
@@ -187,6 +193,7 @@ internal sealed class ContainerLifecycle
         var containers = await client.Containers.ListContainersAsync(new ContainersListParameters
         {
             All = all,
+            // Project label filter keeps the listing scoped to this Compose project.
             Filters = LabelHelper.ProjectLabelFilter(projectName)
         }, ct);
         return containers.ToList();
@@ -198,6 +205,7 @@ internal sealed class ContainerLifecycle
         var containers = await client.Containers.ListContainersAsync(new ContainersListParameters
         {
             All = all,
+            // Service label filter narrows the project scope to a single service.
             Filters = LabelHelper.ServiceLabelFilter(projectName, serviceName)
         }, ct);
         return containers.ToList();
@@ -206,6 +214,7 @@ internal sealed class ContainerLifecycle
     private async Task<IReadOnlyList<ContainerListResponse>> GetTargetContainersAsync(
         DockerClient client, string projectName, IReadOnlyList<string>? services, bool all, CancellationToken ct)
     {
+        // Named services are unioned per service; otherwise the whole project is targeted.
         if (services is not null)
         {
             var allContainers = new List<ContainerListResponse>();
@@ -223,6 +232,7 @@ internal sealed class ContainerLifecycle
         DockerClient client, string projectName, string serviceName, int? index, CancellationToken ct)
     {
         var containers = await ListServiceContainersAsync(client, projectName, serviceName, false, ct);
+        // Only running containers are candidates; index selects among them 1-based.
         var running = containers.Where(c => string.Equals(c.State, "running", StringComparison.OrdinalIgnoreCase)).ToList();
 
         if (index.HasValue && index.Value > 0)
@@ -235,6 +245,8 @@ internal sealed class ContainerLifecycle
 
     private HostConfig BuildHostConfig(string projectName, ComposeProject project, ServiceDefinition service)
     {
+        // HostConfig carries everything host-scoped: bind strings, port bindings, restart policy,
+        // the primary network, and the device/capability/resource flags from the service definition.
         return new HostConfig
         {
             Binds = service.Volumes.Select(v => ResolveVolume(projectName, project.WorkingDirectory, v)).ToList(),
@@ -265,6 +277,7 @@ internal sealed class ContainerLifecycle
     private static Dictionary<string, IList<PortBinding>>? BuildPortBindings(IReadOnlyList<ComposePort> ports)
     {
         if (ports.Count == 0) return null;
+        // Only ports with an explicit host mapping are bound; container-only ports stay exposed.
         var result = new Dictionary<string, IList<PortBinding>>();
         foreach (var port in ports)
         {
@@ -277,6 +290,7 @@ internal sealed class ContainerLifecycle
     private static RestartPolicy? BuildRestartPolicy(string? restart)
     {
         if (string.IsNullOrWhiteSpace(restart)) return null;
+        // "on-failure:N" splits off the max-retry suffix; only the policy kind is mapped here.
         var normalized = restart.Split(':').First();
         var kind = normalized.ToLowerInvariant() switch
         {
@@ -292,7 +306,9 @@ internal sealed class ContainerLifecycle
     private static HealthConfig? BuildHealthcheck(ComposeHealthcheck? healthcheck)
     {
         if (healthcheck is null) return null;
+        // A disabled healthcheck is signaled by the special test value "NONE".
         if (healthcheck.Disabled) return new HealthConfig { Test = ["NONE"] };
+        // Test is copied verbatim (the loader already expanded a scalar test to CMD-SHELL form).
         return new HealthConfig
         {
             Test = healthcheck.Test.ToList(),
@@ -314,6 +330,7 @@ internal sealed class ContainerLifecycle
         if (parts.Length < 2) return value;
 
         var source = parts[0];
+        // Path-like sources resolve against the working directory; bare names become project volumes.
         if (source.StartsWith('.') || source.StartsWith('/') || source.StartsWith('\\') || source.Contains('\\') || source.Contains('/'))
             source = Path.GetFullPath(Path.Combine(workingDirectory, source));
         else

@@ -28,6 +28,7 @@ public static partial class VariableInterpolator
     {
         return VariablePattern().Replace(text, match =>
         {
+            // $$ escapes to a literal dollar; bare $NAME resolves without any default operator.
             if (match.Value == "$$") return "$";
 
             if (match.Groups["shellName"].Success)
@@ -39,6 +40,8 @@ public static partial class VariableInterpolator
 
             var value = ResolveVariable(name, dotenv);
 
+            // Colon operators treat empty string as unset; bare operators only treat missing as unset.
+            // Alternate/default values are expanded recursively so nested ${} inside them works.
             return op switch
             {
                 ":-" => string.IsNullOrEmpty(value) ? Expand(defaultValue, dotenv) : value,

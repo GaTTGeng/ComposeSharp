@@ -11,6 +11,7 @@ public static class ServiceCollectionExtensions
     /// <summary>Registers <see cref="IComposeService"/> as a singleton with default settings.</summary>
     public static IServiceCollection AddComposeSharp(this IServiceCollection services)
     {
+        // Simple path: singleton registration with the parameterless implementation.
         services.AddSingleton<IComposeService, ComposeService>();
         return services;
     }
@@ -18,9 +19,11 @@ public static class ServiceCollectionExtensions
     /// <summary>Registers <see cref="IComposeService"/> as a singleton with caller-supplied defaults.</summary>
     public static IServiceCollection AddComposeSharp(this IServiceCollection services, Action<ComposeSharpOptions> configure)
     {
+        // Build and register the options instance so consumers can resolve the configured defaults.
         var options = new ComposeSharpOptions();
         configure(options);
         services.AddSingleton(options);
+        // Factory registration leaves room for optional logger wiring around the service.
         services.AddSingleton<IComposeService>(sp =>
         {
             var logger = sp.GetService<ILogger<ComposeService>>();

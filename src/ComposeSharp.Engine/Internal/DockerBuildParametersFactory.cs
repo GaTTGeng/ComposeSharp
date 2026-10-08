@@ -12,10 +12,12 @@ internal static class DockerBuildParametersFactory
     public static ImageBuildParameters Create(ServiceDefinition service, ComposeBuildOptions? options)
     {
         var build = service.Build ?? throw new ArgumentException($"Service '{service.Name}' does not have a build configuration.", nameof(service));
+        // Tag the image with its service image name (or service name) plus any extra tags.
         var tags = new List<string> { service.Image ?? service.Name };
         if (build.Tags is not null)
             tags.AddRange(build.Tags);
 
+        // Caller options override the file-level build configuration field by field.
         return new ImageBuildParameters
         {
             Tags = tags.Distinct(StringComparer.Ordinal).ToList(),
@@ -77,6 +79,7 @@ internal static class DockerBuildParametersFactory
         var result = configured is null
             ? new Dictionary<string, string>(StringComparer.Ordinal)
             : new Dictionary<string, string>(configured, StringComparer.Ordinal);
+        // Option overrides win over configured values.
         if (overrides is not null)
         {
             foreach (var (key, value) in overrides)
@@ -100,6 +103,7 @@ internal static class DockerBuildParametersFactory
         if (string.IsNullOrWhiteSpace(value))
             return null;
 
+        // Split the trailing letter suffix from the leading integer, then apply the unit multiplier.
         var text = value.Trim();
         var suffixStart = text.Length;
         while (suffixStart > 0 && char.IsLetter(text[suffixStart - 1]))

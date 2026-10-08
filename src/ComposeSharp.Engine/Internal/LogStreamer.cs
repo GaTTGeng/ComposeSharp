@@ -17,6 +17,7 @@ internal sealed class LogStreamer
     {
         using var stream = await client.Containers.GetContainerLogsAsync(containerId, false,
             new ContainerLogsParameters { ShowStdout = true, ShowStderr = true, Follow = follow, Tail = tail }, ct);
+        // Demultiplex the raw log stream into stdout/stderr text, then concatenate for plain output.
         var (stdout, stderr) = await stream.ReadOutputToEndAsync(ct);
         return stdout + stderr;
     }
@@ -27,6 +28,7 @@ internal sealed class LogStreamer
 
         if (consumer is null)
         {
+            // No consumer: dump each container's log text directly to the console.
             foreach (var container in containers)
             {
                 var text = await ReadLogsAsync(client, container.ID, options.Tail, false, ct);
@@ -54,6 +56,7 @@ internal sealed class LogStreamer
     public async IAsyncEnumerable<string> StreamLogLinesAsync(DockerClient client, string containerId, string tail,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // Follow mode keeps the stream open until the container stops or cancellation fires.
         using var stream = await client.Containers.GetContainerLogsAsync(containerId, false,
             new ContainerLogsParameters { ShowStdout = true, ShowStderr = true, Follow = true, Tail = tail }, ct);
 
@@ -82,6 +85,7 @@ internal sealed class LogStreamer
     {
         if (services is not null)
         {
+            // Named services are listed per service label; otherwise the whole project is included.
             var all = new List<ContainerListResponse>();
             foreach (var svc in services)
             {
@@ -104,6 +108,7 @@ internal sealed class LogStreamer
 
     private static bool TryTakeLine(StringBuilder buffer, out string line)
     {
+        // Find the next newline, stripping a preceding CR so CRLF and LF both yield clean lines.
         for (var i = 0; i < buffer.Length; i++)
         {
             if (buffer[i] != '\n') continue;

@@ -18,6 +18,7 @@ internal sealed class ImageManager
 
     public async Task PullImageAsync(DockerClient client, DockerRegistryAuth? auth, string image, CancellationToken ct)
     {
+        // The create/pull API wants repository and tag as separate fields.
         var (fromImage, tag) = SplitImage(image);
         await client.Images.CreateImageAsync(
             new ImagesCreateParameters { FromImage = fromImage, Tag = tag },
@@ -64,6 +65,7 @@ internal sealed class ImageManager
 
             if (!seen.Add(container.ImageID)) continue;
 
+            // Inspect for size/created; a concurrent delete is tolerated by skipping the image.
             try
             {
                 var inspect = await client.Images.InspectImageAsync(container.ImageID, ct);

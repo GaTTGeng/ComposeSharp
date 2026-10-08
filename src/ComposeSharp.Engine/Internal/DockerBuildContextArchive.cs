@@ -28,6 +28,7 @@ internal static class DockerBuildContextArchive
             throw new DirectoryNotFoundException($"Build context directory '{directory}' does not exist.");
 
         cancellationToken.ThrowIfCancellationRequested();
+        // Stage 1: resolve the Dockerfile on disk and classify it as in-context or external.
         var dockerfilePath = GetDockerfilePath(directory, dockerfile);
         var dockerfileSourcePath = ResolveFileSystemPath(dockerfilePath);
         dockerfileArchivePath ??= GetDockerfileArchivePath(directory, dockerfile);
@@ -40,6 +41,7 @@ internal static class DockerBuildContextArchive
         {
             throw new FileNotFoundException($"Dockerfile '{dockerfile}' does not exist.", dockerfileSourcePath);
         }
+        // Stage 2: load .dockerignore rules; they gate which entries reach the tar stream.
         var ignoreRules = DockerIgnoreRule.Read(directory, dockerfilePath);
         var archive = CreateTemporaryArchive();
         try
@@ -53,9 +55,11 @@ internal static class DockerBuildContextArchive
                     ? dockerfilePath
                     : null;
                 var stagedDockerfileArchivePath = isExternalDockerfile ? dockerfileArchivePath : null;
+                // Stage 3: walk the context tree and emit one tar entry per included filesystem entry.
                 WriteDirectoryEntries(writer, directory, directory, dockerfileArchivePath, linkedDockerfilePath,
                     stagedDockerfileArchivePath, archive.Name, ignoreRules, cancellationToken);
 
+                // Stage 4: append the staged external Dockerfile copy under its reserved archive name.
                 if (isExternalDockerfile)
                     WriteFile(writer, dockerfileSourcePath, dockerfileArchivePath, cancellationToken);
             }
@@ -122,6 +126,7 @@ internal static class DockerBuildContextArchive
             }
 
             if (isSymbolicLink)
+                // Preserve links as link entries rather than packing their targets.
                 WriteSymbolicLink(writer, path, relativePath, isDirectory, cancellationToken);
             else if (isDirectory)
             {
@@ -129,6 +134,7 @@ internal static class DockerBuildContextArchive
                 {
                     ModificationTime = File.GetLastWriteTimeUtc(path)
                 };
+                // Windows has no Unix mode bits; only Unix hosts can preserve permissions.
                 if (!OperatingSystem.IsWindows())
                     entry.Mode = File.GetUnixFileMode(path);
                 writer.WriteEntry(entry);
@@ -137,6 +143,7 @@ internal static class DockerBuildContextArchive
             }
             else
             {
+                // Dispatch by Unix file type: sockets are skipped, devices are rejected, FIFOs and regular files are packed.
                 var fileType = GetUnixFileType(path);
                 if (fileType == UnixFileType.Socket)
                     continue;
@@ -157,6 +164,7 @@ internal static class DockerBuildContextArchive
     {
         var leftPath = Path.GetFullPath(left);
         var rightPath = Path.GetFullPath(right);
+        // Windows paths are case-insensitive; compare literal and symlink-resolved forms either way.
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         return string.Equals(leftPath, rightPath, comparison) ||
                string.Equals(ResolveFileSystemPath(leftPath), ResolveFileSystemPath(rightPath), comparison);
@@ -249,9 +257,11 @@ internal static class DockerBuildContextArchive
 
     private static UnixFileType GetUnixFileType(string path)
     {
+        // Windows entries are always treated as regular files; special-node types only exist on Unix.
         if (OperatingSystem.IsWindows())
             return UnixFileType.Regular;
 
+        // Decode the file-type nibble of st_mode (0xF000 mask).
         var mode = OperatingSystem.IsLinux()
             ? GetLinuxFileMode(path)
             : OperatingSystem.IsMacOS()
@@ -291,6 +301,7 @@ internal static class DockerBuildContextArchive
 
     private static uint GetLinuxFileModeFromLStat(string path)
     {
+        // lstat's struct stat layout differs per CPU architecture, so each one gets its own pinvoke shape.
         var result = RuntimeInformation.ProcessArchitecture switch
         {
             Architecture.X64 => LStat(path, out LinuxX64Stat stat) == 0 ? stat.Mode : ThrowUnableToInspectFile(path),
@@ -393,6 +404,7 @@ internal static class DockerBuildContextArchive
 
     private static string ResolveFileSystemPath(string path)
     {
+        // Walk path segments and resolve each symlink so link-vs-target comparisons use real locations.
         var root = Path.GetPathRoot(path)!;
         var resolvedPath = root;
         var relativePath = Path.GetRelativePath(root, path);
@@ -414,6 +426,7 @@ internal static class DockerBuildContextArchive
         if (!File.Exists(path) && !Directory.Exists(path))
             return path;
 
+        // Re-match every segment against on-disk names so case differences resolve to the real entry.
         var root = Path.GetPathRoot(path)!;
         var relativePath = Path.GetRelativePath(root, path);
         var currentPath = root;
@@ -433,6 +446,7 @@ internal static class DockerBuildContextArchive
 
     private static bool IsWithinDirectory(string directory, string path)
     {
+        // Containment holds only when the relative path neither escapes via ".." nor is rooted.
         var relativePath = Path.GetRelativePath(directory, path);
         return relativePath != ".." &&
                !relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
@@ -444,6 +458,7 @@ internal static class DockerBuildContextArchive
 
     private static FileStream CreateTemporaryArchive()
     {
+        // DeleteOnClose guarantees the temp tar is removed even if packing throws.
         var path = Path.Combine(Path.GetTempPath(), $"docker-build-context-{Guid.NewGuid():N}.tar");
         return new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 81920,
             FileOptions.DeleteOnClose | FileOptions.SequentialScan);
@@ -464,6 +479,7 @@ internal static class DockerBuildContextArchive
 
             EnsureRegularFile(path, "Docker ignore file");
 
+            // Strip a possible BOM, drop comments and blanks, then compile each remaining pattern.
             return File.ReadLines(path)
                 .Select((line, index) => index == 0 ? line.TrimStart('\uFEFF') : line)
                 .Where(line => !line.StartsWith('#'))
@@ -475,6 +491,7 @@ internal static class DockerBuildContextArchive
 
         public static bool IsIgnored(string relativePath, IReadOnlyList<DockerIgnoreRule> rules)
         {
+            // Last matching rule wins, so a later "!" negation can re-include an earlier exclusion.
             var ignored = false;
             foreach (var rule in rules)
             {
@@ -484,6 +501,7 @@ internal static class DockerBuildContextArchive
             return ignored;
         }
 
+        // Only an include (negation) rule can pull a descendant of an ignored directory back in.
         public static bool ShouldTraverseIgnoredDirectory(string relativePath, IReadOnlyList<DockerIgnoreRule> rules)
             => rules.Any(rule => rule.CanMatchDescendant(relativePath));
 
@@ -495,6 +513,7 @@ internal static class DockerBuildContextArchive
                 return new DockerIgnoreRule(include, pattern, new Regex("(?!)", RegexOptions.CultureInvariant));
 
             var expression = ToExpression(pattern);
+            // A pattern without "/" matches at any depth; the trailing group also matches all descendants.
             if (!pattern.Contains('/'))
                 expression = $"(?:.*/)?{expression}";
 
@@ -503,9 +522,11 @@ internal static class DockerBuildContextArchive
 
         private static string NormalizePattern(string pattern)
         {
+            // Ignore patterns always use forward slashes, including when authored on Windows.
             if (OperatingSystem.IsWindows())
                 pattern = pattern.Replace('\\', '/');
 
+            // Collapse "." and "x/.." so the compiled pattern has no traversal segments.
             var segments = new List<string>();
             foreach (var segment in pattern.Split('/'))
             {
@@ -533,12 +554,14 @@ internal static class DockerBuildContextArchive
         {
             if (!Include)
                 return false;
+            // Bare patterns and ** can reach any depth without further checks.
             if (!PatternText.Contains('/'))
                 return true;
 
             if (PatternText.Contains("**", StringComparison.Ordinal))
                 return true;
 
+            // Otherwise require per-segment glob agreement along the path prefix.
             var patternSegments = PatternText.Split('/');
             var pathSegments = relativePath.Split('/');
             for (var index = 0; index < Math.Min(patternSegments.Length, pathSegments.Length); index++)
@@ -553,6 +576,8 @@ internal static class DockerBuildContextArchive
 
         private static string ToExpression(string pattern)
         {
+            // Translate one glob pattern into a regular expression: ** crosses directories,
+            // * stays inside a segment, ? matches a single Unicode scalar.
             var expression = new StringBuilder();
             for (var index = 0; index < pattern.Length; index++)
             {
@@ -626,6 +651,7 @@ internal static class DockerBuildContextArchive
 
         private static IReadOnlyList<(int Start, int End)> ParseCharacterClassRanges(string content)
         {
+            // Tokenize by Unicode scalar first so surrogate pairs are not split into fake ranges.
             var tokens = new List<(int Scalar, bool IsEscaped)>();
             for (var index = 0; index < content.Length;)
             {
@@ -638,6 +664,7 @@ internal static class DockerBuildContextArchive
             var ranges = new List<(int Start, int End)>();
             for (var index = 0; index < tokens.Count;)
             {
+                // An unescaped '-' between two scalars forms an inclusive range.
                 if (index + 2 < tokens.Count && !tokens[index + 1].IsEscaped &&
                     tokens[index + 1].Scalar == '-')
                 {
@@ -668,6 +695,8 @@ internal static class DockerBuildContextArchive
 
         private static string ToUnicodeScalarRangeExpression(int startScalar, int endScalar)
         {
+            // BMP scalars map to plain \u ranges; supplementary scalars need explicit
+            // surrogate-pair expressions because .NET regular expressions are UTF-16 based.
             var expressions = new List<string>();
             if (startScalar <= 0xFFFF)
                 expressions.AddRange(ToBmpRangeExpressions(startScalar, Math.Min(endScalar, 0xFFFF)));
@@ -736,6 +765,7 @@ internal static class DockerBuildContextArchive
         }
     }
 
+    // Wraps file data so long entry copies observe the caller's cancellation token.
     private sealed class CancellationAwareReadStream(Stream inner, CancellationToken cancellationToken) : Stream
     {
         public override bool CanRead => inner.CanRead;

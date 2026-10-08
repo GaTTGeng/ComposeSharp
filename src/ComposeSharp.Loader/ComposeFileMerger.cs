@@ -27,6 +27,8 @@ public sealed class ComposeFileMerger
     {
         // Overrides are process-wide and are not reverted afterwards; callers must not rely on
         // the previous environment being restored between calls.
+        // Injected before load so interpolation resolves them as process-environment values
+        // and they win over each file's adjacent .env.
         foreach (var (key, value) in overrides)
         {
             Environment.SetEnvironmentVariable(key, value);
