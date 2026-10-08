@@ -285,6 +285,8 @@ public class ComposeServiceIntegrationTests
               app:
                 image: busybox:1.36
                 command: ["sh", "-c", "mkdir -p /data && sleep 300"]
+                deploy:
+                  replicas: 2
             """);
 
         var context = new ComposeProjectContext
@@ -303,7 +305,7 @@ public class ComposeServiceIntegrationTests
                 Source = sourcePath,
                 Destination = "app:/data"
             });
-            Assert.Equal(contents.Length, intoContainer.BytesCopied);
+            Assert.Equal(contents.Length * 2, intoContainer.BytesCopied);
             Assert.Equal(0, intoContainer.ExitCode);
 
             var outOfContainer = await service.CopyAsync(context, new ComposeCopyOptions
@@ -314,6 +316,15 @@ public class ComposeServiceIntegrationTests
             Assert.True(outOfContainer.IsDirectory);
             Assert.Equal(contents.Length, outOfContainer.BytesCopied);
             Assert.Equal(contents, await File.ReadAllTextAsync(Path.Combine(copiedDirectory, "data", "fixture.txt")));
+
+            var secondReplicaDirectory = Path.Combine(directory, "copied-replica-two");
+            await service.CopyAsync(context, new ComposeCopyOptions
+            {
+                Source = "app:/data",
+                Destination = secondReplicaDirectory,
+                Index = 2
+            });
+            Assert.Equal(contents, await File.ReadAllTextAsync(Path.Combine(secondReplicaDirectory, "data", "fixture.txt")));
 
             await service.ExportAsync(context, new ComposeExportOptions
             {
@@ -337,7 +348,7 @@ public class ComposeServiceIntegrationTests
                 Source = sourcePath,
                 Destination = "app:/data"
             });
-            Assert.Equal(contents.Length, copiedToStoppedContainer.BytesCopied);
+            Assert.Equal(contents.Length * 2, copiedToStoppedContainer.BytesCopied);
 
             var copiedFromStoppedContainer = await service.CopyAsync(context, new ComposeCopyOptions
             {

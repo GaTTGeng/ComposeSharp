@@ -209,8 +209,32 @@ internal sealed class ContainerLifecycle
     public async Task<ContainerListResponse> FindContainerForArchiveAsync(
         DockerClient client, string projectName, string serviceName, int? index, CancellationToken ct, bool includeOneOff = false)
     {
-        return await FindServiceContainerAsync(client, projectName, serviceName, index, ct,
-            includeStopped: true, includeOneOff);
+        var containers = await ListContainersForArchiveAsync(client, projectName, serviceName, ct, includeOneOff);
+        return SelectContainerForArchive(containers, serviceName, index);
+    }
+
+    public async Task<IReadOnlyList<ContainerListResponse>> ListContainersForArchiveAsync(
+        DockerClient client, string projectName, string serviceName, CancellationToken ct, bool includeOneOff = false)
+    {
+        var containers = await ListServiceContainersAsync(client, projectName, serviceName, true, ct);
+        return FilterEligibleContainers(containers, includeStopped: true, includeOneOff)
+            .OrderBy(GetContainerNumber)
+            .ThenBy(container => container.ID, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    internal static ContainerListResponse SelectContainerForArchive(
+        IReadOnlyList<ContainerListResponse> containers, string serviceName, int? index)
+    {
+        if (index is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(index), index, "Container indexes are 1-based.");
+
+        if (index.HasValue)
+            return FindByContainerNumber(containers, index.Value)
+                ?? throw new InvalidOperationException($"No container at index {index} for service '{serviceName}'.");
+
+        return containers.FirstOrDefault()
+            ?? throw new InvalidOperationException($"No container found for service '{serviceName}'.");
     }
 
     private async Task<ContainerListResponse> FindServiceContainerAsync(

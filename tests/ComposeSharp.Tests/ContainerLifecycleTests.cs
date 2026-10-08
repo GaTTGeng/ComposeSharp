@@ -67,4 +67,21 @@ public class ContainerLifecycleTests
         Assert.Equal(new[] { running, stopped }, ContainerLifecycle.FilterEligibleContainers([running, stopped, oneOff], true, false));
         Assert.Equal(new[] { running, stopped, oneOff }, ContainerLifecycle.FilterEligibleContainers([running, stopped, oneOff], true, true));
     }
+
+    [Fact]
+    public void SelectContainerForArchive_UsesRequestedReplicaNumber()
+    {
+        var replicaTwo = new ContainerListResponse
+        {
+            ID = "replica-two",
+            Labels = new Dictionary<string, string> { [ComposeConstants.ContainerNumberLabel] = "2" }
+        };
+        var replicaOne = new ContainerListResponse
+        {
+            ID = "replica-one",
+            Labels = new Dictionary<string, string> { [ComposeConstants.ContainerNumberLabel] = "1" }
+        };
+
+        Assert.Equal(replicaTwo, ContainerLifecycle.SelectContainerForArchive([replicaTwo, replicaOne], "app", 2));
+    }
 }

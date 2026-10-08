@@ -283,12 +283,11 @@ public sealed class ComposeService : IComposeService
             throw new ArgumentException("Exactly one copy path must use the 'service:/container/path' form.", nameof(options));
 
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        var containerPath = source.IsContainer ? source : destination;
-        var container = await _containers.FindContainerForArchiveAsync(
-            client, context.ProjectName, containerPath.Service!, options.Index, cancellationToken, options.All);
 
         if (source.IsContainer)
         {
+            var container = await _containers.FindContainerForArchiveAsync(
+                client, context.ProjectName, source.Service!, options.Index, cancellationToken);
             var pathParameters = new GetArchiveFromContainerParameters { Path = source.Path! };
             var stat = await client.Containers.GetArchiveFromContainerAsync(
                 container.ID,
@@ -314,15 +313,26 @@ public sealed class ComposeService : IComposeService
 
         await using var localArchive = await ContainerArchive.CreateFromPathAsync(sourcePath, cancellationToken);
         var bytes = ContainerArchive.GetContentLength(sourcePath);
-        await client.Containers.ExtractArchiveToContainerAsync(
-            container.ID,
-            new ContainerPathStatParameters { Path = destination.Path!, AllowOverwriteDirWithFile = false },
-            localArchive,
-            cancellationToken);
+        var targetContainers = await _containers.ListContainersForArchiveAsync(
+            client, context.ProjectName, destination.Service!, cancellationToken, options.All);
+        if (options.Index is { } index)
+            targetContainers = [ContainerLifecycle.SelectContainerForArchive(targetContainers, destination.Service!, index)];
+        else if (targetContainers.Count == 0)
+            throw new InvalidOperationException($"No container found for service '{destination.Service}'.");
+
+        foreach (var container in targetContainers)
+        {
+            localArchive.Position = 0;
+            await client.Containers.ExtractArchiveToContainerAsync(
+                container.ID,
+                new ContainerPathStatParameters { Path = destination.Path!, AllowOverwriteDirWithFile = false },
+                localArchive,
+                cancellationToken);
+        }
         return new CopyResult
         {
             IsDirectory = Directory.Exists(sourcePath),
-            BytesCopied = bytes,
+            BytesCopied = checked(bytes * targetContainers.Count),
             ExitCode = 0
         };
     }
