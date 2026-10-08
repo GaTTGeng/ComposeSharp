@@ -30,7 +30,7 @@ Full Compose Specification parity in one release. Unsupported or partially appli
 
 ### Exit criteria
 
-- Managed Docker API paths for build, copy, export, and commit, or explicit API redesign when Docker Engine lacks an equivalent endpoint.
+- Managed Docker API paths for build and commit, or explicit API redesign when Docker Engine lacks an equivalent endpoint. Copy and export use the container archive and export endpoints.
 - `TopAsync` returns real process information.
 - `EventsAsync` consumes Docker events instead of periodically polling containers.
 - `WatchAsync` has a documented action model rather than only signalling the first change.

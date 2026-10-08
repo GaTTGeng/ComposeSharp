@@ -91,7 +91,7 @@ builder.Services.AddComposeSharp();
 请特别留意以下事实：
 
 - `BuildAsync` 会将本地 build context 打包为 tar 并发送给 Docker Engine API。它会应用 `.dockerignore` 或所选 Dockerfile 对应的 `.dockerignore`、保留符号链接与 Unix 文件权限；被忽略的目录树只有在否定规则可能重新包含其后代时才会遍历；它会安全暂存位于上下文外的 Dockerfile，并在创建归档时响应取消。归档会写入临时文件而非进程内存。未赋值的 build argument 会在进程环境存在该变量时继承其值。它支持 Dockerfile、tags、target、build args、labels、`cache_from`、network mode、extra hosts、共享内存与内存限制、单个平台、pull 和 no-cache；`ComposeBuildOptions.LogConsumer` 会接收 Docker 构建状态，构建流中的错误会使操作失败。BuildKit 专用的 `cache_to`、多平台、`privileged`、`builder` 与 progress mode 选择尚未应用。
-- `CopyAsync`、`ExportAsync`、`CommitAsync` 当前仍调用 `docker` 可执行文件；核心生命周期则通过 Docker.DotNet。
+- `CopyAsync` 使用 Docker archive API，`ExportAsync` 通过 Docker Engine 流式导出服务容器文件系统 tar。复制时，容器侧路径使用 `service:/绝对路径`，本地侧使用文件系统路径；容器路径按目录处理。`ComposeCopyOptions.Index` 选择从 1 开始的运行中副本，`CopyResult.BytesCopied` 表示文件内容字节数。本地符号链接和下载归档中的符号链接会被拒绝。`CommitAsync` 仍调用 `docker` 可执行文件。
 - `TopAsync` 当前返回空列表。
 - `GenerateAsync` 返回读取到的项目摘要，并不会生成新的 Compose 文件。
 - `PublishAsync` 只为服务镜像打 tag，不会把镜像推送到 registry。
@@ -116,7 +116,7 @@ builder.Services.AddComposeSharp();
 ## 路线图
 
 1. **2.1：Compose 模型正确性** — 插值与合并语义、profiles、服务字段映射、校验错误和测试夹具。
-2. **2.2：Docker Engine 覆盖度** — 替换进程式 build/copy/export/commit，实现真实 top、Docker 事件流，以及有意义的 generate/publish 行为。
+2. **2.2：Docker Engine 覆盖度** — 替换剩余进程式 build/commit，实现真实 top、Docker 事件流，以及有意义的 generate/publish 行为。
 3. **3.0：可靠编排** — 依赖与健康就绪、保守的 reconcile 策略、诊断信息，以及 Windows/Linux Docker 集成测试。
 
 每个阶段的验收标准与明确不做的事项见 [docs/roadmap.md](docs/roadmap.md)；[Compose 字段支持矩阵](docs/compose-field-matrix.md)记录了解析与实际应用的行为；实现任务见 [GitHub Milestones](https://github.com/GaTTGeng/ComposeSharp/milestones)。欢迎用最小 Compose 文件提交 [兼容性问题](https://github.com/GaTTGeng/ComposeSharp/issues/new?template=compose_compatibility_gap.yml)。

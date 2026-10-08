@@ -118,7 +118,7 @@ The loader can retain fields that the engine does not yet apply. Consult the [Co
 These boundaries are part of the public contract today:
 
 - `BuildAsync` sends a tarred local build context to the Docker Engine API. It applies `.dockerignore` or the selected Dockerfile's `.dockerignore`, preserves symbolic links and Unix file modes, skips ignored directory trees unless a negated rule can restore a descendant, stages an external Dockerfile safely, observes cancellation while creating the archive, and spools that archive to a temporary file rather than process memory. Valueless build arguments inherit their process-environment value when set. It supports a Dockerfile, tags, target, build arguments, labels, `cache_from`, network mode, extra hosts, shared-memory and memory limits, one platform, pull, and no-cache. `ComposeBuildOptions.LogConsumer` receives Docker build status messages, and build-stream errors fail the operation. BuildKit-specific `cache_to`, multiple platforms, `privileged`, `builder`, and progress-mode selection are not applied.
-- `CopyAsync`, `ExportAsync`, and `CommitAsync` invoke the `docker` executable. The rest of the core lifecycle uses Docker.DotNet.
+- `CopyAsync` uses Docker archive endpoints and `ExportAsync` streams a service container's filesystem tar through Docker Engine. For copy operations, specify the container side as `service:/absolute/path` and the local side as a path; the container path is treated as a directory. `ComposeCopyOptions.Index` selects a 1-based running replica. `CopyResult.BytesCopied` reports file payload bytes. Local symbolic links and symbolic links in downloaded archives are rejected. `CommitAsync` still invokes the `docker` executable.
 - `TopAsync` currently returns an empty list.
 - `GenerateAsync` reports the loaded project configuration; it does not emit a rendered Compose file.
 - `PublishAsync` tags service images for a repository; it does not push them.
@@ -143,7 +143,7 @@ All packages target .NET 8, .NET 9, and .NET 10. The engine needs permission to 
 The roadmap is organized around implementation honesty rather than pretending every CLI-shaped API is complete:
 
 1. **2.1 — Compose model correctness.** Test-backed YAML interpolation and merge semantics, profile selection, service configuration mapping, and clear validation errors.
-2. **2.2 — Docker Engine coverage.** Replace process-backed build/copy/export/commit paths, implement real `top`, Docker event streaming, and meaningful project generation/publishing behavior.
+2. **2.2 — Docker Engine coverage.** Replace remaining process-backed build/commit paths, implement real `top`, Docker event streaming, and meaningful project generation/publishing behavior.
 3. **3.0 — dependable orchestration.** Dependency ordering and readiness, safer reconciliation, richer diagnostics, and integration coverage across Linux and Windows Docker environments.
 
 Details, acceptance criteria, and non-goals live in [docs/roadmap.md](docs/roadmap.md). The [Compose field support matrix](docs/compose-field-matrix.md) records parsed versus applied behavior. Work is tracked in [GitHub milestones](https://github.com/GaTTGeng/ComposeSharp/milestones).

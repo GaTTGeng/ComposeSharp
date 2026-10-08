@@ -273,17 +273,58 @@ public sealed class ComposeService : IComposeService
         }
     }
 
-    public Task<CopyResult> CopyAsync(ComposeProjectContext context, ComposeCopyOptions options, CancellationToken cancellationToken = default)
+    public async Task<CopyResult> CopyAsync(ComposeProjectContext context, ComposeCopyOptions options, CancellationToken cancellationToken = default)
     {
-        var psi = new System.Diagnostics.ProcessStartInfo("docker", $"cp {options.Source} {options.Destination}")
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(options);
+        var source = ContainerCopyPath.Parse(options.Source);
+        var destination = ContainerCopyPath.Parse(options.Destination);
+        if (source.IsContainer == destination.IsContainer)
+            throw new ArgumentException("Exactly one copy path must use the 'service:/container/path' form.", nameof(options));
+
+        using var client = _clientFactory.CreateClient(context.SocketPath);
+        var containerPath = source.IsContainer ? source : destination;
+        var container = await _containers.FindRunningContainerAsync(
+            client, context.ProjectName, containerPath.Service!, options.Index, cancellationToken);
+
+        if (source.IsContainer)
         {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
+            var pathParameters = new GetArchiveFromContainerParameters { Path = source.Path! };
+            var stat = await client.Containers.GetArchiveFromContainerAsync(
+                container.ID,
+                pathParameters,
+                true,
+                cancellationToken);
+            var response = await client.Containers.GetArchiveFromContainerAsync(
+                container.ID, pathParameters, false, cancellationToken);
+            await using var archive = response.Stream;
+            var bytesCopied = await ContainerArchive.ExtractToDirectoryAsync(
+                archive, destination.Path!, cancellationToken);
+            return new CopyResult
+            {
+                IsDirectory = (stat.Stat.Mode & ContainerArchive.DirectoryMode) == ContainerArchive.DirectoryMode,
+                BytesCopied = bytesCopied,
+                ExitCode = 0
+            };
+        }
+
+        var sourcePath = Path.GetFullPath(source.Path!);
+        if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+            throw new FileNotFoundException("The local copy source does not exist.", sourcePath);
+
+        await using var localArchive = await ContainerArchive.CreateFromPathAsync(sourcePath, cancellationToken);
+        var bytes = ContainerArchive.GetContentLength(sourcePath);
+        await client.Containers.ExtractArchiveToContainerAsync(
+            container.ID,
+            new ContainerPathStatParameters { Path = destination.Path!, AllowOverwriteDirWithFile = false },
+            localArchive,
+            cancellationToken);
+        return new CopyResult
+        {
+            IsDirectory = Directory.Exists(sourcePath),
+            BytesCopied = bytes,
+            ExitCode = 0
         };
-        var proc = System.Diagnostics.Process.Start(psi);
-        proc?.WaitForExit();
-        return Task.FromResult(new CopyResult { BytesCopied = 0, ExitCode = proc?.ExitCode ?? -1 });
     }
 
     public async Task PauseAsync(ComposeProjectContext context, ComposePauseOptions? options = null, CancellationToken cancellationToken = default)
@@ -504,16 +545,26 @@ public sealed class ComposeService : IComposeService
         }
     }
 
-    public Task ExportAsync(ComposeProjectContext context, ComposeExportOptions options, CancellationToken cancellationToken = default)
+    public async Task ExportAsync(ComposeProjectContext context, ComposeExportOptions options, CancellationToken cancellationToken = default)
     {
-        var psi = new System.Diagnostics.ProcessStartInfo("docker", $"export {context.ProjectName}-{options.Service}-1 -o {options.OutputPath}")
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        var proc = System.Diagnostics.Process.Start(psi);
-        proc?.WaitForExit();
-        return Task.CompletedTask;
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.Service);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.OutputPath);
+
+        using var client = _clientFactory.CreateClient(context.SocketPath);
+        var container = await _containers.FindRunningContainerAsync(
+            client, context.ProjectName, options.Service, options.Index, cancellationToken);
+        var outputPath = Path.GetFullPath(options.OutputPath);
+        var outputDirectory = Path.GetDirectoryName(outputPath);
+        if (string.IsNullOrEmpty(outputDirectory))
+            throw new ArgumentException("The output path must include a parent directory.", nameof(options));
+        Directory.CreateDirectory(outputDirectory);
+
+        await using var archive = await client.Containers.ExportContainerAsync(container.ID, cancellationToken);
+        await using var output = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None,
+            81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await archive.CopyToAsync(output, cancellationToken);
     }
 
     public Task<string> CommitAsync(ComposeProjectContext context, ComposeCommitOptions options, CancellationToken cancellationToken = default)
