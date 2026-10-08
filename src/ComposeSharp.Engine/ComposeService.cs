@@ -287,7 +287,7 @@ public sealed class ComposeService : IComposeService
         if (source.IsContainer)
         {
             var container = await _containers.FindContainerForArchiveAsync(
-                client, context.ProjectName, source.Service!, options.Index, cancellationToken);
+                client, context.ProjectName, source.Service!, options.Index, cancellationToken, options.All);
             var pathParameters = new GetArchiveFromContainerParameters { Path = source.Path! };
             var stat = await client.Containers.GetArchiveFromContainerAsync(
                 container.ID,
