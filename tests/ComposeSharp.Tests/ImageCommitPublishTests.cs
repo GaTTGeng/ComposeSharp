@@ -1,5 +1,6 @@
 using ComposeSharp.Api;
 using ComposeSharp.Engine.Internal;
+using Docker.DotNet;
 using Docker.DotNet.Models;
 
 namespace ComposeSharp.Tests;
@@ -117,6 +118,17 @@ public sealed class ImageCommitPublishTests
         Assert.True(succeeded.Succeeded);
         Assert.False(tagOnly.Succeeded);
         Assert.False(missingImage.Succeeded);
+    }
+
+    // IgnoreFailures must treat streamed registry errors like Docker API failures, while
+    // cancellation still aborts the operation.
+    [Fact]
+    public void IsPushFailure_CoversApiAndStreamedErrorsButNotCancellation()
+    {
+        Assert.True(ImageManager.IsPushFailure(new InvalidOperationException("Push of image 'app:latest' failed: denied")));
+        Assert.True(ImageManager.IsPushFailure(new DockerApiException(System.Net.HttpStatusCode.InternalServerError, "{}")));
+        Assert.False(ImageManager.IsPushFailure(new OperationCanceledException()));
+        Assert.False(ImageManager.IsPushFailure(new TimeoutException("timed out")));
     }
 
     [Fact]

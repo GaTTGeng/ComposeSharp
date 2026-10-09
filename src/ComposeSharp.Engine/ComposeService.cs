@@ -226,7 +226,10 @@ public sealed class ComposeService : IComposeService
     /// <summary>
     /// Pushes the images of the selected services to their registries.
     /// </summary>
-    /// <remarks>Per-service push failures are swallowed when <c>IgnoreFailures</c> is set.</remarks>
+    /// <remarks>
+    /// Per-service push failures are swallowed when <c>IgnoreFailures</c> is set. That includes both
+    /// Docker API errors and registry errors reported through the push progress stream.
+    /// </remarks>
     public async Task PushAsync(ComposeProjectContext context, ComposePushOptions? options = null, CancellationToken cancellationToken = default)
     {
         // Load project -> open client -> profile-filter services.
@@ -240,7 +243,7 @@ public sealed class ComposeService : IComposeService
             if (service.Image is not null)
             {
                 try { await _images.PushImageAsync(client, context.RegistryAuth, service.Image, cancellationToken); }
-                catch (DockerApiException) when (options?.IgnoreFailures == true) { }
+                catch (Exception ex) when (options?.IgnoreFailures == true && ImageManager.IsPushFailure(ex)) { }
             }
         }
     }
@@ -893,7 +896,7 @@ public sealed class ComposeService : IComposeService
             {
                 throw;
             }
-            catch (Exception ex) when (ex is DockerApiException or InvalidOperationException)
+            catch (Exception ex) when (ImageManager.IsPushFailure(ex))
             {
                 results.Add(new PublishResult
                 {

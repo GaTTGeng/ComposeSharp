@@ -607,6 +607,76 @@ public class ComposeServiceIntegrationTests
         }
     }
 
+    // IgnoreFailures must swallow both Docker API errors and registry errors reported through the
+    // push progress stream, so one failing service does not abort the remaining pushes.
+    [Fact]
+    public async Task PushAsync_IgnoreFailures_SwallowsStreamedPushErrors()
+    {
+        if (!DockerAvailable) return;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"push-ignore-{suffix}");
+        var projectName = $"push-ignore-{suffix}";
+        // An unreachable registry forces a push failure after the request is issued.
+        var image = $"127.0.0.1:1/composesharp-push/{suffix}:latest";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), $$"""
+            services:
+              app:
+                image: {{image}}
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml",
+            RegistryAuth = new DockerRegistryAuth
+            {
+                Username = "publisher",
+                Password = "not-a-real-password"
+            }
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            // Materialize a local image under the unreachable registry name so push is attempted.
+            using (var client = new DockerClientFactory().CreateClient())
+            {
+                await client.Images.CreateImageAsync(
+                    new ImagesCreateParameters { FromImage = "busybox", Tag = "1.36" },
+                    authConfig: null,
+                    new Progress<JSONMessage>(),
+                    CancellationToken.None);
+                await client.Images.TagImageAsync("busybox:1.36", new ImageTagParameters
+                {
+                    RepositoryName = $"127.0.0.1:1/composesharp-push/{suffix}",
+                    Tag = "latest"
+                }, CancellationToken.None);
+            }
+
+            await Assert.ThrowsAnyAsync<Exception>(() => service.PushAsync(context));
+
+            await service.PushAsync(context, new ComposePushOptions { IgnoreFailures = true });
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally
+            {
+                using var client = new DockerClientFactory().CreateClient();
+                try
+                {
+                    await client.Images.DeleteImageAsync(image, new ImageDeleteParameters { Force = true }, CancellationToken.None);
+                }
+                catch (DockerImageNotFoundException) { }
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
     // Collects build statuses and container log lines for assertions.
     private sealed class TestLogConsumer : ILogConsumer
     {

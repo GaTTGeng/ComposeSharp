@@ -99,6 +99,11 @@ internal sealed class ImageManager
                 : DockerHubRegistryAddress
         };
 
+    // Docker API call failures and registry errors surfaced from the push progress stream.
+    // Cancellation is deliberately excluded so it still aborts the operation.
+    internal static bool IsPushFailure(Exception exception)
+        => exception is DockerApiException or InvalidOperationException;
+
     // A colon is only a tag separator after the last slash; otherwise registry ports
     // (e.g. "registry:5000/app") would be mistaken for tags.
     public static (string FromImage, string Tag) SplitImage(string image)
