@@ -78,8 +78,11 @@ public interface IComposeService
     /// <summary>Lists Compose projects discovered from containers carrying the project label.</summary>
     Task<IReadOnlyList<Stack>> ListAsync(ComposeListOptions? options = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Lists running processes inside the project's containers.</summary>
-    /// <remarks>Currently a placeholder that returns an empty list; process inspection is not implemented yet.</remarks>
+    /// <summary>Lists running processes inside the project's running service containers.</summary>
+    /// <remarks>
+    /// Uses the Docker Engine process-list API and returns one <see cref="ContainerProcSummary"/>
+    /// per running container of the selected services. Non-running containers are omitted.
+    /// </remarks>
     Task<IReadOnlyList<ContainerProcSummary>> TopAsync(ComposeProjectContext context, ComposeTopOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Lists images used by the project's services.</summary>
@@ -91,10 +94,11 @@ public interface IComposeService
     /// <summary>Streams container logs to an <see cref="ILogConsumer"/> (or discards them when none is supplied).</summary>
     Task LogsAsync(ComposeProjectContext context, ComposeLogsOptions? options = null, ILogConsumer? consumer = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Observes project container state as a stream of events.</summary>
+    /// <summary>Streams Docker Engine events for the project's resources as compose events.</summary>
     /// <remarks>
-    /// Currently polls project containers on an interval rather than subscribing to the Docker event
-    /// stream, so events are approximate and can be coalesced or repeated.
+    /// Subscribes to the Docker event stream filtered by the project label and yields live events
+    /// until cancellation. Events without a Compose service label are reported with a null
+    /// <see cref="ComposeEvent.Service"/> and are dropped when the caller selects specific services.
     /// </remarks>
     IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, CancellationToken cancellationToken = default);
 

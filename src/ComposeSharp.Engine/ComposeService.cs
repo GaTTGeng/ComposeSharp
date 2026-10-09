@@ -22,6 +22,8 @@ public sealed class ComposeService : IComposeService
     private readonly NetworkManager _networks = new();
     private readonly ImageManager _images = new();
     private readonly LogStreamer _logs = new();
+    private readonly ProcessInspector _processes = new();
+    private readonly EventStreamer _events = new();
 
     /// <summary>
     /// Builds images for the selected services that define a <c>build</c> section.
@@ -524,12 +526,17 @@ public sealed class ComposeService : IComposeService
             .ToList();
     }
 
-    /// <summary>Returns the process listings of the project's containers.</summary>
-    /// <remarks>Known limitation: currently a placeholder that always returns an empty list.</remarks>
-    public Task<IReadOnlyList<ContainerProcSummary>> TopAsync(ComposeProjectContext context, ComposeTopOptions? options = null, CancellationToken cancellationToken = default)
+    /// <summary>Returns the process listings of the project's running service containers.</summary>
+    /// <remarks>
+    /// Uses the Docker Engine process-list API. Non-running containers are omitted because the
+    /// engine cannot report processes for them.
+    /// </remarks>
+    public async Task<IReadOnlyList<ContainerProcSummary>> TopAsync(ComposeProjectContext context, ComposeTopOptions? options = null, CancellationToken cancellationToken = default)
     {
-        // Placeholder: process listing is not implemented yet, so always return empty.
-        return Task.FromResult<IReadOnlyList<ContainerProcSummary>>([]);
+        // Select services first so the listing stays inside the project's selected services.
+        var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
+        using var client = _clientFactory.CreateClient(context.SocketPath);
+        return await _processes.ListProcessesAsync(client, context.ProjectName, services, cancellationToken);
     }
 
     /// <summary>Lists the images used by the project's containers.</summary>
@@ -572,45 +579,19 @@ public sealed class ComposeService : IComposeService
         await _logs.LogsAsync(client, context.ProjectName, effectiveOptions, consumer, cancellationToken);
     }
 
-    /// <summary>Yields the current state of the project's containers as compose events.</summary>
+    /// <summary>Streams Docker Engine events for the project's resources as compose events.</summary>
     /// <remarks>
-    /// Known limitation: this polls container state on an interval instead of subscribing to the
-    /// Docker event stream, so events are snapshots of state rather than a true change feed.
+    /// Subscribes to the Docker event stream filtered by the project label. Events without a
+    /// matching Compose service label are reported with a null <c>Service</c> and are excluded
+    /// when the caller selects specific services.
     /// </remarks>
     public async IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Filter by selected services and stamp the poll window start.
+        // Select services first so the stream can drop events from other project services.
         var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        var since = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-        // Poll loop: each cycle snapshots container state instead of subscribing to the Docker event stream.
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            var containers = await _containers.ListProjectContainersAsync(client, context.ProjectName, true, cancellationToken);
-            foreach (var container in containers)
-            {
-                var labels = container.Labels ?? new Dictionary<string, string>();
-                labels.TryGetValue(ComposeConstants.ServiceLabel, out var svc);
-
-                if (services is not null && (svc is null || !services.Contains(svc)))
-                    continue;
-
-                yield return new ComposeEvent
-                {
-                    Timestamp = DateTime.UtcNow,
-                    Type = "container",
-                    Action = container.State,
-                    ID = container.ID,
-                    Service = svc,
-                    Container = container.ID,
-                    Attributes = labels is IDictionary<string, string> dict ? dict.ToDictionary(kv => kv.Key, kv => kv.Value) : null
-                };
-            }
-
-            // Fixed 2s interval between snapshots.
-            await Task.Delay(2000, cancellationToken);
-        }
+        await foreach (var composeEvent in _events.StreamEventsAsync(client, context.ProjectName, services, cancellationToken))
+            yield return composeEvent;
     }
 
     /// <summary>Adjusts the replica count of the given services and reports desired versus running containers.</summary>

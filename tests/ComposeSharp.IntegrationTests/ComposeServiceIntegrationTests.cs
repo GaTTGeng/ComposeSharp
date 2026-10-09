@@ -677,6 +677,255 @@ public class ComposeServiceIntegrationTests
         }
     }
 
+    // TopAsync goes through the Docker Engine process-list API for running project containers.
+    [Fact]
+    public async Task TopAsync_ReturnsProcessRows_ForRunningServiceContainers()
+    {
+        if (!DockerAvailable) return;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"top-{suffix}");
+        var projectName = $"top-{suffix}";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              web:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+
+            var rows = await service.TopAsync(context);
+            var row = Assert.Single(rows);
+            Assert.Equal("web", row.Service);
+            Assert.Equal("1", row.Replica);
+            Assert.NotEmpty(row.Titles);
+            Assert.NotEmpty(row.Processes);
+            Assert.Equal(row.Titles.Count, row.Processes[0].Count);
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task TopAsync_FiltersByServiceSelection()
+    {
+        if (!DockerAvailable) return;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"top-filter-{suffix}");
+        var projectName = $"top-filter-{suffix}";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              web:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+              worker:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+
+            var rows = await service.TopAsync(context, new ComposeTopOptions { Services = ["worker"] });
+            Assert.Equal("worker", Assert.Single(rows).Service);
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    // EventsAsync consumes the Docker event stream and surfaces lifecycle actions as they happen.
+    [Fact]
+    public async Task EventsAsync_StreamsDockerLifecycleEvents()
+    {
+        if (!DockerAvailable) return;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"events-{suffix}");
+        var projectName = $"events-{suffix}";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              web:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var observed = new List<ComposeEvent>();
+            var collector = Task.Run(async () =>
+            {
+                await foreach (var composeEvent in service.EventsAsync(context, cancellationToken: cancellation.Token))
+                {
+                    observed.Add(composeEvent);
+                    if (composeEvent.Action is "die" or "stop" or "kill")
+                        break;
+                }
+            }, CancellationToken.None);
+
+            await service.StopAsync(context);
+            await collector;
+
+            Assert.Contains(observed, e => e.Type == "container" && e.Service == "web");
+            Assert.All(observed, e =>
+            {
+                Assert.False(string.IsNullOrEmpty(e.Type));
+                Assert.False(string.IsNullOrEmpty(e.Action));
+                Assert.False(string.IsNullOrEmpty(e.ID));
+            });
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task EventsAsync_HonorsCancellation()
+    {
+        if (!DockerAvailable) return;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"events-cancel-{suffix}");
+        var projectName = $"events-cancel-{suffix}";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              web:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+            var collector = Task.Run(async () =>
+            {
+                await foreach (var _ in service.EventsAsync(context, cancellationToken: cancellation.Token))
+                {
+                }
+            }, CancellationToken.None);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => collector);
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task EventsAsync_FiltersByServiceSelection()
+    {
+        if (!DockerAvailable) return;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"events-filter-{suffix}");
+        var projectName = $"events-filter-{suffix}";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              web:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+              worker:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var observed = new List<ComposeEvent>();
+            var collector = Task.Run(async () =>
+            {
+                await foreach (var composeEvent in service.EventsAsync(
+                    context,
+                    new ComposeEventsOptions { Services = ["worker"] },
+                    cancellation.Token))
+                {
+                    observed.Add(composeEvent);
+                    if (composeEvent.Action is "die" or "stop" or "kill")
+                        break;
+                }
+            }, CancellationToken.None);
+
+            await service.StopAsync(context, new ComposeStopOptions { Services = ["worker"] });
+            await collector;
+
+            Assert.NotEmpty(observed);
+            Assert.All(observed, e => Assert.True(e.Service is null or "worker"));
+            Assert.Contains(observed, e => e.Service == "worker");
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
     // Collects build statuses and container log lines for assertions.
     private sealed class TestLogConsumer : ILogConsumer
     {
