@@ -130,7 +130,7 @@ If you need exact CLI behavior, BuildKit breadth, Compose watch synchronization,
 
 ## Migration from 2.0.0
 
-`IComposeService.PublishAsync` now returns per-service `PublishResult` values instead of `Task`. Calls that only `await` the method generally remain source-compatible. Update code that assigns the result to `Task`, passes it to a `Task`-typed delegate, or depends on binaries compiled against the earlier signature.
+`IComposeService.PublishAsync` now returns per-service `PublishResult` values instead of `Task`. Source call sites that `await` the method, assign its result to `Task`, or pass it where a `Task`-returning method is accepted remain compatible. Rebuild binaries compiled against the earlier signature. Callers that need publish outcomes can inspect the returned results.
 
 ## Packages
 

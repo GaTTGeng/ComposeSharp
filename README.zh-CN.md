@@ -105,7 +105,7 @@ builder.Services.AddComposeSharp();
 
 ## 从 2.0.0 迁移
 
-`IComposeService.PublishAsync` 现在返回每个服务对应的 `PublishResult`，而不是 `Task`。只对调用进行 `await` 的代码通常仍可直接编译。若代码将返回值赋给 `Task`、传给签名要求 `Task` 的委托，或依赖按旧签名编译的二进制文件，则需要更新或重新编译。
+`IComposeService.PublishAsync` 现在返回每个服务对应的 `PublishResult`，而不是 `Task`。使用 `await`、将返回值赋给 `Task`，或把方法作为 `Task` 返回型方法使用的源码调用仍兼容。按旧签名编译的二进制文件需要重新编译；需要读取发布结果的调用方可以检查新返回的结果列表。
 
 ## 包的边界
 
@@ -121,8 +121,8 @@ builder.Services.AddComposeSharp();
 ## 路线图
 
 1. **2.1：Compose 模型正确性** — 插值与合并语义、profiles、服务字段映射、校验错误和测试夹具。
-2. **2.2：Docker Engine 覆盖度** — 替换剩余进程式 build/commit，实现真实 top、Docker 事件流，以及有意义的 generate/publish 行为。
-3. **3.0：可靠编排** — 依赖与健康就绪、保守的 reconcile 策略、诊断信息，以及 Windows/Linux Docker 集成测试。
+2. **2.2：Docker Engine 覆盖度** — 实现真实 top、Docker 事件流、有明确动作模型的 watch，以及项目配置生成；补全并说明剩余的 publish 选项。
+3. **可靠编排** — 依赖与健康就绪、更安全的 reconcile 策略、诊断信息，以及 Windows/Linux Docker 集成测试。
 
 每个阶段的验收标准与明确不做的事项见 [docs/roadmap.md](docs/roadmap.md)；[Compose 字段支持矩阵](docs/compose-field-matrix.md)记录了解析与实际应用的行为；实现任务见 [GitHub Milestones](https://github.com/GaTTGeng/ComposeSharp/milestones)。欢迎用最小 Compose 文件提交 [兼容性问题](https://github.com/GaTTGeng/ComposeSharp/issues/new?template=compose_compatibility_gap.yml)。
 

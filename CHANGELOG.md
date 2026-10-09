@@ -23,7 +23,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Breaking changes
 
-- `IComposeService.PublishAsync` now returns `Task<IReadOnlyList<PublishResult>>` instead of `Task`. Calls that simply `await` the method usually need no source change; callers that store the returned `Task`, use a `Task`-typed delegate, or rely on already-compiled binaries must update or rebuild.
+- `IComposeService.PublishAsync` now returns `Task<IReadOnlyList<PublishResult>>` instead of `Task`. Source call sites that await it or accept a `Task` return remain compatible; consumers compiled against the earlier binary signature must rebuild to use the new assembly.
 
 ## [2.0.0] - 2026-07-20
 
