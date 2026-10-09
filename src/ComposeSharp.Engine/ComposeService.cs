@@ -582,11 +582,12 @@ public sealed class ComposeService : IComposeService
     /// <summary>Streams Docker Engine events for the project's resources as compose events.</summary>
     /// <remarks>
     /// Subscribes to container, network, and volume Docker events and keeps only those owned by
-    /// the project. Network and volume events are matched by exact Compose resource name
-    /// (never by prefix, which would collide across projects named <c>app</c> and <c>app_test</c>).
+    /// the project. Network and volume events are matched by exact Compose resource name within
+    /// the matching resource type (Docker allows a network and a volume to share a name).
     /// Service-labeled events honor the profile-selected service set. Events without a service
     /// label are reported with a null <c>Service</c> and are excluded only when the caller
-    /// selects specific services.
+    /// selects specific services. <see cref="ComposeEventsOptions.OnSubscribed"/> fires once the
+    /// subscription has been issued.
     /// </remarks>
     public async IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -596,26 +597,28 @@ public sealed class ComposeService : IComposeService
         IReadOnlySet<string>? services = selection.ServiceNames?.ToHashSet(StringComparer.Ordinal);
         var keepProjectLevelEvents = options?.Services is not { Count: > 0 };
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        var resourceNames = await CollectProjectResourceNamesAsync(client, context, cancellationToken);
+        var resources = await CollectProjectResourceNamesAsync(client, context, cancellationToken);
         await foreach (var composeEvent in _events.StreamEventsAsync(
-            client, context.ProjectName, resourceNames, services, keepProjectLevelEvents, cancellationToken))
+            client, context.ProjectName, resources, services, keepProjectLevelEvents,
+            options?.OnSubscribed, cancellationToken))
             yield return composeEvent;
     }
 
-    // Exact network/volume names this project owns: declared Compose resources plus anything
-    // already created on the daemon under the project label.
-    private async Task<IReadOnlySet<string>> CollectProjectResourceNamesAsync(
+    // Exact network/volume names this project owns, kept separate per type: Docker allows a
+    // network and a volume to share a name, so a combined set would leak across types.
+    private async Task<ProjectResourceNames> CollectProjectResourceNamesAsync(
         DockerClient client, ComposeProjectContext context, CancellationToken cancellationToken)
     {
-        var names = new HashSet<string>(StringComparer.Ordinal);
+        var networks = new HashSet<string>(StringComparer.Ordinal);
+        var volumes = new HashSet<string>(StringComparer.Ordinal);
         try
         {
             var project = LoadProjectInternal(context);
-            var networks = project.Networks.Count > 0 ? project.Networks : (IReadOnlyList<string>)["default"];
-            foreach (var network in networks)
-                names.Add(NetworkManager.GetNetworkName(context.ProjectName, network));
+            var declaredNetworks = project.Networks.Count > 0 ? project.Networks : (IReadOnlyList<string>)["default"];
+            foreach (var network in declaredNetworks)
+                networks.Add(NetworkManager.GetNetworkName(context.ProjectName, network));
             foreach (var volume in project.Volumes)
-                names.Add(NetworkManager.GetVolumeName(context.ProjectName, volume));
+                volumes.Add(NetworkManager.GetVolumeName(context.ProjectName, volume));
         }
         catch (FileNotFoundException) when (context.Profiles is not { Count: > 0 })
         {
@@ -629,7 +632,7 @@ public sealed class ComposeService : IComposeService
         foreach (var network in existingNetworks)
         {
             if (!string.IsNullOrEmpty(network.Name))
-                names.Add(network.Name);
+                networks.Add(network.Name);
         }
 
         var existingVolumes = await client.Volumes.ListAsync(new VolumesListParameters
@@ -639,10 +642,10 @@ public sealed class ComposeService : IComposeService
         foreach (var volume in existingVolumes.Volumes ?? [])
         {
             if (!string.IsNullOrEmpty(volume.Name))
-                names.Add(volume.Name);
+                volumes.Add(volume.Name);
         }
 
-        return names;
+        return new ProjectResourceNames(networks, volumes);
     }
 
     /// <summary>Adjusts the replica count of the given services and reports desired versus running containers.</summary>

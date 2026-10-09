@@ -9,6 +9,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 ### Added
 
 - `TopAsync` returns real process listings for running project service containers through the Docker Engine process-list API.
+- `ComposeEventsOptions.OnSubscribed` signals when the Docker event subscription has been issued so callers can avoid racing lifecycle operations against the stream.
 
 ### Changed
 

@@ -8,4 +8,11 @@ public sealed record ComposeEventsOptions
 
     /// <summary>Request JSON-shaped event payloads.</summary>
     public bool Json { get; init; }
+
+    /// <summary>
+    /// Invoked once the Docker event subscription has been issued and project resources have been
+    /// resolved. Callers that race a lifecycle operation against the stream can await this signal
+    /// before triggering that operation.
+    /// </summary>
+    public Action? OnSubscribed { get; init; }
 }

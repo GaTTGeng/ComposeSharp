@@ -14,9 +14,11 @@ public sealed class TopAndEventMappingTests
 {
     private const string Project = "demo";
 
-    // Exact Compose resource names owned by the "demo" project (not a prefix matcher).
-    private static readonly IReadOnlySet<string> ResourceNames =
-        new HashSet<string>(StringComparer.Ordinal) { "demo_default", "demo_data" };
+    // Exact Compose resource names owned by the "demo" project, kept separate per type.
+    // demo_data is a volume name only; a network named demo_data is not ours.
+    private static readonly ProjectResourceNames ResourceNames = new(
+        Networks: new HashSet<string>(StringComparer.Ordinal) { "demo_default" },
+        Volumes: new HashSet<string>(StringComparer.Ordinal) { "demo_data" });
 
     [Fact]
     public void MapEvent_CopiesTypeActionAndActorIdentity()
@@ -270,10 +272,15 @@ public sealed class TopAndEventMappingTests
     [InlineData("network", null, "demoo_default", "net-id", false)]
     // Prefix-related project names must not leak: app_test_default is not demo_default.
     [InlineData("network", null, "demo_test_default", "net-id", false)]
+    // A network named like a project volume is not ours (types are tracked separately).
+    [InlineData("network", null, "demo_data", "net-id", false)]
     [InlineData("volume", null, null, "demo_data", true)]
     [InlineData("volume", null, null, "demo_test_data", false)]
     [InlineData("volume", null, null, "other_data", false)]
-    [InlineData("volume", null, "demo_data", "ignored-id", true)]
+    // Volume name comes from Actor.ID (Moby does not put it in a name attribute).
+    [InlineData("volume", null, "demo_data", "ignored-id", false)]
+    // A volume named like a project network is not ours.
+    [InlineData("volume", null, null, "demo_default", false)]
     [InlineData("image", null, null, null, false)]
     public void BelongsToProject_MatchesLabelOrExactResourceName(string type, string? projectLabel, string? name, string? actorId, bool expected)
     {
@@ -365,5 +372,6 @@ public sealed class TopAndEventMappingTests
         Assert.Equal(expected, ProcessInspector.IsListingRace(exception));
     }
 }
+
 
 

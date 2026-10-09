@@ -825,10 +825,14 @@ public class ComposeServiceIntegrationTests
             await service.UpAsync(context);
 
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var subscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var observed = new List<ComposeEvent>();
             var collector = Task.Run(async () =>
             {
-                await foreach (var composeEvent in service.EventsAsync(context, cancellationToken: cancellation.Token))
+                await foreach (var composeEvent in service.EventsAsync(
+                    context,
+                    new ComposeEventsOptions { OnSubscribed = () => subscribed.TrySetResult() },
+                    cancellation.Token))
                 {
                     observed.Add(composeEvent);
                     if (composeEvent.Action is "die" or "stop" or "kill")
@@ -836,6 +840,8 @@ public class ComposeServiceIntegrationTests
                 }
             }, CancellationToken.None);
 
+            // Wait for the event subscription before racing StopAsync against the stream.
+            await subscribed.Task;
             await service.StopAsync(context);
             await collector;
 
@@ -933,12 +939,17 @@ public class ComposeServiceIntegrationTests
             await service.UpAsync(context);
 
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var subscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var observed = new List<ComposeEvent>();
             var collector = Task.Run(async () =>
             {
                 await foreach (var composeEvent in service.EventsAsync(
                     context,
-                    new ComposeEventsOptions { Services = ["worker"] },
+                    new ComposeEventsOptions
+                    {
+                        Services = ["worker"],
+                        OnSubscribed = () => subscribed.TrySetResult()
+                    },
                     cancellation.Token))
                 {
                     observed.Add(composeEvent);
@@ -947,6 +958,8 @@ public class ComposeServiceIntegrationTests
                 }
             }, CancellationToken.None);
 
+            // Wait for the event subscription before racing StopAsync against the stream.
+            await subscribed.Task;
             await service.StopAsync(context, new ComposeStopOptions { Services = ["worker"] });
             await collector;
 
@@ -998,10 +1011,14 @@ public class ComposeServiceIntegrationTests
             await service.UpAsync(context);
 
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var subscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var observed = new List<ComposeEvent>();
             var collector = Task.Run(async () =>
             {
-                await foreach (var composeEvent in service.EventsAsync(context, cancellationToken: cancellation.Token))
+                await foreach (var composeEvent in service.EventsAsync(
+                    context,
+                    new ComposeEventsOptions { OnSubscribed = () => subscribed.TrySetResult() },
+                    cancellation.Token))
                 {
                     observed.Add(composeEvent);
                     // DownAsync tears down the project network; wait for that destroy event.
@@ -1011,6 +1028,8 @@ public class ComposeServiceIntegrationTests
                 }
             }, CancellationToken.None);
 
+            // Wait for the event subscription before racing DownAsync against the stream.
+            await subscribed.Task;
             // Tear down every declared service (including the inactive profile) so the project
             // network is removed and emits a destroy event.
             await service.DownAsync(context with { Profiles = ["debug"] });
