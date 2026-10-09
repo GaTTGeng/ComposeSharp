@@ -12,7 +12,7 @@ namespace ComposeSharp.IntegrationTests;
 /// These tests require a reachable Docker daemon and return early when Docker is unavailable,
 /// so a green run without Docker is not proof of Docker behavior.
 /// </summary>
-public class ComposeServiceIntegrationTests
+public class ComposeServiceIntegrationTests : IAsyncLifetime
 {
     private static readonly bool DockerAvailable = CheckDockerAvailable();
 
@@ -32,6 +32,21 @@ public class ComposeServiceIntegrationTests
         }
         catch { return false; }
     }
+
+    // Fresh CI runners do not have the test image cached; pull once before any case creates containers.
+    public async Task InitializeAsync()
+    {
+        if (!DockerAvailable) return;
+
+        using var client = new DockerClientFactory().CreateClient();
+        await client.Images.CreateImageAsync(
+            new ImagesCreateParameters { FromImage = "busybox", Tag = "1.36" },
+            authConfig: null,
+            new Progress<JSONMessage>(),
+            CancellationToken.None);
+    }
+
+    public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
     public async Task PsAsync_ReturnsEmpty_WhenNoContainers()
@@ -916,8 +931,67 @@ public class ComposeServiceIntegrationTests
             await collector;
 
             Assert.NotEmpty(observed);
-            Assert.All(observed, e => Assert.True(e.Service is null or "worker"));
+            // An explicit service filter drops project-level events that carry no service label.
+            Assert.All(observed, e => Assert.Equal("worker", e.Service));
             Assert.Contains(observed, e => e.Service == "worker");
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    // Without an explicit service filter, project-level events (network, volume) keep a null Service
+    // instead of being discarded by the service-name filter.
+    [Fact]
+    public async Task EventsAsync_PreservesProjectEventsWithoutServiceFilter()
+    {
+        if (!DockerAvailable) return;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"events-project-{suffix}");
+        var projectName = $"events-project-{suffix}";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              web:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var observed = new List<ComposeEvent>();
+            var collector = Task.Run(async () =>
+            {
+                await foreach (var composeEvent in service.EventsAsync(context, cancellationToken: cancellation.Token))
+                {
+                    observed.Add(composeEvent);
+                    // DownAsync tears down the project network; wait for that destroy event.
+                    // Network create can appear when the stream start lands in the same second as UpAsync.
+                    if (composeEvent.Type == "network" && composeEvent.Action is "destroy" or "remove")
+                        break;
+                }
+            }, CancellationToken.None);
+
+            // DownAsync removes the project network, producing project-scoped network events.
+            await service.DownAsync(context);
+            await collector;
+
+            Assert.Contains(observed, e => e.Type == "container" && e.Service == "web");
+            Assert.Contains(observed, e => e.Type == "network" && e.Action is "destroy" or "remove" && e.Service is null);
         }
         finally
         {

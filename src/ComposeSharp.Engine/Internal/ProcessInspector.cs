@@ -12,7 +12,8 @@ internal sealed class ProcessInspector
 {
     /// <summary>
     /// Returns one process listing per running project container of the selected services.
-    /// Non-running containers are skipped because the Docker process-list API only covers running ones.
+    /// Non-running containers are skipped because the Docker process-list API only covers running
+    /// ones; Docker API failures other than a listing race (404/409) are propagated to the caller.
     /// </summary>
     public async Task<IReadOnlyList<ContainerProcSummary>> ListProcessesAsync(
         DockerClient client,
@@ -44,9 +45,10 @@ internal sealed class ProcessInspector
                 processes = await client.Containers.ListProcessesAsync(
                     container.ID, new ContainerListProcessesParameters(), ct);
             }
-            catch (DockerApiException) when (ct.IsCancellationRequested == false)
+            // Only the listing race (container exited or was removed) is omitted; every other
+            // Docker API failure must surface so a partial listing is not reported as success.
+            catch (DockerApiException ex) when (ct.IsCancellationRequested == false && IsListingRace(ex))
             {
-                // Exited or removed between listing and top; docker compose top also omits such rows.
                 continue;
             }
 
@@ -86,6 +88,13 @@ internal sealed class ProcessInspector
         var service = LabelHelper.GetServiceName(container.Labels);
         return service is not null && services.Contains(service);
     }
+
+    /// <summary>
+    /// True when the process-list call raced a container that exited or was removed (404/409).
+    /// Any other Docker API failure is a real error and must propagate.
+    /// </summary>
+    internal static bool IsListingRace(DockerApiException ex)
+        => ex.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Conflict;
 
     private static string GetReplica(ContainerListResponse container)
         => container.Labels != null && container.Labels.TryGetValue(ComposeConstants.ContainerNumberLabel, out var replica)

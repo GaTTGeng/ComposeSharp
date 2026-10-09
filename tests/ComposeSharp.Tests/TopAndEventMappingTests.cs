@@ -1,15 +1,19 @@
+using System.Net;
 using ComposeSharp.Api;
 using ComposeSharp.Engine.Internal;
+using Docker.DotNet;
 using Docker.DotNet.Models;
 
 namespace ComposeSharp.Tests;
 
 /// <summary>
-/// Covers Docker event mapping and service filtering without a Docker daemon, plus process-listing
-/// mapping used by <c>TopAsync</c>.
+/// Covers Docker event mapping, project/service filtering without a Docker daemon, process-listing
+/// mapping used by <c>TopAsync</c>, and the listing-race predicate for process queries.
 /// </summary>
 public sealed class TopAndEventMappingTests
 {
+    private const string Project = "demo";
+
     [Fact]
     public void MapEvent_CopiesTypeActionAndActorIdentity()
     {
@@ -24,13 +28,13 @@ public sealed class TopAndEventMappingTests
                 ID = "container-123",
                 Attributes = new Dictionary<string, string>
                 {
-                    [ComposeConstants.ProjectLabel] = "demo",
+                    [ComposeConstants.ProjectLabel] = Project,
                     [ComposeConstants.ServiceLabel] = "web"
                 }
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, services: null);
+        var composeEvent = EventStreamer.Map(message, Project, services: null);
 
         Assert.NotNull(composeEvent);
         Assert.Equal("container", composeEvent.Type);
@@ -39,7 +43,7 @@ public sealed class TopAndEventMappingTests
         Assert.Equal("container-123", composeEvent.Container);
         Assert.Equal("web", composeEvent.Service);
         Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1_700_000_000).UtcDateTime, composeEvent.Timestamp);
-        Assert.Equal("demo", composeEvent.Attributes![ComposeConstants.ProjectLabel]);
+        Assert.Equal(Project, composeEvent.Attributes![ComposeConstants.ProjectLabel]);
     }
 
     [Fact]
@@ -52,10 +56,14 @@ public sealed class TopAndEventMappingTests
             Action = "die",
             Time = 1_700_000_000,
             TimeNano = 1_700_000_000L * 1_000_000_000L + 500_000_000L,
-            Actor = new Actor { ID = "container-123" }
+            Actor = new Actor
+            {
+                ID = "container-123",
+                Attributes = new Dictionary<string, string> { [ComposeConstants.ProjectLabel] = Project }
+            }
         };
 
-        var composeEvent = EventStreamer.Map(message, services: null);
+        var composeEvent = EventStreamer.Map(message, Project, services: null);
 
         Assert.NotNull(composeEvent);
         var expected = DateTime.UnixEpoch.AddSeconds(1_700_000_000).AddTicks(500_000_000L / 100);
@@ -63,25 +71,47 @@ public sealed class TopAndEventMappingTests
     }
 
     [Fact]
-    public void MapEvent_LeavesContainerNull_ForNonContainerEvents()
+    public void MapEvent_KeepsProjectNetworkEvents_WithNullService()
     {
+        // Network events expose only name/type and no labels, so project matching uses the name prefix.
         var message = new Message
         {
             Type = "network",
-            Action = "create",
+            Action = "destroy",
             Actor = new Actor
             {
                 ID = "network-9",
-                Attributes = new Dictionary<string, string> { ["name"] = "demo_default" }
+                Attributes = new Dictionary<string, string>
+                {
+                    ["name"] = "demo_default",
+                    ["type"] = "bridge"
+                }
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, services: null);
+        var composeEvent = EventStreamer.Map(message, Project, services: null);
 
         Assert.NotNull(composeEvent);
         Assert.Equal("network-9", composeEvent.ID);
         Assert.Null(composeEvent.Container);
         Assert.Null(composeEvent.Service);
+    }
+
+    [Fact]
+    public void MapEvent_DropsForeignAndUnattributedEvents()
+    {
+        var foreignNetwork = new Message
+        {
+            Type = "network",
+            Action = "destroy",
+            Actor = new Actor
+            {
+                ID = "network-9",
+                Attributes = new Dictionary<string, string> { ["name"] = "other_default" }
+            }
+        };
+
+        Assert.Null(EventStreamer.Map(foreignNetwork, Project, services: null));
     }
 
     [Fact]
@@ -95,7 +125,11 @@ public sealed class TopAndEventMappingTests
             Actor = new Actor
             {
                 ID = "web-1",
-                Attributes = new Dictionary<string, string> { [ComposeConstants.ServiceLabel] = "web" }
+                Attributes = new Dictionary<string, string>
+                {
+                    [ComposeConstants.ProjectLabel] = Project,
+                    [ComposeConstants.ServiceLabel] = "web"
+                }
             }
         };
         var apiEvent = new Message
@@ -105,19 +139,28 @@ public sealed class TopAndEventMappingTests
             Actor = new Actor
             {
                 ID = "api-1",
-                Attributes = new Dictionary<string, string> { [ComposeConstants.ServiceLabel] = "api" }
+                Attributes = new Dictionary<string, string>
+                {
+                    [ComposeConstants.ProjectLabel] = Project,
+                    [ComposeConstants.ServiceLabel] = "api"
+                }
             }
         };
         var networkEvent = new Message
         {
             Type = "network",
             Action = "create",
-            Actor = new Actor { ID = "network-9", Attributes = new Dictionary<string, string>() }
+            Actor = new Actor
+            {
+                ID = "network-9",
+                Attributes = new Dictionary<string, string> { ["name"] = "demo_default" }
+            }
         };
 
-        Assert.Equal("web-1", EventStreamer.Map(webEvent, selected)?.ID);
-        Assert.Null(EventStreamer.Map(apiEvent, selected));
-        Assert.Null(EventStreamer.Map(networkEvent, selected));
+        Assert.Equal("web-1", EventStreamer.Map(webEvent, Project, selected)?.ID);
+        Assert.Null(EventStreamer.Map(apiEvent, Project, selected));
+        // An explicit service filter drops project-level events that carry no service label.
+        Assert.Null(EventStreamer.Map(networkEvent, Project, selected));
     }
 
     [Fact]
@@ -127,13 +170,46 @@ public sealed class TopAndEventMappingTests
         {
             Type = "container",
             Status = "die",
-            Actor = new Actor { ID = "container-123" }
+            Actor = new Actor
+            {
+                ID = "container-123",
+                Attributes = new Dictionary<string, string> { [ComposeConstants.ProjectLabel] = Project }
+            }
         };
 
-        var composeEvent = EventStreamer.Map(message, services: null);
+        var composeEvent = EventStreamer.Map(message, Project, services: null);
 
         Assert.NotNull(composeEvent);
         Assert.Equal("die", composeEvent.Action);
+    }
+
+    [Theory]
+    [InlineData("container", "demo", null, true)]
+    [InlineData("container", "other", null, false)]
+    [InlineData("container", null, null, false)]
+    [InlineData("network", null, "demo_default", true)]
+    [InlineData("network", null, "demo_net", true)]
+    [InlineData("network", null, "other_default", false)]
+    [InlineData("network", null, "demoo_default", false)]
+    [InlineData("volume", null, "demo_data", true)]
+    [InlineData("volume", null, "other_data", false)]
+    [InlineData("image", null, null, false)]
+    public void BelongsToProject_MatchesLabelOrComposeNamePrefix(string type, string? projectLabel, string? name, bool expected)
+    {
+        var attributes = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (projectLabel is not null)
+            attributes[ComposeConstants.ProjectLabel] = projectLabel;
+        if (name is not null)
+            attributes["name"] = name;
+
+        var message = new Message
+        {
+            Type = type,
+            Action = "create",
+            Actor = new Actor { ID = "id-1", Attributes = attributes }
+        };
+
+        Assert.Equal(expected, EventStreamer.BelongsToProject(message, Project, attributes));
     }
 
     [Fact]
@@ -194,5 +270,17 @@ public sealed class TopAndEventMappingTests
         Assert.Null(summary.Replica);
         Assert.Empty(summary.Titles);
         Assert.Empty(summary.Processes);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, true)]
+    [InlineData(HttpStatusCode.Conflict, true)]
+    [InlineData(HttpStatusCode.InternalServerError, false)]
+    [InlineData(HttpStatusCode.Unauthorized, false)]
+    [InlineData(HttpStatusCode.Forbidden, false)]
+    public void IsListingRace_SkipsOnlyNotFoundAndConflict(HttpStatusCode statusCode, bool expected)
+    {
+        var exception = new DockerApiException(statusCode, "listing failed");
+        Assert.Equal(expected, ProcessInspector.IsListingRace(exception));
     }
 }

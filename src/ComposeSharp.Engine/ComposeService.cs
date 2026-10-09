@@ -581,14 +581,20 @@ public sealed class ComposeService : IComposeService
 
     /// <summary>Streams Docker Engine events for the project's resources as compose events.</summary>
     /// <remarks>
-    /// Subscribes to the Docker event stream filtered by the project label. Events without a
-    /// matching Compose service label are reported with a null <c>Service</c> and are excluded
-    /// when the caller selects specific services.
+    /// Subscribes to container, network, and volume Docker events and keeps only those owned by
+    /// the project. Network and volume events are matched by their Compose name prefix
+    /// (<c>projectName_*</c>) because Docker does not expose resource labels on those events.
+    /// Events without a matching Compose service label are reported with a null <c>Service</c>
+    /// and are excluded only when the caller selects specific services.
     /// </remarks>
     public async IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Select services first so the stream can drop events from other project services.
-        var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
+        // An all-services selection keeps project-level events (network, volume) that carry no
+        // service label; a narrower selection drops anything outside those services.
+        var selection = SelectExistingServices(context, options?.Services);
+        IReadOnlySet<string>? services = selection.IncludesAllDefinedServices
+            ? null
+            : selection.ServiceNames?.ToHashSet(StringComparer.Ordinal);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await foreach (var composeEvent in _events.StreamEventsAsync(client, context.ProjectName, services, cancellationToken))
             yield return composeEvent;
