@@ -15,13 +15,15 @@ internal sealed class EventStreamer
 {
     /// <summary>
     /// Subscribes to the Docker event stream and yields project events until cancellation.
-    /// Optional <paramref name="services"/> keeps only events whose container belongs to those services;
-    /// leave null to also observe project-level events that carry no service label.
+    /// <paramref name="services"/> filters events that carry a Compose service label (profile or
+    /// explicit selection). When <paramref name="keepProjectLevelEvents"/> is true, events without
+    /// a service label (network, volume) are also reported.
     /// </summary>
     public async IAsyncEnumerable<ComposeEvent> StreamEventsAsync(
         DockerClient client,
         string projectName,
         IReadOnlySet<string>? services,
+        bool keepProjectLevelEvents,
         [EnumeratorCancellation] CancellationToken ct)
     {
         // Single-reader channel bridges the IProgress callback of MonitorEventsAsync to IAsyncEnumerable.
@@ -54,7 +56,7 @@ internal sealed class EventStreamer
             {
                 await client.System.MonitorEventsAsync(
                     parameters,
-                    new EventProgress(channel.Writer, projectName, services),
+                    new EventProgress(channel.Writer, projectName, services, keepProjectLevelEvents),
                     linkedCts.Token);
                 channel.Writer.TryComplete();
             }
@@ -84,9 +86,13 @@ internal sealed class EventStreamer
 
     /// <summary>
     /// Maps one Docker event onto <see cref="ComposeEvent"/>, or returns null when the event is
-    /// outside the project or the optional service filter.
+    /// outside the project or the service/project-level filters.
     /// </summary>
-    internal static ComposeEvent? Map(Message message, string projectName, IReadOnlySet<string>? services)
+    internal static ComposeEvent? Map(
+        Message message,
+        string projectName,
+        IReadOnlySet<string>? services,
+        bool keepProjectLevelEvents)
     {
         var attributes = message.Actor?.Attributes is { } attrs
             ? new Dictionary<string, string>(attrs, StringComparer.Ordinal)
@@ -99,8 +105,17 @@ internal sealed class EventStreamer
             ? name
             : null;
 
-        if (services is not null && (service is null || !services.Contains(service)))
+        if (service is not null)
+        {
+            // Service-labeled events honor the profile or explicit service selection.
+            if (services is not null && !services.Contains(service))
+                return null;
+        }
+        else if (!keepProjectLevelEvents)
+        {
+            // An explicit service selection drops project-level events that carry no service label.
             return null;
+        }
 
         var id = message.Actor?.ID ?? message.ID ?? string.Empty;
         var isContainer = string.Equals(message.Type, "container", StringComparison.OrdinalIgnoreCase);
@@ -154,11 +169,12 @@ internal sealed class EventStreamer
     private sealed class EventProgress(
         ChannelWriter<ComposeEvent> writer,
         string projectName,
-        IReadOnlySet<string>? services) : IProgress<Message>
+        IReadOnlySet<string>? services,
+        bool keepProjectLevelEvents) : IProgress<Message>
     {
         public void Report(Message value)
         {
-            var composeEvent = Map(value, projectName, services);
+            var composeEvent = Map(value, projectName, services, keepProjectLevelEvents);
             if (composeEvent is not null)
                 writer.TryWrite(composeEvent);
         }

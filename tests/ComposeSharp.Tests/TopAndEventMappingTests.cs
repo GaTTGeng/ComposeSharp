@@ -34,7 +34,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, Project, services: null);
+        var composeEvent = EventStreamer.Map(message, Project, null, keepProjectLevelEvents: true);
 
         Assert.NotNull(composeEvent);
         Assert.Equal("container", composeEvent.Type);
@@ -63,7 +63,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, Project, services: null);
+        var composeEvent = EventStreamer.Map(message, Project, null, keepProjectLevelEvents: true);
 
         Assert.NotNull(composeEvent);
         var expected = DateTime.UnixEpoch.AddSeconds(1_700_000_000).AddTicks(500_000_000L / 100);
@@ -89,7 +89,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, Project, services: null);
+        var composeEvent = EventStreamer.Map(message, Project, null, keepProjectLevelEvents: true);
 
         Assert.NotNull(composeEvent);
         Assert.Equal("network-9", composeEvent.ID);
@@ -112,7 +112,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, Project, services: null);
+        var composeEvent = EventStreamer.Map(message, Project, null, keepProjectLevelEvents: true);
 
         Assert.NotNull(composeEvent);
         Assert.Equal("demo_data", composeEvent.ID);
@@ -134,7 +134,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        Assert.Null(EventStreamer.Map(foreignNetwork, Project, services: null));
+        Assert.Null(EventStreamer.Map(foreignNetwork, Project, null, keepProjectLevelEvents: true));
     }
 
     [Fact]
@@ -180,10 +180,60 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        Assert.Equal("web-1", EventStreamer.Map(webEvent, Project, selected)?.ID);
-        Assert.Null(EventStreamer.Map(apiEvent, Project, selected));
+        Assert.Equal("web-1", EventStreamer.Map(webEvent, Project, selected, keepProjectLevelEvents: false)?.ID);
+        Assert.Null(EventStreamer.Map(apiEvent, Project, selected, keepProjectLevelEvents: false));
         // An explicit service filter drops project-level events that carry no service label.
-        Assert.Null(EventStreamer.Map(networkEvent, Project, selected));
+        Assert.Null(EventStreamer.Map(networkEvent, Project, selected, keepProjectLevelEvents: false));
+    }
+
+    [Fact]
+    public void MapEvent_ProfileFilter_KeepsProjectEvents_ButDropsInactiveServiceEvents()
+    {
+        // Profile selection (no explicit Services): service-labeled events are filtered, but
+        // project-level network/volume events stay visible.
+        var profileSelected = new HashSet<string>(StringComparer.Ordinal) { "web" };
+        var debugEvent = new Message
+        {
+            Type = "container",
+            Action = "start",
+            Actor = new Actor
+            {
+                ID = "debug-1",
+                Attributes = new Dictionary<string, string>
+                {
+                    [ComposeConstants.ProjectLabel] = Project,
+                    [ComposeConstants.ServiceLabel] = "debug"
+                }
+            }
+        };
+        var webEvent = new Message
+        {
+            Type = "container",
+            Action = "die",
+            Actor = new Actor
+            {
+                ID = "web-1",
+                Attributes = new Dictionary<string, string>
+                {
+                    [ComposeConstants.ProjectLabel] = Project,
+                    [ComposeConstants.ServiceLabel] = "web"
+                }
+            }
+        };
+        var networkEvent = new Message
+        {
+            Type = "network",
+            Action = "destroy",
+            Actor = new Actor
+            {
+                ID = "network-9",
+                Attributes = new Dictionary<string, string> { ["name"] = "demo_default" }
+            }
+        };
+
+        Assert.Equal("web-1", EventStreamer.Map(webEvent, Project, profileSelected, keepProjectLevelEvents: true)?.ID);
+        Assert.Null(EventStreamer.Map(debugEvent, Project, profileSelected, keepProjectLevelEvents: true));
+        Assert.NotNull(EventStreamer.Map(networkEvent, Project, profileSelected, keepProjectLevelEvents: true));
     }
 
     [Fact]
@@ -200,7 +250,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, Project, services: null);
+        var composeEvent = EventStreamer.Map(message, Project, null, keepProjectLevelEvents: true);
 
         Assert.NotNull(composeEvent);
         Assert.Equal("die", composeEvent.Action);
@@ -308,3 +358,4 @@ public sealed class TopAndEventMappingTests
         Assert.Equal(expected, ProcessInspector.IsListingRace(exception));
     }
 }
+

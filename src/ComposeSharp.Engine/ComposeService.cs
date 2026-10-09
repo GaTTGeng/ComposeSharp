@@ -584,18 +584,20 @@ public sealed class ComposeService : IComposeService
     /// Subscribes to container, network, and volume Docker events and keeps only those owned by
     /// the project. Network and volume events are matched by their Compose name prefix
     /// (<c>projectName_*</c>) because Docker does not expose resource labels on those events.
-    /// Events without a matching Compose service label are reported with a null <c>Service</c>
-    /// and are excluded only when the caller selects specific services.
+    /// Service-labeled events honor the profile-selected service set. Events without a service
+    /// label are reported with a null <c>Service</c> and are excluded only when the caller
+    /// selects specific services.
     /// </remarks>
     public async IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Project-level events (network, volume) are kept unless the caller explicitly names
-        // services. Profile selection alone must not drop them.
-        IReadOnlySet<string>? services = options?.Services is { Count: > 0 }
-            ? SelectExistingServices(context, options.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal)
-            : null;
+        // Profile/explicit selection always filters service-labeled events. Project-level events
+        // (network, volume) stay visible unless the caller explicitly named services.
+        var selection = SelectExistingServices(context, options?.Services);
+        IReadOnlySet<string>? services = selection.ServiceNames?.ToHashSet(StringComparer.Ordinal);
+        var keepProjectLevelEvents = options?.Services is not { Count: > 0 };
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        await foreach (var composeEvent in _events.StreamEventsAsync(client, context.ProjectName, services, cancellationToken))
+        await foreach (var composeEvent in _events.StreamEventsAsync(
+            client, context.ProjectName, services, keepProjectLevelEvents, cancellationToken))
             yield return composeEvent;
     }
 

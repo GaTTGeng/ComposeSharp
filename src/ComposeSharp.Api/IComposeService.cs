@@ -99,7 +99,8 @@ public interface IComposeService
     /// Subscribes to container, network, and volume Docker events and yields live events until
     /// cancellation. Only project-owned resources are reported: containers are matched by the
     /// Compose project label, and networks/volumes by their Compose name prefix
-    /// (<c>projectName_*</c>). Events without a Compose service label are reported with a null
+    /// (<c>projectName_*</c>). Service-labeled events honor the profile-selected service set.
+    /// Events without a Compose service label are reported with a null
     /// <see cref="ComposeEvent.Service"/> and are excluded only when the caller selects specific services.
     /// </remarks>
     IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, CancellationToken cancellationToken = default);
