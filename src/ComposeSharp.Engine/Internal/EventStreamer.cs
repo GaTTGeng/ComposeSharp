@@ -1,5 +1,5 @@
 using System.Runtime.CompilerServices;
-using System.Threading.Channels;
+using System.Text.Json;
 using ComposeSharp.Api;
 using Docker.DotNet;
 using Docker.DotNet.Models;
@@ -28,7 +28,7 @@ internal sealed class EventStreamer
     /// <paramref name="services"/> filters events that carry a Compose service label (profile or
     /// explicit selection). When <paramref name="keepProjectLevelEvents"/> is true, events without
     /// a service label (network, volume) are also reported. <paramref name="onSubscribed"/> runs
-    /// once the Docker event subscription has been issued.
+    /// only after the Docker event request has been established and is ready to deliver events.
     /// </summary>
     public async IAsyncEnumerable<ComposeEvent> StreamEventsAsync(
         DockerClient client,
@@ -39,14 +39,6 @@ internal sealed class EventStreamer
         Action? onSubscribed,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        // Single-reader channel bridges the IProgress callback of MonitorEventsAsync to IAsyncEnumerable.
-        var channel = Channel.CreateUnbounded<ComposeEvent>(new UnboundedChannelOptions
-        {
-            SingleReader = true,
-            SingleWriter = true
-        });
-
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         // Subscribe by type rather than project label: Docker's label filter only matches
         // container/image events, so network and volume events would never arrive.
         var parameters = new ContainerEventsParameters
@@ -63,41 +55,48 @@ internal sealed class EventStreamer
             }
         };
 
-        var monitor = Task.Run(async () =>
+        // The stream overload returns once the event response is established, which is the
+        // readiness signal callers may wait on before racing a lifecycle operation. The
+        // IProgress overloads report only after the stream ends, so they cannot signal
+        // "subscription ready"; the JSONMessage replacement also lacks Type/Action/Actor.
+#pragma warning disable CS0618
+        using var stream = await client.System.MonitorEventsAsync(parameters, ct);
+#pragma warning restore CS0618
+        onSubscribed?.Invoke();
+
+        using var reader = new StreamReader(stream);
+        while (ct.IsCancellationRequested == false)
         {
+            var line = await reader.ReadLineAsync(ct);
+            if (line is null)
+                yield break;
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            Message? message;
             try
             {
-                // Subscription is issued here; callers that race a lifecycle operation wait on onSubscribed.
-                onSubscribed?.Invoke();
-                await client.System.MonitorEventsAsync(
-                    parameters,
-                    new EventProgress(channel.Writer, projectName, resources, services, keepProjectLevelEvents),
-                    linkedCts.Token);
-                channel.Writer.TryComplete();
+                message = JsonSerializer.Deserialize<Message>(line, EventJsonOptions);
             }
-            catch (OperationCanceledException)
+            catch (JsonException)
             {
-                channel.Writer.TryComplete();
+                // A non-event payload on the stream is skipped rather than failing the subscription.
+                continue;
             }
-            catch (Exception ex)
-            {
-                channel.Writer.TryComplete(ex);
-            }
-        }, CancellationToken.None);
+            if (message is null)
+                continue;
 
-        try
-        {
-            await foreach (var composeEvent in channel.Reader.ReadAllAsync(ct))
+            var composeEvent = Map(message, projectName, resources, services, keepProjectLevelEvents);
+            if (composeEvent is not null)
                 yield return composeEvent;
         }
-        finally
-        {
-            // Stop the daemon subscription when the consumer stops enumerating, even without cancellation.
-            linkedCts.Cancel();
-            channel.Writer.TryComplete();
-            await monitor;
-        }
     }
+
+    // Docker event payloads mix case ("Type", "timeNano"); the wire shape is mapped explicitly.
+    private static readonly JsonSerializerOptions EventJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     /// <summary>
     /// Maps one Docker event onto <see cref="ComposeEvent"/>, or returns null when the event is
@@ -188,20 +187,5 @@ internal sealed class EventStreamer
 
         // Any other event without a project label is not ours.
         return false;
-    }
-
-    private sealed class EventProgress(
-        ChannelWriter<ComposeEvent> writer,
-        string projectName,
-        ProjectResourceNames resources,
-        IReadOnlySet<string>? services,
-        bool keepProjectLevelEvents) : IProgress<Message>
-    {
-        public void Report(Message value)
-        {
-            var composeEvent = Map(value, projectName, resources, services, keepProjectLevelEvents);
-            if (composeEvent is not null)
-                writer.TryWrite(composeEvent);
-        }
     }
 }

@@ -10,9 +10,10 @@ public sealed record ComposeEventsOptions
     public bool Json { get; init; }
 
     /// <summary>
-    /// Invoked once the Docker event subscription has been issued and project resources have been
-    /// resolved. Callers that race a lifecycle operation against the stream can await this signal
-    /// before triggering that operation.
+    /// Invoked only after the Docker event response has been established and project resources
+    /// have been resolved. Callers that race a lifecycle operation against the stream can await
+    /// this signal before triggering that operation; the callback is not invoked when subscription
+    /// setup fails.
     /// </summary>
     public Action? OnSubscribed { get; init; }
 }
