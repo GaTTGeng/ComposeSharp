@@ -12,7 +12,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 - Build services through Docker Engine with a generated build-context archive, `.dockerignore` handling, build feedback, and cancellation-aware archive creation.
 - Copy files to and from service containers and export container filesystems through Docker Engine archive endpoints, including replica selection and archive metadata handling.
-- Load common Compose project and service configuration, interpolate variables from `.env` and `env_file`, merge multiple Compose files using the documented incremental rules, and report contextual validation errors.
+- Load common Compose project and service configuration, interpolate variables from the process environment and project `.env`, load service `env_file` values into container environments, merge multiple Compose files using the documented incremental rules, and report contextual validation errors.
 - Apply Compose profiles consistently when selecting services for supported project operations, and document parsed versus applied Compose fields in the compatibility matrix.
 - Commit service containers as images and publish tagged service images to registries with per-service outcomes.
 
