@@ -143,7 +143,8 @@ public sealed class VariableInterpolationTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -166,7 +167,8 @@ public sealed class VariableInterpolationTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 

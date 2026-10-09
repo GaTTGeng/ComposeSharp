@@ -138,7 +138,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -188,7 +189,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -215,7 +217,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -244,7 +247,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -263,7 +267,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -283,7 +288,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -306,7 +312,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -331,7 +338,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -356,7 +364,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -379,7 +388,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -400,7 +410,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -423,7 +434,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -448,7 +460,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -471,7 +484,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -496,7 +510,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -522,7 +537,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -546,7 +562,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -575,7 +592,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -596,7 +614,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -616,7 +635,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         catch (IOException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
 
@@ -629,7 +649,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -653,7 +674,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -676,7 +698,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -697,7 +720,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -717,7 +741,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -754,7 +779,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -786,7 +812,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -820,7 +847,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -854,7 +882,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -880,7 +909,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -905,7 +935,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -931,7 +962,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -957,12 +989,14 @@ public sealed class DockerBuildParametersFactoryTests
             }
             catch (IOException)
             {
-                Directory.Delete(directory, recursive: true);
+                try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+                catch { /* best effort */ }
                 return;
             }
             catch (UnauthorizedAccessException)
             {
-                Directory.Delete(directory, recursive: true);
+                try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+                catch { /* best effort */ }
                 return;
             }
         }
@@ -975,7 +1009,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -992,12 +1027,14 @@ public sealed class DockerBuildParametersFactoryTests
         }
         catch (IOException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
         catch (UnauthorizedAccessException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
 
@@ -1017,7 +1054,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1036,12 +1074,14 @@ public sealed class DockerBuildParametersFactoryTests
         }
         catch (IOException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
         catch (UnauthorizedAccessException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
 
@@ -1053,7 +1093,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1072,12 +1113,14 @@ public sealed class DockerBuildParametersFactoryTests
         }
         catch (IOException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
         catch (UnauthorizedAccessException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
 
@@ -1096,7 +1139,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1120,7 +1164,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1147,7 +1192,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1166,7 +1212,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1182,12 +1229,14 @@ public sealed class DockerBuildParametersFactoryTests
         }
         catch (IOException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
         catch (UnauthorizedAccessException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
 
@@ -1211,7 +1260,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1239,12 +1289,14 @@ public sealed class DockerBuildParametersFactoryTests
         }
         catch (IOException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
         catch (UnauthorizedAccessException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
 
@@ -1269,7 +1321,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1289,12 +1342,14 @@ public sealed class DockerBuildParametersFactoryTests
         }
         catch (IOException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
         catch (UnauthorizedAccessException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
 
@@ -1316,7 +1371,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1335,12 +1391,14 @@ public sealed class DockerBuildParametersFactoryTests
         }
         catch (IOException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
         catch (UnauthorizedAccessException)
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
             return;
         }
 
@@ -1362,7 +1420,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1400,7 +1459,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1425,7 +1485,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -1473,7 +1534,8 @@ public sealed class DockerBuildParametersFactoryTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 }

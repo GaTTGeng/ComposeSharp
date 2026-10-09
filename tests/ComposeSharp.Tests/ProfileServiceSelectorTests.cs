@@ -70,7 +70,8 @@ public sealed class ProfileServiceSelectorTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 

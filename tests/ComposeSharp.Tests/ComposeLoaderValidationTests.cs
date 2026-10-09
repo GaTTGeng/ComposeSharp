@@ -299,6 +299,10 @@ public sealed class ComposeLoaderValidationTests
             DirectoryPath,
             [Path.GetFileName(PrimaryPath), Path.GetFileName(OverlayPath!)]);
 
-        public void Dispose() => Directory.Delete(DirectoryPath, recursive: true);
+        public void Dispose()
+        {
+            try { Directory.Delete(DirectoryPath, recursive: true); }
+            catch { }
+        }
     }
 }

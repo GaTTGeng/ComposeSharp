@@ -49,8 +49,8 @@ public class ContainerArchiveTests
         finally
         {
             archive.Dispose();
-            if (Directory.Exists(destination))
-                Directory.Delete(destination, recursive: true);
+            try { if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -72,8 +72,10 @@ public class ContainerArchiveTests
         }
         finally
         {
-            Directory.Delete(link);
-            Directory.Delete(parent, recursive: true);
+            try { if (Directory.Exists(link)) Directory.Delete(link); }
+            catch { /* best effort */ }
+            try { if (Directory.Exists(parent)) Directory.Delete(parent, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -109,7 +111,8 @@ public class ContainerArchiveTests
         {
             archive.Dispose();
             File.Delete(link);
-            Directory.Delete(destination, recursive: true);
+            try { if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 
@@ -143,7 +146,8 @@ public class ContainerArchiveTests
         finally
         {
             File.SetUnixFileMode(sourceDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            Directory.Delete(sourceDirectory, recursive: true);
+            try { if (Directory.Exists(sourceDirectory)) Directory.Delete(sourceDirectory, recursive: true); }
+            catch { /* best effort */ }
         }
     }
 }
