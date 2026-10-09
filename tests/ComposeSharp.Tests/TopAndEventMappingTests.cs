@@ -14,6 +14,10 @@ public sealed class TopAndEventMappingTests
 {
     private const string Project = "demo";
 
+    // Exact Compose resource names owned by the "demo" project (not a prefix matcher).
+    private static readonly IReadOnlySet<string> ResourceNames =
+        new HashSet<string>(StringComparer.Ordinal) { "demo_default", "demo_data" };
+
     [Fact]
     public void MapEvent_CopiesTypeActionAndActorIdentity()
     {
@@ -34,7 +38,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, Project, null, keepProjectLevelEvents: true);
+        var composeEvent = EventStreamer.Map(message, Project, ResourceNames, null, keepProjectLevelEvents: true);
 
         Assert.NotNull(composeEvent);
         Assert.Equal("container", composeEvent.Type);
@@ -63,7 +67,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, Project, null, keepProjectLevelEvents: true);
+        var composeEvent = EventStreamer.Map(message, Project, ResourceNames, null, keepProjectLevelEvents: true);
 
         Assert.NotNull(composeEvent);
         var expected = DateTime.UnixEpoch.AddSeconds(1_700_000_000).AddTicks(500_000_000L / 100);
@@ -89,7 +93,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, Project, null, keepProjectLevelEvents: true);
+        var composeEvent = EventStreamer.Map(message, Project, ResourceNames, null, keepProjectLevelEvents: true);
 
         Assert.NotNull(composeEvent);
         Assert.Equal("network-9", composeEvent.ID);
@@ -112,7 +116,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, Project, null, keepProjectLevelEvents: true);
+        var composeEvent = EventStreamer.Map(message, Project, ResourceNames, null, keepProjectLevelEvents: true);
 
         Assert.NotNull(composeEvent);
         Assert.Equal("demo_data", composeEvent.ID);
@@ -134,7 +138,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        Assert.Null(EventStreamer.Map(foreignNetwork, Project, null, keepProjectLevelEvents: true));
+        Assert.Null(EventStreamer.Map(foreignNetwork, Project, ResourceNames, null, keepProjectLevelEvents: true));
     }
 
     [Fact]
@@ -180,10 +184,10 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        Assert.Equal("web-1", EventStreamer.Map(webEvent, Project, selected, keepProjectLevelEvents: false)?.ID);
-        Assert.Null(EventStreamer.Map(apiEvent, Project, selected, keepProjectLevelEvents: false));
+        Assert.Equal("web-1", EventStreamer.Map(webEvent, Project, ResourceNames, selected, keepProjectLevelEvents: false)?.ID);
+        Assert.Null(EventStreamer.Map(apiEvent, Project, ResourceNames, selected, keepProjectLevelEvents: false));
         // An explicit service filter drops project-level events that carry no service label.
-        Assert.Null(EventStreamer.Map(networkEvent, Project, selected, keepProjectLevelEvents: false));
+        Assert.Null(EventStreamer.Map(networkEvent, Project, ResourceNames, selected, keepProjectLevelEvents: false));
     }
 
     [Fact]
@@ -231,9 +235,9 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        Assert.Equal("web-1", EventStreamer.Map(webEvent, Project, profileSelected, keepProjectLevelEvents: true)?.ID);
-        Assert.Null(EventStreamer.Map(debugEvent, Project, profileSelected, keepProjectLevelEvents: true));
-        Assert.NotNull(EventStreamer.Map(networkEvent, Project, profileSelected, keepProjectLevelEvents: true));
+        Assert.Equal("web-1", EventStreamer.Map(webEvent, Project, ResourceNames, profileSelected, keepProjectLevelEvents: true)?.ID);
+        Assert.Null(EventStreamer.Map(debugEvent, Project, ResourceNames, profileSelected, keepProjectLevelEvents: true));
+        Assert.NotNull(EventStreamer.Map(networkEvent, Project, ResourceNames, profileSelected, keepProjectLevelEvents: true));
     }
 
     [Fact]
@@ -250,7 +254,7 @@ public sealed class TopAndEventMappingTests
             }
         };
 
-        var composeEvent = EventStreamer.Map(message, Project, null, keepProjectLevelEvents: true);
+        var composeEvent = EventStreamer.Map(message, Project, ResourceNames, null, keepProjectLevelEvents: true);
 
         Assert.NotNull(composeEvent);
         Assert.Equal("die", composeEvent.Action);
@@ -261,14 +265,17 @@ public sealed class TopAndEventMappingTests
     [InlineData("container", "other", null, null, false)]
     [InlineData("container", null, null, null, false)]
     [InlineData("network", null, "demo_default", "net-id", true)]
-    [InlineData("network", null, "demo_net", "net-id", true)]
+    [InlineData("network", null, "demo_net", "net-id", false)]
     [InlineData("network", null, "other_default", "net-id", false)]
     [InlineData("network", null, "demoo_default", "net-id", false)]
+    // Prefix-related project names must not leak: app_test_default is not demo_default.
+    [InlineData("network", null, "demo_test_default", "net-id", false)]
     [InlineData("volume", null, null, "demo_data", true)]
+    [InlineData("volume", null, null, "demo_test_data", false)]
     [InlineData("volume", null, null, "other_data", false)]
     [InlineData("volume", null, "demo_data", "ignored-id", true)]
     [InlineData("image", null, null, null, false)]
-    public void BelongsToProject_MatchesLabelOrComposeNamePrefix(string type, string? projectLabel, string? name, string? actorId, bool expected)
+    public void BelongsToProject_MatchesLabelOrExactResourceName(string type, string? projectLabel, string? name, string? actorId, bool expected)
     {
         var attributes = new Dictionary<string, string>(StringComparer.Ordinal);
         if (projectLabel is not null)
@@ -283,7 +290,7 @@ public sealed class TopAndEventMappingTests
             Actor = new Actor { ID = actorId ?? "id-1", Attributes = attributes }
         };
 
-        Assert.Equal(expected, EventStreamer.BelongsToProject(message, Project, attributes));
+        Assert.Equal(expected, EventStreamer.BelongsToProject(message, Project, ResourceNames, attributes));
     }
 
     [Fact]
@@ -358,4 +365,5 @@ public sealed class TopAndEventMappingTests
         Assert.Equal(expected, ProcessInspector.IsListingRace(exception));
     }
 }
+
 

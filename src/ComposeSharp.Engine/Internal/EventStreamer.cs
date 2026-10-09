@@ -10,18 +10,21 @@ namespace ComposeSharp.Engine.Internal;
 /// Streams Docker Engine events for a Compose project and maps them onto <see cref="ComposeEvent"/>.
 /// Ownership is checked client-side: Docker's event label filter only covers container/image
 /// labels, while network and volume events expose neither labels nor a matching label filter.
+/// Network and volume ownership is therefore matched by exact resource name.
 /// </summary>
 internal sealed class EventStreamer
 {
     /// <summary>
     /// Subscribes to the Docker event stream and yields project events until cancellation.
-    /// <paramref name="services"/> filters events that carry a Compose service label (profile or
-    /// explicit selection). When <paramref name="keepProjectLevelEvents"/> is true, events without
-    /// a service label (network, volume) are also reported.
+    /// <paramref name="resourceNames"/> is the exact set of network/volume names owned by the
+    /// project. <paramref name="services"/> filters events that carry a Compose service label
+    /// (profile or explicit selection). When <paramref name="keepProjectLevelEvents"/> is true,
+    /// events without a service label (network, volume) are also reported.
     /// </summary>
     public async IAsyncEnumerable<ComposeEvent> StreamEventsAsync(
         DockerClient client,
         string projectName,
+        IReadOnlySet<string> resourceNames,
         IReadOnlySet<string>? services,
         bool keepProjectLevelEvents,
         [EnumeratorCancellation] CancellationToken ct)
@@ -56,7 +59,7 @@ internal sealed class EventStreamer
             {
                 await client.System.MonitorEventsAsync(
                     parameters,
-                    new EventProgress(channel.Writer, projectName, services, keepProjectLevelEvents),
+                    new EventProgress(channel.Writer, projectName, resourceNames, services, keepProjectLevelEvents),
                     linkedCts.Token);
                 channel.Writer.TryComplete();
             }
@@ -91,6 +94,7 @@ internal sealed class EventStreamer
     internal static ComposeEvent? Map(
         Message message,
         string projectName,
+        IReadOnlySet<string> resourceNames,
         IReadOnlySet<string>? services,
         bool keepProjectLevelEvents)
     {
@@ -98,7 +102,7 @@ internal sealed class EventStreamer
             ? new Dictionary<string, string>(attrs, StringComparer.Ordinal)
             : null;
 
-        if (!BelongsToProject(message, projectName, attributes))
+        if (!BelongsToProject(message, projectName, resourceNames, attributes))
             return null;
 
         var service = attributes is not null && LabelHelper.GetServiceName(attributes) is { } name
@@ -137,10 +141,15 @@ internal sealed class EventStreamer
 
     /// <summary>
     /// True when the event is owned by <paramref name="projectName"/>. Container events carry the
-    /// project label; network and volume events expose only a Compose-prefixed name
-    /// (<c>projectName_*</c>), which is how those resources are named at creation.
+    /// project label. Network and volume events expose only a name, so they are matched against
+    /// the exact set of resource names created for the project (never by prefix, which would
+    /// collide across projects named <c>app</c> and <c>app_test</c>).
     /// </summary>
-    internal static bool BelongsToProject(Message message, string projectName, IDictionary<string, string>? attributes)
+    internal static bool BelongsToProject(
+        Message message,
+        string projectName,
+        IReadOnlySet<string> resourceNames,
+        IDictionary<string, string>? attributes)
     {
         if (attributes is not null &&
             attributes.TryGetValue(ComposeConstants.ProjectLabel, out var owner) &&
@@ -149,7 +158,7 @@ internal sealed class EventStreamer
             return string.Equals(owner, projectName, StringComparison.Ordinal);
         }
 
-        // Network/volume events do not include labels, so fall back to the Compose name prefix.
+        // Network/volume events do not include labels, so match the exact Compose resource name.
         if (string.Equals(message.Type, "network", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(message.Type, "volume", StringComparison.OrdinalIgnoreCase))
         {
@@ -158,8 +167,7 @@ internal sealed class EventStreamer
             var name = attributes is not null && attributes.TryGetValue("name", out var value)
                 ? value
                 : message.Actor?.ID;
-            return name is not null &&
-                   name.StartsWith(projectName + "_", StringComparison.Ordinal);
+            return name is not null && resourceNames.Contains(name);
         }
 
         // Any other event without a project label is not ours.
@@ -169,12 +177,13 @@ internal sealed class EventStreamer
     private sealed class EventProgress(
         ChannelWriter<ComposeEvent> writer,
         string projectName,
+        IReadOnlySet<string> resourceNames,
         IReadOnlySet<string>? services,
         bool keepProjectLevelEvents) : IProgress<Message>
     {
         public void Report(Message value)
         {
-            var composeEvent = Map(value, projectName, services, keepProjectLevelEvents);
+            var composeEvent = Map(value, projectName, resourceNames, services, keepProjectLevelEvents);
             if (composeEvent is not null)
                 writer.TryWrite(composeEvent);
         }
