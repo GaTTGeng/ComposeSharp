@@ -226,7 +226,10 @@ public sealed class ComposeService : IComposeService
     /// <summary>
     /// Pushes the images of the selected services to their registries.
     /// </summary>
-    /// <remarks>Per-service push failures are swallowed when <c>IgnoreFailures</c> is set.</remarks>
+    /// <remarks>
+    /// Per-service push failures are swallowed when <c>IgnoreFailures</c> is set. That includes both
+    /// Docker API errors and registry errors reported through the push progress stream.
+    /// </remarks>
     public async Task PushAsync(ComposeProjectContext context, ComposePushOptions? options = null, CancellationToken cancellationToken = default)
     {
         // Load project -> open client -> profile-filter services.
@@ -240,7 +243,7 @@ public sealed class ComposeService : IComposeService
             if (service.Image is not null)
             {
                 try { await _images.PushImageAsync(client, context.RegistryAuth, service.Image, cancellationToken); }
-                catch (DockerApiException) when (options?.IgnoreFailures == true) { }
+                catch (Exception ex) when (options?.IgnoreFailures == true && ImageManager.IsPushFailure(ex)) { }
             }
         }
     }
@@ -729,29 +732,27 @@ public sealed class ComposeService : IComposeService
 
     /// <summary>Creates an image from a service container and returns the resulting image reference.</summary>
     /// <remarks>
-    /// Known limitation: this starts the <c>docker</c> executable (<c>docker commit</c>) instead of a
-    /// managed Docker API and assumes the replica-1 container name. Should move toward a managed API.
+    /// Uses the Docker Engine commit endpoint. Honors author, message, Dockerfile-style changes,
+    /// pause, and replica selection via <c>Index</c> rather than assuming the replica-1 container name.
     /// </remarks>
-    public Task<string> CommitAsync(ComposeProjectContext context, ComposeCommitOptions options, CancellationToken cancellationToken = default)
+    public async Task<string> CommitAsync(ComposeProjectContext context, ComposeCommitOptions options, CancellationToken cancellationToken = default)
     {
-        // Known limitation: shells out to the docker executable ("docker commit") instead of a managed
-        // Docker API, and assumes the replica-1 container name.
-        var reference = options.Reference ?? $"{context.ProjectName}-{options.Service}:latest";
-        var args = $"commit {context.ProjectName}-{options.Service}-1 {reference}";
-        if (options.Author is not null) args += $" --author \"{options.Author}\"";
-        if (options.Message is not null) args += $" --message \"{options.Message}\"";
+        // Validate before connecting, then resolve the target container and commit it through Docker Engine.
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.Service);
 
-        // The new image reference is the process's standard output.
-        var psi = new System.Diagnostics.ProcessStartInfo("docker", args)
-        {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        var proc = System.Diagnostics.Process.Start(psi);
-        var output = proc?.StandardOutput.ReadToEnd();
-        proc?.WaitForExit();
-        return Task.FromResult(output?.Trim() ?? "");
+        var reference = options.Reference ?? $"{context.ProjectName}-{options.Service}:latest";
+        var parameters = ImageCommitParametersFactory.Create(reference, options);
+
+        using var client = _clientFactory.CreateClient(context.SocketPath);
+        var container = await _containers.FindContainerForArchiveAsync(
+            client, context.ProjectName, options.Service, options.Index, cancellationToken);
+        parameters.ContainerID = container.ID;
+
+        await client.Images.CommitContainerChangesAsync(parameters, cancellationToken);
+        return reference;
     }
 
     /// <summary>Renders the project's services and depends_on edges as a Graphviz digraph.</summary>
@@ -821,30 +822,94 @@ public sealed class ComposeService : IComposeService
         };
     }
 
-    /// <summary>Tags the services' images into the given repository using each service name as the tag.</summary>
+    /// <summary>
+    /// Tags every selected service image into <paramref name="repository"/> as <c>repository:serviceName</c>
+    /// and pushes each tagged image, reporting per-service tag and push outcomes.
+    /// </summary>
     /// <remarks>
-    /// Known limitation: this only tags images locally; it does not push them to a registry.
+    /// Uses <see cref="ComposeProjectContext.RegistryAuth"/> for registry authentication. Tag and push
+    /// outcomes are collected for every selected service instead of aborting on the first failure;
+    /// cancellation still aborts the operation. <c>ResolveImageDigests</c>, <c>WithEnvironment</c>,
+    /// <c>OcIVersion</c>, and <c>InsecureRegistry</c> are not applied.
     /// </remarks>
-    public async Task PublishAsync(ComposeProjectContext context, string repository, ComposePublishOptions? options = null, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<PublishResult>> PublishAsync(ComposeProjectContext context, string repository, ComposePublishOptions? options = null, CancellationToken cancellationToken = default)
     {
-        // Load project -> open client -> profile-filter services.
+        // Validate before connecting, then load project -> open client -> profile-filter services.
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentException.ThrowIfNullOrWhiteSpace(repository);
+
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
+        var results = new List<PublishResult>();
 
-        // Tag each service image into the target repository as <repository>:<serviceName>.
-        // Local tagging only; pushing to a registry is intentionally left to the caller.
+        // Every selected service gets an outcome, including services without a concrete image.
         foreach (var service in ProfileServiceSelector.Select(project, context.Profiles))
         {
-            if (service.Image is not null)
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (service.Image is null)
             {
-                // Missing/untagged source images are skipped rather than failing the publish.
-                try
+                results.Add(new PublishResult
                 {
-                    await client.Images.TagImageAsync(service.Image, new ImageTagParameters { RepositoryName = repository, Tag = service.Name }, cancellationToken);
-                }
-                catch (DockerApiException) { }
+                    Service = service.Name,
+                    Error = "Service does not define an image reference."
+                });
+                continue;
+            }
+
+            var taggedImage = $"{repository}:{service.Name}";
+            try
+            {
+                await client.Images.TagImageAsync(service.Image, new ImageTagParameters
+                {
+                    RepositoryName = repository,
+                    Tag = service.Name
+                }, cancellationToken);
+            }
+            catch (DockerApiException ex)
+            {
+                results.Add(new PublishResult
+                {
+                    Service = service.Name,
+                    SourceImage = service.Image,
+                    TaggedImage = taggedImage,
+                    Error = $"Tag failed: {ex.Message}"
+                });
+                continue;
+            }
+
+            try
+            {
+                // Registry credentials come from the project context; missing auth is an anonymous push.
+                await _images.PushImageAsync(client, context.RegistryAuth, taggedImage, cancellationToken);
+                results.Add(new PublishResult
+                {
+                    Service = service.Name,
+                    SourceImage = service.Image,
+                    TaggedImage = taggedImage,
+                    Tagged = true,
+                    Pushed = true
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ImageManager.IsPushFailure(ex))
+            {
+                results.Add(new PublishResult
+                {
+                    Service = service.Name,
+                    SourceImage = service.Image,
+                    TaggedImage = taggedImage,
+                    Tagged = true,
+                    Error = $"Push failed: {ex.Message}"
+                });
             }
         }
+
+        return results;
     }
 
     private ComposeProject LoadProjectInternal(ComposeProjectContext context)

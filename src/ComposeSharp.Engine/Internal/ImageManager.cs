@@ -39,7 +39,11 @@ internal sealed class ImageManager
     public async Task PushImageAsync(DockerClient client, DockerRegistryAuth? auth, string image, CancellationToken ct)
     {
         var (fromImage, tag) = SplitImage(image);
-        await client.Images.PushImageAsync(fromImage, new ImagePushParameters { Tag = tag }, CreateAuthConfig(auth), new Progress<JSONMessage>(), ct);
+        // Docker's push stream reports failures as progress messages instead of failing the call,
+        // so the first error is captured and rethrown after the stream completes.
+        var progress = new PushProgress();
+        await client.Images.PushImageAsync(fromImage, new ImagePushParameters { Tag = tag }, CreateAuthConfig(auth), progress, ct);
+        progress.ThrowIfFailed(image);
     }
 
     // Images are discovered through project containers rather than a daemon-wide image scan.
@@ -95,6 +99,11 @@ internal sealed class ImageManager
                 : DockerHubRegistryAddress
         };
 
+    // Docker API call failures and registry errors surfaced from the push progress stream.
+    // Cancellation is deliberately excluded so it still aborts the operation.
+    internal static bool IsPushFailure(Exception exception)
+        => exception is DockerApiException or InvalidOperationException;
+
     // A colon is only a tag separator after the last slash; otherwise registry ports
     // (e.g. "registry:5000/app") would be mistaken for tags.
     public static (string FromImage, string Tag) SplitImage(string image)
@@ -104,5 +113,26 @@ internal sealed class ImageManager
         if (colon > slash)
             return (image[..colon], image[(colon + 1)..]);
         return (image, "latest");
+    }
+
+    // Docker's push API streams progress but does not fail the call on a registry error, so the
+    // first error message is captured here and rethrown after the stream completes.
+    private sealed class PushProgress : IProgress<JSONMessage>
+    {
+        private string? _error;
+
+        public void Report(JSONMessage value)
+        {
+            var error = value.ErrorMessage ?? value.Error?.Message;
+            if (!string.IsNullOrWhiteSpace(error))
+                Interlocked.CompareExchange(ref _error, error.Trim(), null);
+        }
+
+        public void ThrowIfFailed(string image)
+        {
+            var error = Volatile.Read(ref _error);
+            if (error is not null)
+                throw new InvalidOperationException($"Push of image '{image}' failed: {error}");
+        }
     }
 }
