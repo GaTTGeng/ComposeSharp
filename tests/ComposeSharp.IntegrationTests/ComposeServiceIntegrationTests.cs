@@ -1,4 +1,4 @@
-using ComposeSharp.Api;
+﻿using ComposeSharp.Api;
 using ComposeSharp.Engine;
 using ComposeSharp.Loader;
 using Docker.DotNet;
@@ -841,7 +841,7 @@ public class ComposeServiceIntegrationTests
             }, CancellationToken.None);
 
             // Wait for the event subscription before racing StopAsync against the stream.
-            await subscribed.Task;
+            await AwaitSubscriptionAsync(subscribed, collector);
             await service.StopAsync(context);
             await collector;
 
@@ -959,7 +959,7 @@ public class ComposeServiceIntegrationTests
             }, CancellationToken.None);
 
             // Wait for the event subscription before racing StopAsync against the stream.
-            await subscribed.Task;
+            await AwaitSubscriptionAsync(subscribed, collector);
             await service.StopAsync(context, new ComposeStopOptions { Services = ["worker"] });
             await collector;
 
@@ -1029,7 +1029,7 @@ public class ComposeServiceIntegrationTests
             }, CancellationToken.None);
 
             // Wait for the event subscription before racing DownAsync against the stream.
-            await subscribed.Task;
+            await AwaitSubscriptionAsync(subscribed, collector);
             // Tear down every declared service (including the inactive profile) so the project
             // network is removed and emits a destroy event.
             await service.DownAsync(context with { Profiles = ["debug"] });
@@ -1045,6 +1045,15 @@ public class ComposeServiceIntegrationTests
         }
     }
 
+    // Wait for the stream subscription without hanging when the collector finishes first
+    // (cancellation or subscription setup failure).
+    private static async Task AwaitSubscriptionAsync(TaskCompletionSource subscribed, Task collector)
+    {
+        await Task.WhenAny(subscribed.Task, collector);
+        if (collector.IsCompleted)
+            await collector;
+    }
+
     // Collects build statuses and container log lines for assertions.
     private sealed class TestLogConsumer : ILogConsumer
     {
@@ -1056,3 +1065,4 @@ public class ComposeServiceIntegrationTests
         public void OnStatus(string serviceName, string message) => Statuses.Add(message);
     }
 }
+
