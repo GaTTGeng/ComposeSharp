@@ -3,7 +3,11 @@ namespace ComposeSharp.Api;
 /// <summary>Options filtering the project event stream.</summary>
 public sealed record ComposeEventsOptions
 {
-    /// <summary>Only report events for these service names; null reports every project service.</summary>
+    /// <summary>
+    /// Only report events for these service names. Null selects every project service and keeps
+    /// project-level network/volume events; a non-null list filters to those services and drops
+    /// events with no service label. An empty list is a no-op and yields no events.
+    /// </summary>
     public IReadOnlyList<string>? Services { get; init; }
 
     /// <summary>Request JSON-shaped event payloads.</summary>

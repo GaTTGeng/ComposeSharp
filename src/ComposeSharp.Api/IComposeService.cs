@@ -104,9 +104,10 @@ public interface IComposeService
     /// the matching type (Docker allows a network and a volume to share a name).
     /// Service-labeled events honor the profile-selected service set. Events without a Compose
     /// service label are reported with a null <see cref="ComposeEvent.Service"/> and are excluded
-    /// only when the caller selects specific services. Set
-    /// <see cref="ComposeEventsOptions.OnSubscribed"/> to wait until the subscription is issued
-    /// before racing a lifecycle operation against the stream.
+    /// whenever <see cref="ComposeEventsOptions.Services"/> is a non-null list. An empty
+    /// <c>Services</c> list yields an empty stream; <c>null</c> selects every project service.
+    /// Set <see cref="ComposeEventsOptions.OnSubscribed"/> to wait until the subscription is
+    /// established before racing a lifecycle operation against the stream.
     /// </remarks>
     IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, CancellationToken cancellationToken = default);
 

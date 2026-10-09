@@ -590,17 +590,23 @@ public sealed class ComposeService : IComposeService
     /// the project. Network and volume events are matched by exact Compose resource name within
     /// the matching resource type (Docker allows a network and a volume to share a name).
     /// Service-labeled events honor the profile-selected service set. Events without a service
-    /// label are reported with a null <c>Service</c> and are excluded only when the caller
-    /// selects specific services. <see cref="ComposeEventsOptions.OnSubscribed"/> fires once the
-    /// subscription has been issued.
+    /// label are reported with a null <c>Service</c> and are excluded whenever
+    /// <see cref="ComposeEventsOptions.Services"/> is a non-null list. An empty
+    /// <c>Services</c> list yields an empty stream; <c>null</c> selects every project service
+    /// and keeps project-level events. <see cref="ComposeEventsOptions.OnSubscribed"/> fires once
+    /// the subscription has been issued.
     /// </remarks>
     public async IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // An explicit empty selection is a no-op, not "every service".
+        if (options?.Services is { Count: 0 })
+            yield break;
+
         // Profile/explicit selection always filters service-labeled events. Project-level events
-        // (network, volume) stay visible unless the caller explicitly named services.
+        // (network, volume) stay visible only when Services is null (select-all).
         var selection = SelectExistingServices(context, options?.Services);
         IReadOnlySet<string>? services = selection.ServiceNames?.ToHashSet(StringComparer.Ordinal);
-        var keepProjectLevelEvents = options?.Services is not { Count: > 0 };
+        var keepProjectLevelEvents = options?.Services is null;
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var resources = await CollectProjectResourceNamesAsync(client, context, cancellationToken);
         await foreach (var composeEvent in _events.StreamEventsAsync(

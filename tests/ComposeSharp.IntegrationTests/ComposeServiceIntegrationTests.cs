@@ -893,6 +893,15 @@ public class ComposeServiceIntegrationTests
         {
             await service.UpAsync(context);
 
+            // An explicit empty selection is a no-op and must not stream project-level events.
+            await foreach (var _ in service.EventsAsync(
+                context,
+                new ComposeEventsOptions { Services = [] },
+                new CancellationTokenSource(TimeSpan.FromSeconds(2)).Token))
+            {
+                Assert.Fail("Empty service selection should not emit events.");
+            }
+
             using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
             var collector = Task.Run(async () =>
             {
