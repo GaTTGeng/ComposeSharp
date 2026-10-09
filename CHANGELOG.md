@@ -6,6 +6,25 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-09
+
+### Added
+
+- Build services through Docker Engine with a generated build-context archive, `.dockerignore` handling, build feedback, and cancellation-aware archive creation.
+- Copy files to and from service containers and export container filesystems through Docker Engine archive endpoints, including replica selection and archive metadata handling.
+- Load common Compose project and service configuration, interpolate variables from the process environment and project `.env`, load service `env_file` values into container environments, merge multiple Compose files using the documented incremental rules, and report contextual validation errors.
+- Apply Compose profiles consistently when selecting services for supported project operations, and document parsed versus applied Compose fields in the compatibility matrix.
+- Commit service containers as images and publish tagged service images to registries with per-service outcomes.
+
+### Changed
+
+- `StopAsync` waits for containers to reach a terminal state and reports polling failures and timeouts.
+- Loader merge behavior, supported Compose fields, and current engine limitations are now documented in dedicated compatibility and merge guides.
+
+### Breaking changes
+
+- `IComposeService.PublishAsync` now returns `Task<IReadOnlyList<PublishResult>>` instead of `Task`. Source call sites that await it or accept a `Task` return remain compatible; consumers compiled against the earlier binary signature must rebuild to use the new assembly.
+
 ## [2.0.0] - 2026-07-20
 
 ### Added
@@ -13,5 +32,6 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Published the open-source SDK repository foundation: NuGet metadata, source-link and symbol packages, CI, trusted-publishing release workflow, contribution guidance, and security/support policies.
 - Documented the Api, Loader, Engine, and DependencyInjection packages with .NET and Docker Engine requirements.
 
-[Unreleased]: https://github.com/GaTTGeng/ComposeSharp/compare/2.0.0...HEAD
+[Unreleased]: https://github.com/GaTTGeng/ComposeSharp/compare/3.0.0...HEAD
+[3.0.0]: https://github.com/GaTTGeng/ComposeSharp/compare/2.0.0...3.0.0
 [2.0.0]: https://github.com/GaTTGeng/ComposeSharp/releases/tag/2.0.0

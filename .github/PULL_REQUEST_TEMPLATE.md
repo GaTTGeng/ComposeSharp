@@ -17,4 +17,6 @@
 
 - [ ] Code follows the existing style of the project
 - [ ] New or updated tests cover the changes
+- [ ] Documentation is in sync with this change (XML docs / `README.md` / `README.zh-CN.md` / `docs/*` as applicable)
+- [ ] `CHANGELOG.md` `[Unreleased]` updated for user-visible changes (or N/A: internal-only)
 - [ ] No unrelated changes are included

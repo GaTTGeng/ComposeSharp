@@ -30,17 +30,18 @@ Full Compose Specification parity in one release. Unsupported or partially appli
 
 ### Exit criteria
 
-- Managed Docker API paths for build and commit, or explicit API redesign when Docker Engine lacks an equivalent endpoint. Copy and export use the container archive and export endpoints.
+- Build, commit, copy, and export use Docker Engine APIs with focused coverage.
 - `TopAsync` returns real process information.
 - `EventsAsync` consumes Docker events instead of periodically polling containers.
 - `WatchAsync` has a documented action model rather than only signalling the first change.
-- `GenerateAsync` and `PublishAsync` have behavior that matches their public names, with focused tests.
+- `GenerateAsync` emits a rendered project configuration.
+- Remaining publish options have explicit, tested behavior or are removed from the public contract.
 
 ### Not a goal
 
 Reimplement every Docker Compose CLI UX feature. The public SDK should prioritize structured results, cancellation, and diagnostics over terminal output emulation.
 
-## 3.0 — Reliable orchestration
+## Reliable orchestration
 
 **Goal:** Make repeated project reconciliation safe enough for applications that manage more than one development lifecycle.
 
