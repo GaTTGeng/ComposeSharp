@@ -103,6 +103,10 @@ builder.Services.AddComposeSharp();
 
 默认端点在 Windows 是 `npipe://./pipe/docker_engine`，Unix 是 `unix:///var/run/docker.sock`；也可以通过 `SocketPath` 显式指定。
 
+## 从 2.0.0 迁移
+
+`IComposeService.PublishAsync` 现在返回每个服务对应的 `PublishResult`，而不是 `Task`。只对调用进行 `await` 的代码通常仍可直接编译。若代码将返回值赋给 `Task`、传给签名要求 `Task` 的委托，或依赖按旧签名编译的二进制文件，则需要更新或重新编译。
+
 ## 包的边界
 
 | 包 | 何时使用 |

@@ -128,6 +128,10 @@ These boundaries are part of the public contract today:
 
 If you need exact CLI behavior, BuildKit breadth, Compose watch synchronization, or a full Compose Specification merge/interpolation implementation, use Docker Compose CLI directly for now. Issues that demonstrate a minimal compatibility gap are especially valuable: [open one](https://github.com/GaTTGeng/ComposeSharp/issues/new?template=compose_compatibility_gap.yml).
 
+## Migration from 2.0.0
+
+`IComposeService.PublishAsync` now returns per-service `PublishResult` values instead of `Task`. Calls that only `await` the method generally remain source-compatible. Update code that assigns the result to `Task`, passes it to a `Task`-typed delegate, or depends on binaries compiled against the earlier signature.
+
 ## Packages
 
 | Package | Use it when you need… |
@@ -144,8 +148,8 @@ All packages target .NET 8, .NET 9, and .NET 10. The engine needs permission to 
 The roadmap is organized around implementation honesty rather than pretending every CLI-shaped API is complete:
 
 1. **2.1 — Compose model correctness.** Test-backed YAML interpolation and merge semantics, profile selection, service configuration mapping, and clear validation errors.
-2. **2.2 — Docker Engine coverage.** Replace remaining process-backed build/commit paths, implement real `top`, Docker event streaming, and meaningful project generation/publishing behavior.
-3. **3.0 — dependable orchestration.** Dependency ordering and readiness, safer reconciliation, richer diagnostics, and integration coverage across Linux and Windows Docker environments.
+2. **2.2 — Docker Engine coverage.** Add real `top`, Docker event streaming, a meaningful watch action model, and project generation; complete and document the remaining publish options.
+3. **Reliable orchestration.** Dependency ordering and readiness, safer reconciliation, richer diagnostics, and integration coverage across Linux and Windows Docker environments.
 
 Details, acceptance criteria, and non-goals live in [docs/roadmap.md](docs/roadmap.md). The [Compose field support matrix](docs/compose-field-matrix.md) records parsed versus applied behavior. Work is tracked in [GitHub milestones](https://github.com/GaTTGeng/ComposeSharp/milestones).
 
