@@ -98,6 +98,29 @@ public sealed class TopAndEventMappingTests
     }
 
     [Fact]
+    public void MapEvent_KeepsProjectVolumeEvents_WhenNameIsOnlyInActorId()
+    {
+        // Volume events put the volume name in Actor.ID; attributes only carry "driver".
+        var message = new Message
+        {
+            Type = "volume",
+            Action = "create",
+            Actor = new Actor
+            {
+                ID = "demo_data",
+                Attributes = new Dictionary<string, string> { ["driver"] = "local" }
+            }
+        };
+
+        var composeEvent = EventStreamer.Map(message, Project, services: null);
+
+        Assert.NotNull(composeEvent);
+        Assert.Equal("demo_data", composeEvent.ID);
+        Assert.Null(composeEvent.Container);
+        Assert.Null(composeEvent.Service);
+    }
+
+    [Fact]
     public void MapEvent_DropsForeignAndUnattributedEvents()
     {
         var foreignNetwork = new Message
@@ -184,17 +207,18 @@ public sealed class TopAndEventMappingTests
     }
 
     [Theory]
-    [InlineData("container", "demo", null, true)]
-    [InlineData("container", "other", null, false)]
-    [InlineData("container", null, null, false)]
-    [InlineData("network", null, "demo_default", true)]
-    [InlineData("network", null, "demo_net", true)]
-    [InlineData("network", null, "other_default", false)]
-    [InlineData("network", null, "demoo_default", false)]
-    [InlineData("volume", null, "demo_data", true)]
-    [InlineData("volume", null, "other_data", false)]
-    [InlineData("image", null, null, false)]
-    public void BelongsToProject_MatchesLabelOrComposeNamePrefix(string type, string? projectLabel, string? name, bool expected)
+    [InlineData("container", "demo", null, null, true)]
+    [InlineData("container", "other", null, null, false)]
+    [InlineData("container", null, null, null, false)]
+    [InlineData("network", null, "demo_default", "net-id", true)]
+    [InlineData("network", null, "demo_net", "net-id", true)]
+    [InlineData("network", null, "other_default", "net-id", false)]
+    [InlineData("network", null, "demoo_default", "net-id", false)]
+    [InlineData("volume", null, null, "demo_data", true)]
+    [InlineData("volume", null, null, "other_data", false)]
+    [InlineData("volume", null, "demo_data", "ignored-id", true)]
+    [InlineData("image", null, null, null, false)]
+    public void BelongsToProject_MatchesLabelOrComposeNamePrefix(string type, string? projectLabel, string? name, string? actorId, bool expected)
     {
         var attributes = new Dictionary<string, string>(StringComparer.Ordinal);
         if (projectLabel is not null)
@@ -206,7 +230,7 @@ public sealed class TopAndEventMappingTests
         {
             Type = type,
             Action = "create",
-            Actor = new Actor { ID = "id-1", Attributes = attributes }
+            Actor = new Actor { ID = actorId ?? "id-1", Attributes = attributes }
         };
 
         Assert.Equal(expected, EventStreamer.BelongsToProject(message, Project, attributes));

@@ -589,12 +589,11 @@ public sealed class ComposeService : IComposeService
     /// </remarks>
     public async IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // An all-services selection keeps project-level events (network, volume) that carry no
-        // service label; a narrower selection drops anything outside those services.
-        var selection = SelectExistingServices(context, options?.Services);
-        IReadOnlySet<string>? services = selection.IncludesAllDefinedServices
-            ? null
-            : selection.ServiceNames?.ToHashSet(StringComparer.Ordinal);
+        // Project-level events (network, volume) are kept unless the caller explicitly names
+        // services. Profile selection alone must not drop them.
+        IReadOnlySet<string>? services = options?.Services is { Count: > 0 }
+            ? SelectExistingServices(context, options.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal)
+            : null;
         using var client = _clientFactory.CreateClient(context.SocketPath);
         await foreach (var composeEvent in _events.StreamEventsAsync(client, context.ProjectName, services, cancellationToken))
             yield return composeEvent;

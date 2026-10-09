@@ -138,7 +138,11 @@ internal sealed class EventStreamer
         if (string.Equals(message.Type, "network", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(message.Type, "volume", StringComparison.OrdinalIgnoreCase))
         {
-            var name = attributes is not null && attributes.TryGetValue("name", out var value) ? value : null;
+            // Networks put the name in the "name" attribute; volumes put it in Actor.ID
+            // (attributes only carry fields such as "driver").
+            var name = attributes is not null && attributes.TryGetValue("name", out var value)
+                ? value
+                : message.Actor?.ID;
             return name is not null &&
                    name.StartsWith(projectName + "_", StringComparison.Ordinal);
         }

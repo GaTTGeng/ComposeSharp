@@ -12,9 +12,11 @@ namespace ComposeSharp.IntegrationTests;
 /// These tests require a reachable Docker daemon and return early when Docker is unavailable,
 /// so a green run without Docker is not proof of Docker behavior.
 /// </summary>
-public class ComposeServiceIntegrationTests : IAsyncLifetime
+public class ComposeServiceIntegrationTests
 {
     private static readonly bool DockerAvailable = CheckDockerAvailable();
+    private static readonly SemaphoreSlim ImageGate = new(1, 1);
+    private static bool _busyBoxReady;
 
     // Probes `docker info` once per test class; a missing CLI or unreachable daemon disables the Docker cases.
     private static bool CheckDockerAvailable()
@@ -33,20 +35,25 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
         catch { return false; }
     }
 
-    // Fresh CI runners do not have the test image cached; pull once before any case creates containers.
-    public async Task InitializeAsync()
+    // Fresh CI runners do not have the test image cached. Pull at most once for the whole suite;
+    // tests that never create containers must not depend on the registry being reachable.
+    private static async Task EnsureBusyBoxAsync()
     {
-        if (!DockerAvailable) return;
-
-        using var client = new DockerClientFactory().CreateClient();
-        await client.Images.CreateImageAsync(
-            new ImagesCreateParameters { FromImage = "busybox", Tag = "1.36" },
-            authConfig: null,
-            new Progress<JSONMessage>(),
-            CancellationToken.None);
+        if (_busyBoxReady) return;
+        await ImageGate.WaitAsync();
+        try
+        {
+            if (_busyBoxReady) return;
+            using var client = new DockerClientFactory().CreateClient();
+            await client.Images.CreateImageAsync(
+                new ImagesCreateParameters { FromImage = "busybox", Tag = "1.36" },
+                authConfig: null,
+                new Progress<JSONMessage>(),
+                CancellationToken.None);
+            _busyBoxReady = true;
+        }
+        finally { ImageGate.Release(); }
     }
-
-    public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
     public async Task PsAsync_ReturnsEmpty_WhenNoContainers()
@@ -108,6 +115,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task BuildAsync_BuildsConfiguredTargetThroughDockerEngine()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"managed-build-{suffix}");
@@ -189,6 +197,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task BuildAsync_Throws_WhenDockerBuildReportsAnError()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var directory = Path.Combine(Path.GetTempPath(), $"managed-build-failure-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
@@ -229,6 +238,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task LifecycleOperations_ApplyProfilesAndAllowExplicitServiceSelection()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"profile-lifecycle-{suffix}");
@@ -296,6 +306,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task CopyAndExportAsync_UseDockerArchiveEndpoints()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var directory = Path.Combine(Path.GetTempPath(), $"archive-transfer-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
@@ -445,6 +456,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task LifecycleOperations_DoNothing_WhenProfileSelectionIsEmpty()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"profile-empty-{suffix}");
@@ -491,6 +503,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task CommitAsync_CreatesImageThroughDockerEngine()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"managed-commit-{suffix}");
@@ -556,6 +569,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task PublishAsync_ReportsTagAndPushOutcomesForEverySelectedService()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"managed-publish-{suffix}");
@@ -628,6 +642,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task PushAsync_IgnoreFailures_SwallowsStreamedPushErrors()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"push-ignore-{suffix}");
@@ -697,6 +712,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task TopAsync_ReturnsProcessRows_ForRunningServiceContainers()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"top-{suffix}");
@@ -740,6 +756,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task TopAsync_FiltersByServiceSelection()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"top-filter-{suffix}");
@@ -782,6 +799,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task EventsAsync_StreamsDockerLifecycleEvents()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"events-{suffix}");
@@ -840,6 +858,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task EventsAsync_HonorsCancellation()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"events-cancel-{suffix}");
@@ -885,6 +904,7 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     public async Task EventsAsync_FiltersByServiceSelection()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"events-filter-{suffix}");
@@ -943,11 +963,12 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
     }
 
     // Without an explicit service filter, project-level events (network, volume) keep a null Service
-    // instead of being discarded by the service-name filter.
+    // instead of being discarded. An inactive profiled service must not turn into a service filter.
     [Fact]
     public async Task EventsAsync_PreservesProjectEventsWithoutServiceFilter()
     {
         if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
 
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var directory = Path.Combine(Path.GetTempPath(), $"events-project-{suffix}");
@@ -958,6 +979,10 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
               web:
                 image: busybox:1.36
                 command: ["sleep", "300"]
+              debug:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                profiles: [debug]
             """);
 
         var context = new ComposeProjectContext
@@ -986,8 +1011,9 @@ public class ComposeServiceIntegrationTests : IAsyncLifetime
                 }
             }, CancellationToken.None);
 
-            // DownAsync removes the project network, producing project-scoped network events.
-            await service.DownAsync(context);
+            // Tear down every declared service (including the inactive profile) so the project
+            // network is removed and emits a destroy event.
+            await service.DownAsync(context with { Profiles = ["debug"] });
             await collector;
 
             Assert.Contains(observed, e => e.Type == "container" && e.Service == "web");
