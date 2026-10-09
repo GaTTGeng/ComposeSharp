@@ -9,17 +9,22 @@ namespace ComposeSharp.Tests;
 /// Covers basic ComposeFileLoader parsing of common compose fields, plus smoke checks that pin
 /// public-contract constants and the IComposeService API surface.
 /// </summary>
-public class ComposeFileLoaderTests
+public class ComposeFileLoaderTests : IDisposable
 {
     private readonly ITestOutputHelper _output;
-    public ComposeFileLoaderTests(ITestOutputHelper output) { _output = output; }
+    private readonly string _tempDir;
+
+    public ComposeFileLoaderTests(ITestOutputHelper output)
+    {
+        _output = output;
+        _tempDir = Path.Combine(Path.GetTempPath(), "compose-loader-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_tempDir);
+    }
 
     [Fact]
     public void Load_SimpleCompose()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "compose-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "docker-compose.yml"), """
+        File.WriteAllText(Path.Combine(_tempDir, "docker-compose.yml"), """
             version: "3.8"
             services:
               web:
@@ -32,7 +37,7 @@ public class ComposeFileLoaderTests
             """);
 
         var loader = new ComposeFileLoader();
-        var project = loader.Load(dir, "docker-compose.yml");
+        var project = loader.Load(_tempDir, "docker-compose.yml");
 
         _output.WriteLine($"Services: {project.Services.Count}");
         foreach (var svc in project.Services)
@@ -42,16 +47,12 @@ public class ComposeFileLoaderTests
         Assert.Contains(project.Services, s => s.Name == "web");
         Assert.Contains(project.Services, s => s.Name == "api");
         Assert.Equal("nginx:latest", project.Services.First(s => s.Name == "web").Image);
-
-        Directory.Delete(dir, recursive: true);
     }
 
     [Fact]
     public void Load_WithVolumes()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "compose-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "docker-compose.yml"), """
+        File.WriteAllText(Path.Combine(_tempDir, "docker-compose.yml"), """
             version: "3.8"
             services:
               db:
@@ -63,21 +64,17 @@ public class ComposeFileLoaderTests
             """);
 
         var loader = new ComposeFileLoader();
-        var project = loader.Load(dir, "docker-compose.yml");
+        var project = loader.Load(_tempDir, "docker-compose.yml");
 
         Assert.Single(project.Services);
         Assert.Single(project.Volumes);
         Assert.Equal("pgdata", project.Volumes[0]);
-
-        Directory.Delete(dir, recursive: true);
     }
 
     [Fact]
     public void Load_WithEnvironment()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "compose-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "docker-compose.yml"), """
+        File.WriteAllText(Path.Combine(_tempDir, "docker-compose.yml"), """
             version: "3.8"
             services:
               app:
@@ -88,20 +85,16 @@ public class ComposeFileLoaderTests
             """);
 
         var loader = new ComposeFileLoader();
-        var project = loader.Load(dir, "docker-compose.yml");
+        var project = loader.Load(_tempDir, "docker-compose.yml");
 
         Assert.Single(project.Services);
         Assert.Contains("DATABASE_URL=postgres://localhost/db", project.Services[0].Environment);
-
-        Directory.Delete(dir, recursive: true);
     }
 
     [Fact]
     public void Load_WithNetworks()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "compose-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "docker-compose.yml"), """
+        File.WriteAllText(Path.Combine(_tempDir, "docker-compose.yml"), """
             version: "3.8"
             services:
               web:
@@ -113,20 +106,16 @@ public class ComposeFileLoaderTests
             """);
 
         var loader = new ComposeFileLoader();
-        var project = loader.Load(dir, "docker-compose.yml");
+        var project = loader.Load(_tempDir, "docker-compose.yml");
 
         Assert.Single(project.Networks);
         Assert.Equal("frontend", project.Networks[0]);
-
-        Directory.Delete(dir, recursive: true);
     }
 
     [Fact]
     public void Load_WithBuildConfig()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "compose-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "docker-compose.yml"), """
+        File.WriteAllText(Path.Combine(_tempDir, "docker-compose.yml"), """
             version: "3.8"
             services:
               app:
@@ -140,24 +129,20 @@ public class ComposeFileLoaderTests
             """);
 
         var loader = new ComposeFileLoader();
-        var project = loader.Load(dir, "docker-compose.yml");
+        var project = loader.Load(_tempDir, "docker-compose.yml");
 
         Assert.Single(project.Services);
         Assert.NotNull(project.Services[0].Build);
         Assert.Equal(".", project.Services[0].Build!.Context);
         Assert.Equal("Dockerfile", project.Services[0].Build!.Dockerfile);
         Assert.Equal("production", project.Services[0].Build!.Target);
-
-        Directory.Delete(dir, recursive: true);
     }
 
     // Profile tags are preserved on the model; profile filtering is applied later by service selection.
     [Fact]
     public void Load_WithProfiles()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "compose-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "docker-compose.yml"), """
+        File.WriteAllText(Path.Combine(_tempDir, "docker-compose.yml"), """
             version: "3.8"
             services:
               web:
@@ -169,20 +154,16 @@ public class ComposeFileLoaderTests
             """);
 
         var loader = new ComposeFileLoader();
-        var project = loader.Load(dir, "docker-compose.yml");
+        var project = loader.Load(_tempDir, "docker-compose.yml");
 
         Assert.Equal(2, project.Services.Count);
         Assert.Contains(project.Services, s => s.Name == "debug" && s.Profiles.Contains("debug"));
-
-        Directory.Delete(dir, recursive: true);
     }
 
     [Fact]
     public void Load_WithDeploy()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "compose-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "docker-compose.yml"), """
+        File.WriteAllText(Path.Combine(_tempDir, "docker-compose.yml"), """
             version: "3.8"
             services:
               web:
@@ -195,13 +176,11 @@ public class ComposeFileLoaderTests
             """);
 
         var loader = new ComposeFileLoader();
-        var project = loader.Load(dir, "docker-compose.yml");
+        var project = loader.Load(_tempDir, "docker-compose.yml");
 
         Assert.Single(project.Services);
         Assert.NotNull(project.Services[0].Deploy);
         Assert.Equal(3, project.Services[0].Deploy!.Replicas);
-
-        Directory.Delete(dir, recursive: true);
     }
 
     // Pins the Docker Compose label keys used to scope engine resources to a project.
@@ -277,5 +256,11 @@ public class ComposeFileLoaderTests
         };
         Assert.Equal("abc123", summary.ID);
         Assert.Equal("running", summary.State);
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_tempDir, recursive: true); }
+        catch { }
     }
 }
