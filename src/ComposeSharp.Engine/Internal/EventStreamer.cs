@@ -41,9 +41,10 @@ internal sealed class EventStreamer
     {
         // Subscribe by type rather than project label: Docker's label filter only matches
         // container/image events, so network and volume events would never arrive.
+        // No Since: this is a live-only stream. A second-precision Since would replay events
+        // from earlier in the same second and let callers mistake them for post-subscribe ones.
         var parameters = new ContainerEventsParameters
         {
-            Since = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
             Filters = new Dictionary<string, IDictionary<string, bool>>
             {
                 ["type"] = new Dictionary<string, bool>

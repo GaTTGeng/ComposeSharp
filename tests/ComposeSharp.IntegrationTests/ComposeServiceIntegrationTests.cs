@@ -1,4 +1,4 @@
-﻿using ComposeSharp.Api;
+using ComposeSharp.Api;
 using ComposeSharp.Engine;
 using ComposeSharp.Loader;
 using Docker.DotNet;
@@ -786,6 +786,10 @@ public class ComposeServiceIntegrationTests
 
             var rows = await service.TopAsync(context, new ComposeTopOptions { Services = ["worker"] });
             Assert.Equal("worker", Assert.Single(rows).Service);
+
+            // An explicit empty selection is a no-op, not "every service".
+            var none = await service.TopAsync(context, new ComposeTopOptions { Services = [] });
+            Assert.Empty(none);
         }
         finally
         {

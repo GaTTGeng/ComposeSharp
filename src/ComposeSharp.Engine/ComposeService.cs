@@ -529,10 +529,15 @@ public sealed class ComposeService : IComposeService
     /// <summary>Returns the process listings of the project's running service containers.</summary>
     /// <remarks>
     /// Uses the Docker Engine process-list API. Non-running containers are omitted because the
-    /// engine cannot report processes for them.
+    /// engine cannot report processes for them. An empty <c>Services</c> list selects no
+    /// services and returns an empty listing; <c>null</c> selects every project service.
     /// </remarks>
     public async Task<IReadOnlyList<ContainerProcSummary>> TopAsync(ComposeProjectContext context, ComposeTopOptions? options = null, CancellationToken cancellationToken = default)
     {
+        // An explicit empty selection is a no-op, not "every service".
+        if (options?.Services is { Count: 0 })
+            return [];
+
         // Select services first so the listing stays inside the project's selected services.
         var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
         using var client = _clientFactory.CreateClient(context.SocketPath);

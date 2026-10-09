@@ -82,6 +82,8 @@ public interface IComposeService
     /// <remarks>
     /// Uses the Docker Engine process-list API and returns one <see cref="ContainerProcSummary"/>
     /// per running container of the selected services. Non-running containers are omitted.
+    /// An empty <c>Services</c> list selects no services and returns an empty listing;
+    /// <c>null</c> selects every project service.
     /// </remarks>
     Task<IReadOnlyList<ContainerProcSummary>> TopAsync(ComposeProjectContext context, ComposeTopOptions? options = null, CancellationToken cancellationToken = default);
 
