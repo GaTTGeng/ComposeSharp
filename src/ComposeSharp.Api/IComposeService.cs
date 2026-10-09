@@ -120,8 +120,9 @@ public interface IComposeService
 
     /// <summary>Commits a service container to a new image and returns the image reference.</summary>
     /// <remarks>
-    /// Currently starts the local <c>docker</c> executable to perform the commit; a managed Docker API
-    /// implementation is planned.
+    /// Uses the Docker Engine commit endpoint. Honors author, message, Dockerfile-style changes,
+    /// pause, and replica selection via <c>ComposeCommitOptions.Index</c>. Returns the image
+    /// reference recorded on the new image (the resolved <c>Reference</c>).
     /// </remarks>
     Task<string> CommitAsync(ComposeProjectContext context, ComposeCommitOptions options, CancellationToken cancellationToken = default);
 
@@ -139,7 +140,15 @@ public interface IComposeService
     /// <remarks>Multi-file loading currently replaces same-named services instead of applying the full Compose merge rules.</remarks>
     ComposeProjectConfig LoadProject(ComposeProjectContext context);
 
-    /// <summary>Tags the project's service images under the given repository.</summary>
-    /// <remarks>Tags images locally but does not push them to a registry.</remarks>
-    Task PublishAsync(ComposeProjectContext context, string repository, ComposePublishOptions? options = null, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Tags every selected service image into <paramref name="repository"/> as <c>repository:serviceName</c>
+    /// and pushes each tagged image, reporting per-service tag and push outcomes.
+    /// </summary>
+    /// <remarks>
+    /// Uses <see cref="ComposeProjectContext.RegistryAuth"/> for registry authentication. Tag and push
+    /// outcomes are collected for every selected service instead of aborting on the first failure;
+    /// cancellation still aborts the operation. <c>ResolveImageDigests</c>, <c>WithEnvironment</c>,
+    /// <c>OcIVersion</c>, and <c>InsecureRegistry</c> are not applied.
+    /// </remarks>
+    Task<IReadOnlyList<PublishResult>> PublishAsync(ComposeProjectContext context, string repository, ComposePublishOptions? options = null, CancellationToken cancellationToken = default);
 }

@@ -471,6 +471,142 @@ public class ComposeServiceIntegrationTests
         }
     }
 
+    // Commits a running service container through the Docker Engine commit endpoint (no docker CLI).
+    [Fact]
+    public async Task CommitAsync_CreatesImageThroughDockerEngine()
+    {
+        if (!DockerAvailable) return;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"managed-commit-{suffix}");
+        var projectName = $"managed-commit-{suffix}";
+        var reference = $"managed-commit-image-{suffix}:latest";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+            await service.ExecAsync(context, "app", new ComposeExecOptions
+            {
+                Command = ["sh", "-c", "echo committed > /marker"]
+            });
+
+            var image = await service.CommitAsync(context, new ComposeCommitOptions
+            {
+                Service = "app",
+                Reference = reference,
+                Author = "ComposeSharp Tests",
+                Message = "managed commit",
+                Pause = true
+            });
+
+            Assert.Equal(reference, image);
+            using var client = new DockerClientFactory().CreateClient();
+            var inspect = await client.Images.InspectImageAsync(reference, CancellationToken.None);
+            Assert.Contains(reference, inspect.RepoTags ?? []);
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally
+            {
+                using var client = new DockerClientFactory().CreateClient();
+                try
+                {
+                    await client.Images.DeleteImageAsync(reference, new ImageDeleteParameters { Force = true }, CancellationToken.None);
+                }
+                catch (DockerImageNotFoundException) { }
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    // Tags every selected service image and reports per-service tag/push outcomes without aborting
+    // on the first failure. The push target is unreachable, so tagging succeeds and pushing fails.
+    [Fact]
+    public async Task PublishAsync_ReportsTagAndPushOutcomesForEverySelectedService()
+    {
+        if (!DockerAvailable) return;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"managed-publish-{suffix}");
+        var projectName = $"managed-publish-{suffix}";
+        var repository = "127.0.0.1:1/composesharp-publish";
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              web:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+              worker:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml",
+            RegistryAuth = new DockerRegistryAuth
+            {
+                Username = "publisher",
+                Password = "not-a-real-password"
+            }
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+            var results = await service.PublishAsync(context, repository);
+
+            Assert.Equal(2, results.Count);
+            Assert.All(results, result =>
+            {
+                Assert.True(result.Tagged);
+                Assert.False(result.Pushed);
+                Assert.False(result.Succeeded);
+                Assert.NotNull(result.TaggedImage);
+                Assert.StartsWith($"{repository}:", result.TaggedImage, StringComparison.Ordinal);
+                Assert.NotNull(result.Error);
+            });
+            Assert.Contains(results, result => result.Service == "web" && result.TaggedImage == $"{repository}:web");
+            Assert.Contains(results, result => result.Service == "worker" && result.TaggedImage == $"{repository}:worker");
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally
+            {
+                using var client = new DockerClientFactory().CreateClient();
+                foreach (var tag in new[] { $"{repository}:web", $"{repository}:worker" })
+                {
+                    try
+                    {
+                        await client.Images.DeleteImageAsync(tag, new ImageDeleteParameters { Force = true }, CancellationToken.None);
+                    }
+                    catch (DockerImageNotFoundException) { }
+                }
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
     // Collects build statuses and container log lines for assertions.
     private sealed class TestLogConsumer : ILogConsumer
     {
