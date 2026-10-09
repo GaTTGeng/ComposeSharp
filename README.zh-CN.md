@@ -85,15 +85,15 @@ builder.Services.AddComposeSharp();
 | --- | --- |
 | 项目生命周期 | 创建项目网络，创建/启动/删除带标签的容器，列举项目容器，按需删除网络和卷，并通过 Docker Engine 构建已选择的服务。 |
 | 服务控制 | start、stop、restart、pause、unpause、kill、remove、run、exec、attach、pull、push、scale、wait 和端口查询。 |
-| 观察 | 容器、镜像、卷、日志、项目列表，以及 `VizAsync` 输出的 DOT 依赖图。 |
-| 事件与文件变化 | `EventsAsync` 每两秒轮询容器状态；`WatchAsync` 仅在 build context 变动时发出 `rebuild` 通知。 |
+| 观察 | 容器、镜像、卷、日志、项目列表、`TopAsync` 进程清单，以及 `VizAsync` 输出的 DOT 依赖图。 |
+| 事件与文件变化 | `EventsAsync` 订阅按项目标签过滤的 Docker 事件流；`WatchAsync` 仅在 build context 变动时发出 `rebuild` 通知。 |
 
 请特别留意以下事实：
 
 - `BuildAsync` 会将本地 build context 打包为 tar 并发送给 Docker Engine API。它会应用 `.dockerignore` 或所选 Dockerfile 对应的 `.dockerignore`、保留符号链接与 Unix 文件权限；被忽略的目录树只有在否定规则可能重新包含其后代时才会遍历；它会安全暂存位于上下文外的 Dockerfile，并在创建归档时响应取消。归档会写入临时文件而非进程内存。未赋值的 build argument 会在进程环境存在该变量时继承其值。它支持 Dockerfile、tags、target、build args、labels、`cache_from`、network mode、extra hosts、共享内存与内存限制、单个平台、pull 和 no-cache；`ComposeBuildOptions.LogConsumer` 会接收 Docker 构建状态，构建流中的错误会使操作失败。BuildKit 专用的 `cache_to`、多平台、`privileged`、`builder` 与 progress mode 选择尚未应用。
 - `CopyAsync` 使用 Docker archive API，`ExportAsync` 通过 Docker Engine 流式导出服务容器文件系统 tar；两者都可以针对运行中、已停止或已创建的服务容器。复制时，容器侧路径使用 `service:/绝对路径`，本地侧使用文件系统路径；容器路径按目录处理。本地文件上传会写入所有匹配的服务容器；`ComposeCopyOptions.Index` 可指定一个副本，下载时默认只选择一个副本。`ComposeCopyOptions.All` 会包含通过 `RunAsync` 创建的一次性容器，`CopyResult.BytesCopied` 表示所有上传目标的文件内容字节总数。本地符号链接和下载归档中的符号链接会被拒绝；下载时保留 Unix 文件权限，并将硬链接展开为普通文件。
 - `CommitAsync` 使用 Docker Engine commit 接口，并返回记录到新镜像上的镜像引用。它会应用 author、message、Dockerfile 风格的 `Changes`、`Pause`，并支持用 `ComposeCommitOptions.Index` 选择副本。
-- `TopAsync` 当前返回空列表。
+- `TopAsync` 使用 Docker Engine 进程列表 API，为每个运行中的服务容器返回一份进程清单；非运行中的容器会被省略。
 - `GenerateAsync` 返回读取到的项目摘要，并不会生成新的 Compose 文件。
 - `PublishAsync` 会把每个被选中服务的镜像打成 `repository:serviceName`，并使用 `ComposeProjectContext.RegistryAuth` 推送；返回值为每个服务一条 `PublishResult`，分别记录 tag 与 push 结果，不会在第一个失败处中断。`ComposePublishOptions` 中的 `ResolveImageDigests`、`WithEnvironment`、`OcIVersion` 和 `InsecureRegistry` 尚未应用。
 - `LoadMerged` 按字段逐步合并后置文件：标量由后置值覆盖，映射递归合并，列表追加；服务资源、`command` 和 `entrypoint` 有明确的替换规则。它仍不是 Docker Compose 的完整合并算法；精确规则和不支持的 YAML 标签见[合并语义](docs/merge-semantics.md)。

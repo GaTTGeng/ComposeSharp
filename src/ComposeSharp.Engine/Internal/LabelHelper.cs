@@ -51,6 +51,10 @@ internal sealed class LabelHelper
     public static Dictionary<string, IDictionary<string, bool>> ProjectLabelFilter(string projectName)
         => LabelFilter(ComposeConstants.ProjectLabel, projectName);
 
+    /// <summary>Reads the Compose service label from a resource's labels, or null when absent.</summary>
+    public static string? GetServiceName(IDictionary<string, string>? labels)
+        => labels != null && labels.TryGetValue(ComposeConstants.ServiceLabel, out var service) ? service : null;
+
     // Both labels must match so a service name reused in another project is never touched.
     public static Dictionary<string, IDictionary<string, bool>> ServiceLabelFilter(string projectName, string serviceName)
         => new()

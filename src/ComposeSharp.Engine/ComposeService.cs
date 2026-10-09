@@ -22,6 +22,8 @@ public sealed class ComposeService : IComposeService
     private readonly NetworkManager _networks = new();
     private readonly ImageManager _images = new();
     private readonly LogStreamer _logs = new();
+    private readonly ProcessInspector _processes = new();
+    private readonly EventStreamer _events = new();
 
     /// <summary>
     /// Builds images for the selected services that define a <c>build</c> section.
@@ -524,12 +526,22 @@ public sealed class ComposeService : IComposeService
             .ToList();
     }
 
-    /// <summary>Returns the process listings of the project's containers.</summary>
-    /// <remarks>Known limitation: currently a placeholder that always returns an empty list.</remarks>
-    public Task<IReadOnlyList<ContainerProcSummary>> TopAsync(ComposeProjectContext context, ComposeTopOptions? options = null, CancellationToken cancellationToken = default)
+    /// <summary>Returns the process listings of the project's running service containers.</summary>
+    /// <remarks>
+    /// Uses the Docker Engine process-list API. Non-running containers are omitted because the
+    /// engine cannot report processes for them. An empty <c>Services</c> list selects no
+    /// services and returns an empty listing; <c>null</c> selects every project service.
+    /// </remarks>
+    public async Task<IReadOnlyList<ContainerProcSummary>> TopAsync(ComposeProjectContext context, ComposeTopOptions? options = null, CancellationToken cancellationToken = default)
     {
-        // Placeholder: process listing is not implemented yet, so always return empty.
-        return Task.FromResult<IReadOnlyList<ContainerProcSummary>>([]);
+        // An explicit empty selection is a no-op, not "every service".
+        if (options?.Services is { Count: 0 })
+            return [];
+
+        // Select services first so the listing stays inside the project's selected services.
+        var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
+        using var client = _clientFactory.CreateClient(context.SocketPath);
+        return await _processes.ListProcessesAsync(client, context.ProjectName, services, cancellationToken);
     }
 
     /// <summary>Lists the images used by the project's containers.</summary>
@@ -572,45 +584,79 @@ public sealed class ComposeService : IComposeService
         await _logs.LogsAsync(client, context.ProjectName, effectiveOptions, consumer, cancellationToken);
     }
 
-    /// <summary>Yields the current state of the project's containers as compose events.</summary>
+    /// <summary>Streams Docker Engine events for the project's resources as compose events.</summary>
     /// <remarks>
-    /// Known limitation: this polls container state on an interval instead of subscribing to the
-    /// Docker event stream, so events are snapshots of state rather than a true change feed.
+    /// Subscribes to container, network, and volume Docker events and keeps only those owned by
+    /// the project. Network and volume events are matched by exact Compose resource name within
+    /// the matching resource type (Docker allows a network and a volume to share a name).
+    /// Service-labeled events honor the profile-selected service set. Events without a service
+    /// label are reported with a null <c>Service</c> and are excluded whenever
+    /// <see cref="ComposeEventsOptions.Services"/> is a non-null list. An empty
+    /// <c>Services</c> list yields an empty stream; <c>null</c> selects every project service
+    /// and keeps project-level events. <see cref="ComposeEventsOptions.OnSubscribed"/> fires once
+    /// the subscription has been issued.
     /// </remarks>
     public async IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Filter by selected services and stamp the poll window start.
-        var services = SelectExistingServices(context, options?.Services).ServiceNames?.ToHashSet(StringComparer.Ordinal);
+        // An explicit empty selection is a no-op, not "every service".
+        if (options?.Services is { Count: 0 })
+            yield break;
+
+        // Profile/explicit selection always filters service-labeled events. Project-level events
+        // (network, volume) stay visible only when Services is null (select-all).
+        var selection = SelectExistingServices(context, options?.Services);
+        IReadOnlySet<string>? services = selection.ServiceNames?.ToHashSet(StringComparer.Ordinal);
+        var keepProjectLevelEvents = options?.Services is null;
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        var since = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var resources = await CollectProjectResourceNamesAsync(client, context, cancellationToken);
+        await foreach (var composeEvent in _events.StreamEventsAsync(
+            client, context.ProjectName, resources, services, keepProjectLevelEvents,
+            options?.OnSubscribed, cancellationToken))
+            yield return composeEvent;
+    }
 
-        // Poll loop: each cycle snapshots container state instead of subscribing to the Docker event stream.
-        while (!cancellationToken.IsCancellationRequested)
+    // Exact network/volume names this project owns, kept separate per type: Docker allows a
+    // network and a volume to share a name, so a combined set would leak across types.
+    private async Task<ProjectResourceNames> CollectProjectResourceNamesAsync(
+        DockerClient client, ComposeProjectContext context, CancellationToken cancellationToken)
+    {
+        var networks = new HashSet<string>(StringComparer.Ordinal);
+        var volumes = new HashSet<string>(StringComparer.Ordinal);
+        try
         {
-            var containers = await _containers.ListProjectContainersAsync(client, context.ProjectName, true, cancellationToken);
-            foreach (var container in containers)
-            {
-                var labels = container.Labels ?? new Dictionary<string, string>();
-                labels.TryGetValue(ComposeConstants.ServiceLabel, out var svc);
-
-                if (services is not null && (svc is null || !services.Contains(svc)))
-                    continue;
-
-                yield return new ComposeEvent
-                {
-                    Timestamp = DateTime.UtcNow,
-                    Type = "container",
-                    Action = container.State,
-                    ID = container.ID,
-                    Service = svc,
-                    Container = container.ID,
-                    Attributes = labels is IDictionary<string, string> dict ? dict.ToDictionary(kv => kv.Key, kv => kv.Value) : null
-                };
-            }
-
-            // Fixed 2s interval between snapshots.
-            await Task.Delay(2000, cancellationToken);
+            var project = LoadProjectInternal(context);
+            var declaredNetworks = project.Networks.Count > 0 ? project.Networks : (IReadOnlyList<string>)["default"];
+            foreach (var network in declaredNetworks)
+                networks.Add(NetworkManager.GetNetworkName(context.ProjectName, network));
+            foreach (var volume in project.Volumes)
+                volumes.Add(NetworkManager.GetVolumeName(context.ProjectName, volume));
         }
+        catch (FileNotFoundException) when (context.Profiles is not { Count: > 0 })
+        {
+            // Label-only mode: resources already on the daemon supply the names.
+        }
+
+        var existingNetworks = await client.Networks.ListNetworksAsync(new NetworksListParameters
+        {
+            Filters = LabelHelper.ProjectLabelFilter(context.ProjectName)
+        }, cancellationToken);
+        foreach (var network in existingNetworks)
+        {
+            if (!string.IsNullOrEmpty(network.Name))
+                networks.Add(network.Name);
+        }
+
+        var existingVolumes = await client.Volumes.ListAsync(new VolumesListParameters
+        {
+            Filters = LabelHelper.ProjectLabelFilter(context.ProjectName)
+        }, cancellationToken);
+        foreach (var volume in existingVolumes.Volumes ?? [])
+        {
+            if (!string.IsNullOrEmpty(volume.Name))
+                volumes.Add(volume.Name);
+        }
+
+        return new ProjectResourceNames(networks, volumes);
     }
 
     /// <summary>Adjusts the replica count of the given services and reports desired versus running containers.</summary>
