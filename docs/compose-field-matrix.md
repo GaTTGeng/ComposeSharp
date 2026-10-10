@@ -50,7 +50,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `dns`, `dns_search` | `Dns`, `DnsSearch` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `pid`, `mac_address`, `cgroup_parent` | `Pid`, `MacAddress`, `CgroupParent` | Partial | Direct Docker PID modes, MAC address, and cgroup parent are passed to Docker. `pid: service:<name>` is not resolved to a service container. |
 | `extends` | `ExtendsService`, `ExtendsFile` | Unsupported | The loader records the reference but does not resolve or merge it. A service that declares only `extends`, without its own `image` or `build`, is rejected during loading. |
-| `develop` | `Develop` | Unsupported | Mapping-shaped values are not retained as watch configuration. `WatchAsync` observes build contexts only and does not interpret this field. |
+| `develop` | `Develop` | Unsupported | Mapping-shaped values are not retained as watch configuration. `WatchAsync` continuously observes selected build contexts only and does not interpret this field; see the [generation and watch contract](generate-watch.md). |
 | `links` | `Links` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `cpu_shares`, `cpuset` | `CpuShares`, `Cpuset` | Applied | Converted to Docker CPU shares and CPU set host settings. |
 | `cpu_quota` | `CpuQuota` | Parsed only | Exposed by the loader but not passed to Docker. |

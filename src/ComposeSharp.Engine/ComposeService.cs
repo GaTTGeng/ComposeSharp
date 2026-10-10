@@ -712,40 +712,27 @@ public sealed class ComposeService : IComposeService
         return new WaitResult { ExitCodes = exitCodes, Code = exitCodes.Values.FirstOrDefault(c => c != 0) };
     }
 
-    /// <summary>Observes service build contexts and reports when files in them change.</summary>
+    /// <summary>Continuously observes selected service build contexts and reports file changes.</summary>
     /// <remarks>
-    /// Known limitation: this only signals that a rebuild may be needed; it does not rebuild images
-    /// or synchronize files into running containers. Each service reports one event per first change.
+    /// Reports absolute changed paths without starting services, rebuilding, synchronizing, or pruning.
+    /// All selected contexts are monitored concurrently. Shared contexts report each change for every
+    /// associated service. Filesystem notifications may repeat; cancellation ends the stream by throwing.
     /// </remarks>
     public async IAsyncEnumerable<WatchEvent> WatchAsync(ComposeProjectContext context, ComposeWatchOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Load project and select services; only those with a build context can be watched.
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (options?.Prune == true)
+            throw new NotSupportedException("Pruning build artifacts is not supported by WatchAsync.");
         var project = LoadProjectInternal(context);
-        var targetServices = ProfileServiceSelector.Select(project, context.Profiles, options?.Services);
-
-        foreach (var service in targetServices)
-        {
-            if (service.Build?.Context is null) continue;
-            var watchDir = Path.GetFullPath(Path.Combine(context.WorkingDirectory, service.Build.Context));
-            if (!Directory.Exists(watchDir)) continue;
-
-            // One event per service: complete on the first file change or on cancellation.
-            var tcs = new TaskCompletionSource<bool>();
-            cancellationToken.Register(() => tcs.TrySetResult(true));
-
-            using var watcher = new FileSystemWatcher(watchDir) { IncludeSubdirectories = true, EnableRaisingEvents = true };
-
-            watcher.Changed += (_, e) =>
-            {
-                if (e.ChangeType == WatcherChangeTypes.Changed)
-                    tcs.TrySetResult(true);
-            };
-
-            await tcs.Task;
-
-            // Signals that a rebuild may be needed; does not rebuild or sync files itself.
-            yield return new WatchEvent { ServiceName = service.Name, Action = "rebuild", Path = watchDir };
-        }
+        var registrations = SelectConfigurationServices(project, context.Profiles, options?.Services)
+            .Where(service => service.Build is not null)
+            .Select(service => new BuildContextWatcher.Registration(service.Name,
+                Path.Combine(project.WorkingDirectory,
+                    service.Build!.Context ?? service.Build.ContextDirectory ?? ".")))
+            .ToList();
+        await foreach (var change in BuildContextWatcher.ObserveAsync(registrations, cancellationToken: cancellationToken))
+            yield return change;
     }
 
     /// <summary>Writes a container filesystem tarball for a service replica to <c>OutputPath</c>.</summary>
@@ -820,12 +807,50 @@ public sealed class ComposeService : IComposeService
         return Task.FromResult(sb.ToString());
     }
 
-    /// <summary>Returns the loaded project configuration as a summary for the active profiles.</summary>
-    /// <remarks>Known limitation: this only summarizes the loaded project; nothing is generated on disk.</remarks>
+    /// <summary>Renders the selected services as normalized YAML alongside the project summary.</summary>
+    /// <remarks>
+    /// Generates an in-memory snapshot of fields retained by the loader, including resolved service
+    /// environment values. Unmodeled source fields and resource options cannot be reconstructed.
+    /// Does not inspect Docker resources or write files.
+    /// </remarks>
     public Task<ComposeProjectConfig> GenerateAsync(ComposeProjectContext context, ComposeGenerateOptions? options = null, CancellationToken cancellationToken = default)
     {
-        // Placeholder for real generation: returns the profile-filtered project summary only.
-        return Task.FromResult(LoadProject(context));
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (options?.Containers is { Count: > 0 })
+            throw new NotSupportedException("GenerateAsync renders loaded services and cannot inspect container names or IDs. Use Services to select service names.");
+        if (options?.ProjectName is { } projectName)
+            ArgumentException.ThrowIfNullOrWhiteSpace(projectName);
+        var project = LoadProjectInternal(context);
+        var services = SelectConfigurationServices(project, context.Profiles, options?.Services);
+        var name = options?.ProjectName ?? context.ProjectName;
+        var yaml = ComposeConfigRenderer.Render(project, services, name, cancellationToken);
+        return Task.FromResult(new ComposeProjectConfig
+        {
+            Name = name,
+            WorkingDirectory = project.WorkingDirectory,
+            ConfigFiles = [context.ComposeFileName],
+            Services = services.Select(service => service.Name).ToList(),
+            Networks = project.Networks.ToList(),
+            Volumes = project.Volumes.ToList(),
+            Secrets = project.Secrets.ToList(),
+            Configs = project.Configs.ToList(),
+            RenderedYaml = yaml
+        });
+    }
+
+    private static IReadOnlyList<ServiceDefinition> SelectConfigurationServices(
+        ComposeProject project, IReadOnlyList<string>? profiles, IReadOnlyList<string>? services)
+    {
+        if (services is null)
+            return ProfileServiceSelector.Select(project, profiles);
+        var knownNames = project.Services.Select(service => service.Name).ToHashSet(StringComparer.Ordinal);
+        foreach (var name in services)
+        {
+            if (!knownNames.Contains(name))
+                throw new ArgumentException($"Unknown service '{name}' in the loaded project.", nameof(services));
+        }
+        return services.Count == 0 ? [] : ProfileServiceSelector.Select(project, profiles, services);
     }
 
     /// <summary>Lists the project-labeled volumes on the daemon.</summary>

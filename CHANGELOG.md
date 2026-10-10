@@ -8,12 +8,18 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `GenerateAsync` returns a normalized YAML snapshot of selected loaded services alongside the project summary, with service selection and an output project-name override.
 - `TopAsync` returns real process listings for running project service containers through the Docker Engine process-list API.
 - `ComposeEventsOptions.OnSubscribed` signals when the Docker event subscription has been issued so callers can avoid racing lifecycle operations against the stream.
 
 ### Changed
 
+- `WatchAsync` continuously monitors selected build contexts together, fans out shared-context changes, and reports missing contexts and watcher failures; unsupported pruning and container-based generation selections now fail explicitly.
 - `EventsAsync` now consumes the Docker event stream filtered by the project label instead of polling container state on an interval.
+
+### Fixed
+
+- Canceling `WatchAsync` propagates cancellation without emitting a false rebuild notification.
 
 ## [3.0.0] - 2026-10-09
 
