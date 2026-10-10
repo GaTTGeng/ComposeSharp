@@ -37,6 +37,12 @@ Full Compose Specification parity in one release. Unsupported or partially appli
 - `GenerateAsync` emits a rendered project configuration.
 - Remaining publish options have explicit, tested behavior or are removed from the public contract.
 
+### Implemented contracts
+
+`GenerateAsync` now returns a normalized YAML snapshot of the loader's retained model alongside its summary. It supports explicit service selection and an output project name, without Docker inspection or file writes. This is a subset model snapshot, not complete Compose CLI configuration output; see the [generation and watch contract](generate-watch.md).
+
+`WatchAsync` now continuously monitors selected build contexts together, reports changes for each associated service, and propagates cancellation and watcher failures. It remains a notification API: starting, rebuilding, synchronizing, pruning, and interpreting `develop.watch` are outside its contract.
+
 ### Not a goal
 
 Reimplement every Docker Compose CLI UX feature. The public SDK should prioritize structured results, cancellation, and diagnostics over terminal output emulation.

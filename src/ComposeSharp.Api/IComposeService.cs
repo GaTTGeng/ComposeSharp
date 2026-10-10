@@ -117,10 +117,13 @@ public interface IComposeService
     /// <summary>Waits for the project's containers to exit and collects their exit codes.</summary>
     Task<WaitResult> WaitAsync(ComposeProjectContext context, ComposeWaitOptions? options = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Reports build-context file changes for the project's services.</summary>
+    /// <summary>Continuously reports build-context file changes for the project's selected services.</summary>
     /// <remarks>
-    /// Reports changed build-context paths only; it does not rebuild images or synchronize files into
-    /// containers. Services without a build context are ignored.
+    /// Monitors selected contexts concurrently and reports absolute paths for create, write, delete,
+    /// and rename notifications. Shared contexts report each notification for every associated service.
+    /// Notifications may repeat and arrival order across contexts depends on the filesystem. Does not
+    /// start services, rebuild, synchronize, or interpret <c>develop.watch</c>. Missing contexts and watcher
+    /// failures throw; no build services completes immediately. Cancellation throws without a synthetic event.
     /// </remarks>
     IAsyncEnumerable<WatchEvent> WatchAsync(ComposeProjectContext context, ComposeWatchOptions? options = null, CancellationToken cancellationToken = default);
 
@@ -142,8 +145,13 @@ public interface IComposeService
     /// <summary>Renders the project's service dependency graph as Graphviz DOT text.</summary>
     Task<string> VizAsync(ComposeProjectContext context, CancellationToken cancellationToken = default);
 
-    /// <summary>Returns a summary of the loaded project configuration.</summary>
-    /// <remarks>Currently returns the loaded project summary rather than generating a new configuration artifact.</remarks>
+    /// <summary>Returns the project summary and a normalized YAML snapshot of selected services.</summary>
+    /// <remarks>
+    /// <see cref="ComposeProjectConfig.RenderedYaml"/> contains fields retained by the loader after
+    /// interpolation and env_file resolution, including potentially sensitive environment values.
+    /// Unmodeled source fields and top-level resource options are omitted. Generation uses active profiles
+    /// unless services are explicitly selected, and does not inspect Docker resources or write files.
+    /// </remarks>
     Task<ComposeProjectConfig> GenerateAsync(ComposeProjectContext context, ComposeGenerateOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Lists volumes owned by the project.</summary>
