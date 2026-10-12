@@ -17,8 +17,10 @@ public interface IComposeService
     /// <summary>Creates (or reconciles) and starts the project's services, including networks and volumes.</summary>
     /// <remarks>
     /// Services selected for this operation include their transitive <c>depends_on</c> dependencies and
-    /// start in stable dependency order. A dependency with an enabled health check must become healthy;
-    /// other dependencies must be running. Cycles and missing dependency services fail with diagnostics.
+    /// start in stable dependency order. A dependency with an effective Docker health check, including one
+    /// inherited from its image, must become healthy; other dependencies must be running. Cycles and missing
+    /// dependency services fail with diagnostics. Readiness waits end when ready, on failure or cancellation,
+    /// or at the optional per-dependency timeout in the operation options.
     /// Explicit <c>Scale</c> counts take precedence over <c>deploy.replicas</c>.
     /// </remarks>
     Task UpAsync(ComposeProjectContext context, ComposeUpOptions? options = null, CancellationToken cancellationToken = default);

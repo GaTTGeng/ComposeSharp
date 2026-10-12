@@ -1,5 +1,6 @@
 using ComposeSharp.Api;
 using ComposeSharp.Engine.Internal;
+using ComposeSharp.Loader.Models;
 using Docker.DotNet.Models;
 
 namespace ComposeSharp.Tests;
@@ -83,5 +84,33 @@ public class ContainerLifecycleTests
         };
 
         Assert.Equal(replicaTwo, ContainerLifecycle.SelectContainerForArchive([replicaTwo, replicaOne], "app", 2));
+    }
+
+    [Fact]
+    public void RequiresHealthy_DetectsImageInheritedHealthcheck()
+    {
+        var inspect = new ContainerInspectResponse
+        {
+            Config = new Config { Healthcheck = new HealthConfig { Test = ["CMD", "check"] } }
+        };
+
+        Assert.True(ContainerLifecycle.RequiresHealthy(null, inspect));
+    }
+
+    [Fact]
+    public void RequiresHealthy_UsesHealthStateAndHonorsDisabledComposeOverride()
+    {
+        var healthState = new ContainerInspectResponse
+        {
+            State = new ContainerState { Health = new Health { Status = "starting" } }
+        };
+        var disabled = new ContainerInspectResponse
+        {
+            Config = new Config { Healthcheck = new HealthConfig { Test = ["NONE"] } }
+        };
+
+        Assert.True(ContainerLifecycle.RequiresHealthy(null, healthState));
+        Assert.False(ContainerLifecycle.RequiresHealthy(
+            new ComposeHealthcheck(true, [], null, null, null, null), disabled));
     }
 }

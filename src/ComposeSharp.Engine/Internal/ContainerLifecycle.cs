@@ -157,20 +157,19 @@ internal sealed class ContainerLifecycle
         string projectName,
         string blockedService,
         ServiceDefinition dependency,
-        TimeSpan timeout,
+        TimeSpan? timeout,
         CancellationToken ct)
     {
         var containers = await ListServiceContainersAsync(client, projectName, dependency.Name, true, ct);
         if (containers.Count == 0)
             throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but the dependency has no containers to start.");
 
-        var requireHealthy = dependency.Healthcheck is { Disabled: false, Test.Count: > 0 } healthcheck &&
-            !string.Equals(healthcheck.Test[0], "NONE", StringComparison.OrdinalIgnoreCase);
-        var deadline = DateTimeOffset.UtcNow + timeout;
+        var deadline = timeout is { } limit ? DateTimeOffset.UtcNow + limit : (DateTimeOffset?)null;
         while (true)
         {
             ct.ThrowIfCancellationRequested();
             var waiting = new List<string>();
+            var waitingForHealthy = false;
             foreach (var container in containers)
             {
                 ContainerInspectResponse inspect;
@@ -184,6 +183,12 @@ internal sealed class ContainerLifecycle
                 }
 
                 var state = inspect.State;
+                var requireHealthy = RequiresHealthy(dependency.Healthcheck, inspect);
+                waitingForHealthy |= requireHealthy;
+
+                if (requireHealthy && string.Equals(state?.Health?.Status, "unhealthy", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but dependency container '{container.ID}' became unhealthy.");
+
                 if (state?.Running != true)
                 {
                     var actual = state?.Status ?? "unknown";
@@ -196,9 +201,6 @@ internal sealed class ContainerLifecycle
                     throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but dependency container '{container.ID}' entered state '{actual}' before it became ready.");
                 }
 
-                if (requireHealthy && string.Equals(state.Health?.Status, "unhealthy", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but dependency container '{container.ID}' became unhealthy.");
-
                 if (requireHealthy && !string.Equals(state.Health?.Status, "healthy", StringComparison.OrdinalIgnoreCase))
                     waiting.Add($"{container.ID[..Math.Min(12, container.ID.Length)]} ({state.Health?.Status ?? "health status unavailable"})");
             }
@@ -206,14 +208,31 @@ internal sealed class ContainerLifecycle
             if (waiting.Count == 0)
                 return;
 
-            if (DateTimeOffset.UtcNow >= deadline)
+            if (deadline is { } expiry && DateTimeOffset.UtcNow >= expiry)
             {
-                var readiness = requireHealthy ? "healthy" : "running";
+                var readiness = waitingForHealthy ? "healthy" : "running";
                 throw new TimeoutException($"Service '{blockedService}' timed out waiting for dependency '{dependency.Name}' to become {readiness}. Pending containers: {string.Join(", ", waiting)}.");
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(200), ct);
         }
+    }
+
+    internal static bool RequiresHealthy(ComposeHealthcheck? composeHealthcheck, ContainerInspectResponse inspect)
+    {
+        var composeTest = composeHealthcheck is { Disabled: false, Test.Count: > 0 } healthcheck
+            ? healthcheck.Test
+            : null;
+        var effectiveTest = inspect.Config?.Healthcheck?.Test;
+        return HasEnabledHealthcheck(composeTest) ||
+               HasEnabledHealthcheck(effectiveTest) ||
+               inspect.State?.Health is not null;
+    }
+
+    private static bool HasEnabledHealthcheck(IEnumerable<string>? test)
+    {
+        var first = test?.FirstOrDefault();
+        return first is not null && !string.Equals(first, "NONE", StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task RestartContainersAsync(DockerClient client, string projectName, IReadOnlyList<string>? services, int? timeout, CancellationToken ct)

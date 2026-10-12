@@ -107,7 +107,7 @@ public class ComposeServiceIntegrationTests
         try
         {
             var started = System.Diagnostics.Stopwatch.StartNew();
-            await service.UpAsync(context, new ComposeUpOptions { Services = ["app"] });
+            await service.UpAsync(context, new ComposeUpOptions { Services = ["app"], DependencyWaitTimeoutSeconds = 15 });
             started.Stop();
 
             Assert.True(started.Elapsed >= TimeSpan.FromSeconds(2), $"UpAsync returned before the dependency health check completed ({started.Elapsed}).");
@@ -119,6 +119,92 @@ public class ComposeServiceIntegrationTests
         {
             try { await service.DownAsync(context); }
             finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task UpAsync_ReportsBothServicesWhenDependencyReadinessTimesOut()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-timeout-{suffix}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                healthcheck:
+                  test: ["CMD-SHELL", "sleep 3"]
+                  interval: 1s
+                  timeout: 5s
+                  retries: 5
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-timeout-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            var error = await Assert.ThrowsAsync<TimeoutException>(() => service.UpAsync(
+                context, new ComposeUpOptions { Services = ["app"], DependencyWaitTimeoutSeconds = 1 }));
+
+            Assert.Contains("app", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("database", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task StartupOperations_RejectUnknownRequestedServicesBeforeDockerAccess()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"unknown-dependency-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"unknown-dependency-{Guid.NewGuid():N}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            var upError = await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpAsync(
+                context, new ComposeUpOptions { Services = ["app", "missing"] }));
+            var createError = await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreateAsync(
+                context, new ComposeCreateOptions { Services = ["missing"] }));
+            var startError = await Assert.ThrowsAsync<InvalidOperationException>(() => service.StartAsync(
+                context, new ComposeStartOptions { Services = ["missing"] }));
+
+            Assert.Contains("missing", upError.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("missing", createError.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("missing", startError.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
         }
     }
 

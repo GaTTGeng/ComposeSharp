@@ -38,6 +38,9 @@ public sealed record ComposeUpOptions
     /// <summary>Block until the started containers are running (or healthy) before returning.</summary>
     public bool Wait { get; init; }
 
+    /// <summary>Maximum seconds to wait for each dependency to become ready; null waits until readiness, failure, or cancellation.</summary>
+    public int? DependencyWaitTimeoutSeconds { get; init; }
+
     /// <summary>Never build images, failing when a required image is missing.</summary>
     public bool NoBuild { get; init; }
 

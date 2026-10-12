@@ -8,7 +8,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- `UpAsync`, `CreateAsync`, and `StartAsync` include transitive service dependencies, reject cycles and missing services, and wait for dependencies to become running or healthy before starting dependents.
+- `UpAsync`, `CreateAsync`, and `StartAsync` include transitive service dependencies, reject cycles and missing services, and wait for effective Docker health checks or running state before starting dependents; an optional per-dependency timeout bounds readiness waits.
 - `GenerateAsync` returns a normalized YAML snapshot of selected loaded services alongside the project summary, with service selection and an output project-name override.
 - `TopAsync` returns real process listings for running project service containers through the Docker Engine process-list API.
 - `ComposeEventsOptions.OnSubscribed` signals when the Docker event subscription has been issued so callers can avoid racing lifecycle operations against the stream.

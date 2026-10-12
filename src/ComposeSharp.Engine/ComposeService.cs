@@ -82,11 +82,12 @@ public sealed class ComposeService : IComposeService
         // Validate and order the full dependency closure before creating any project resources.
         var targetServices = GetOrderedServices(project, context.Profiles, options?.Services);
         var servicesByName = project.Services.ToDictionary(service => service.Name, StringComparer.OrdinalIgnoreCase);
+        var dependencyTimeout = GetDependencyWaitTimeout(options?.DependencyWaitTimeoutSeconds);
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
 
         foreach (var service in targetServices)
         {
-            await WaitForDependenciesAsync(client, context.ProjectName, service, servicesByName, cancellationToken);
+            await WaitForDependenciesAsync(client, context.ProjectName, service, servicesByName, dependencyTimeout, cancellationToken);
 
             // Replica precedence: an explicit Scale option wins over deploy.replicas, which wins over 1.
             var replicas = 1;
@@ -160,10 +161,11 @@ public sealed class ComposeService : IComposeService
         // Validate and order the full dependency closure before creating any project resources.
         var targetServices = GetOrderedServices(project, context.Profiles, options?.Services);
         var servicesByName = project.Services.ToDictionary(service => service.Name, StringComparer.OrdinalIgnoreCase);
+        var dependencyTimeout = GetDependencyWaitTimeout(options?.DependencyWaitTimeoutSeconds);
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
         foreach (var service in targetServices)
         {
-            await WaitForDependenciesAsync(client, context.ProjectName, service, servicesByName, cancellationToken);
+            await WaitForDependenciesAsync(client, context.ProjectName, service, servicesByName, dependencyTimeout, cancellationToken);
 
             // Replica count comes from an explicit Scale option, else default to 1.
             var replicas = 1;
@@ -208,9 +210,10 @@ public sealed class ComposeService : IComposeService
 
         var targetServices = GetOrderedServices(project, context.Profiles, options?.Services);
         var servicesByName = project.Services.ToDictionary(service => service.Name, StringComparer.OrdinalIgnoreCase);
+        var dependencyTimeout = GetDependencyWaitTimeout(options?.DependencyWaitTimeoutSeconds);
         foreach (var service in targetServices)
         {
-            await WaitForDependenciesAsync(client, context.ProjectName, service, servicesByName, cancellationToken);
+            await WaitForDependenciesAsync(client, context.ProjectName, service, servicesByName, dependencyTimeout, cancellationToken);
             await _containers.StartContainersAsync(client, context.ProjectName, [service.Name], cancellationToken);
         }
     }
@@ -1062,9 +1065,25 @@ public sealed class ComposeService : IComposeService
         IReadOnlyList<string>? profiles,
         IReadOnlyList<string>? services)
     {
-        // Profile-filter first; explicit selections then pull in their dependency closure.
+        if (services is { Count: 0 })
+            return [];
+
+        // Keep explicit names intact so typos fail validation instead of silently becoming no-ops.
+        if (services is { Count: > 0 })
+            return DependencyOrderPlanner.Plan(project.Services, services);
+
+        // Profile-filter first, then include the selected services' dependency closure.
         var selected = ProfileServiceSelector.Select(project, profiles, services);
         return DependencyOrderPlanner.Plan(project.Services, selected.Select(service => service.Name).ToList());
+    }
+
+    private static TimeSpan? GetDependencyWaitTimeout(int? timeoutSeconds)
+    {
+        if (timeoutSeconds is null)
+            return null;
+        if (timeoutSeconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(timeoutSeconds), "Dependency wait timeout must be greater than zero.");
+        return TimeSpan.FromSeconds(timeoutSeconds.Value);
     }
 
     private async Task WaitForDependenciesAsync(
@@ -1072,13 +1091,14 @@ public sealed class ComposeService : IComposeService
         string projectName,
         ServiceDefinition service,
         IReadOnlyDictionary<string, ServiceDefinition> servicesByName,
+        TimeSpan? timeout,
         CancellationToken cancellationToken)
     {
         foreach (var dependencyName in service.DependsOn)
         {
             var dependency = servicesByName[dependencyName];
             await _containers.WaitForDependencyReadinessAsync(
-                client, projectName, service.Name, dependency, TimeSpan.FromSeconds(60), cancellationToken);
+                client, projectName, service.Name, dependency, timeout, cancellationToken);
         }
     }
 
