@@ -122,6 +122,21 @@ public class ContainerLifecycleTests
     }
 
     [Theory]
+    [InlineData(true, false, false, true)]
+    [InlineData(true, true, false, false)]
+    [InlineData(true, false, true, false)]
+    [InlineData(false, false, false, false)]
+    public void IsRunningNormally_RejectsPausedAndRestartingStates(bool running, bool paused, bool restarting, bool expected)
+    {
+        Assert.Equal(expected, ContainerLifecycle.IsRunningNormally(new ContainerState
+        {
+            Running = running,
+            Paused = paused,
+            Restarting = restarting
+        }));
+    }
+
+    [Theory]
     [InlineData(HttpStatusCode.NotModified, true)]
     [InlineData(HttpStatusCode.Conflict, false)]
     [InlineData(HttpStatusCode.InternalServerError, false)]

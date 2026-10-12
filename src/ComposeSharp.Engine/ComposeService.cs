@@ -173,7 +173,9 @@ public sealed class ComposeService : IComposeService
                 replicas = s;
 
             // Skip recreation when NoRecreate is set and the service already has containers.
-            var existing = await _containers.ListServiceContainersAsync(client, context.ProjectName, service.Name, true, cancellationToken);
+            var existing = ContainerLifecycle.FilterOneOffContainers(
+                await _containers.ListServiceContainersAsync(client, context.ProjectName, service.Name, true, cancellationToken),
+                includeOneOff: false).ToList();
             if (options?.NoRecreate == true && existing.Count > 0) continue;
 
             // Replace existing containers rather than reconciling in place.

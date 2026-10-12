@@ -22,6 +22,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 - `StartAsync` reports Docker start failures and excludes retained one-off containers from dependency starts and readiness checks.
 - `StartAsync` bases dependency health readiness on each existing container's inspected health configuration.
+- `UpAsync` and `CreateAsync` preserve retained one-off containers while reconciling dependency services.
+- Dependency readiness waits while a container is paused or restarting, even when Docker reports it as running.
 - Canceling `WatchAsync` propagates cancellation without emitting a false rebuild notification.
 
 ## [3.0.0] - 2026-10-09

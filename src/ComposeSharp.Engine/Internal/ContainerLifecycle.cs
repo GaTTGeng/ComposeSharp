@@ -82,7 +82,8 @@ internal sealed class ContainerLifecycle
 
         // Stage 2: recreate-based reconcile removes every existing service container before
         // creating replacements, which keeps container names and replica indexes stable.
-        var existing = await ListServiceContainersAsync(client, projectName, service.Name, true, ct);
+        var existing = FilterOneOffContainers(
+            await ListServiceContainersAsync(client, projectName, service.Name, true, ct), includeOneOff: false).ToList();
         foreach (var container in existing)
         {
             await RemoveContainerAsync(client, container.ID, true, ct);
@@ -191,10 +192,12 @@ internal sealed class ContainerLifecycle
                 if (requireHealthy && string.Equals(state?.Health?.Status, "unhealthy", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but dependency container '{container.ID}' became unhealthy.");
 
-                if (state?.Running != true)
+                if (!IsRunningNormally(state))
                 {
-                    var actual = state?.Status ?? "unknown";
-                    if (actual is "created" or "restarting" or "unknown")
+                    var actual = state?.Paused == true ? "paused"
+                        : state?.Restarting == true ? "restarting"
+                        : state?.Status ?? "unknown";
+                    if (state?.Paused == true || state?.Restarting == true || actual is "created" or "restarting" or "unknown")
                     {
                         waiting.Add($"{container.ID[..Math.Min(12, container.ID.Length)]} ({actual})");
                         continue;
@@ -203,8 +206,8 @@ internal sealed class ContainerLifecycle
                     throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but dependency container '{container.ID}' entered state '{actual}' before it became ready.");
                 }
 
-                if (requireHealthy && !string.Equals(state.Health?.Status, "healthy", StringComparison.OrdinalIgnoreCase))
-                    waiting.Add($"{container.ID[..Math.Min(12, container.ID.Length)]} ({state.Health?.Status ?? "health status unavailable"})");
+                if (requireHealthy && !string.Equals(state?.Health?.Status, "healthy", StringComparison.OrdinalIgnoreCase))
+                    waiting.Add($"{container.ID[..Math.Min(12, container.ID.Length)]} ({state?.Health?.Status ?? "health status unavailable"})");
             }
 
             if (waiting.Count == 0)
@@ -226,6 +229,9 @@ internal sealed class ContainerLifecycle
         return HasEnabledHealthcheck(effectiveTest) ||
                inspect.State?.Health is not null;
     }
+
+    internal static bool IsRunningNormally(ContainerState? state)
+        => state?.Running == true && state?.Paused != true && state?.Restarting != true;
 
     internal static bool IsAlreadyStartedResponse(DockerApiException exception)
         => exception.StatusCode == System.Net.HttpStatusCode.NotModified;
