@@ -72,6 +72,57 @@ public class ComposeServiceIntegrationTests
     }
 
     [Fact]
+    public async Task UpAsync_IncludesSelectedDependenciesAndWaitsForTheirHealthchecks()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-readiness-{suffix}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                healthcheck:
+                  test: ["CMD-SHELL", "sleep 3"]
+                  interval: 1s
+                  timeout: 5s
+                  retries: 5
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-readiness-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            var started = System.Diagnostics.Stopwatch.StartNew();
+            await service.UpAsync(context, new ComposeUpOptions { Services = ["app"] });
+            started.Stop();
+
+            Assert.True(started.Elapsed >= TimeSpan.FromSeconds(2), $"UpAsync returned before the dependency health check completed ({started.Elapsed}).");
+            var containers = await service.PsAsync(context);
+            Assert.Equal(["app", "database"], containers.Select(container => container.Service).Order(StringComparer.Ordinal));
+            Assert.All(containers, container => Assert.Equal("running", container.State));
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
     public async Task ListAsync_ReturnsResult()
     {
         if (!DockerAvailable) return;

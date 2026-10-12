@@ -16,7 +16,9 @@ public interface IComposeService
 
     /// <summary>Creates (or reconciles) and starts the project's services, including networks and volumes.</summary>
     /// <remarks>
-    /// <c>depends_on</c> is modeled but does not yet provide complete dependency ordering or health readiness.
+    /// Services selected for this operation include their transitive <c>depends_on</c> dependencies and
+    /// start in stable dependency order. A dependency with an enabled health check must become healthy;
+    /// other dependencies must be running. Cycles and missing dependency services fail with diagnostics.
     /// Explicit <c>Scale</c> counts take precedence over <c>deploy.replicas</c>.
     /// </remarks>
     Task UpAsync(ComposeProjectContext context, ComposeUpOptions? options = null, CancellationToken cancellationToken = default);
@@ -24,10 +26,10 @@ public interface IComposeService
     /// <summary>Stops and removes the project's containers, and its networks when the whole project is taken down.</summary>
     Task DownAsync(ComposeProjectContext context, ComposeDownOptions? options = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Creates containers (and required infrastructure) for the project's services without guaranteeing they stay started.</summary>
+    /// <summary>Creates containers (and required infrastructure) for the project's services in dependency order.</summary>
     Task CreateAsync(ComposeProjectContext context, ComposeCreateOptions? options = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Starts already-created containers of the project's services.</summary>
+    /// <summary>Starts already-created containers of the project's services in dependency order.</summary>
     Task StartAsync(ComposeProjectContext context, ComposeStartOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Stops running containers of the project's services.</summary>

@@ -151,6 +151,71 @@ internal sealed class ContainerLifecycle
         }
     }
 
+    /// <summary>Waits until every container for a service satisfies the dependency readiness policy.</summary>
+    public async Task WaitForDependencyReadinessAsync(
+        DockerClient client,
+        string projectName,
+        string blockedService,
+        ServiceDefinition dependency,
+        TimeSpan timeout,
+        CancellationToken ct)
+    {
+        var containers = await ListServiceContainersAsync(client, projectName, dependency.Name, true, ct);
+        if (containers.Count == 0)
+            throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but the dependency has no containers to start.");
+
+        var requireHealthy = dependency.Healthcheck is { Disabled: false, Test.Count: > 0 } healthcheck &&
+            !string.Equals(healthcheck.Test[0], "NONE", StringComparison.OrdinalIgnoreCase);
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var waiting = new List<string>();
+            foreach (var container in containers)
+            {
+                ContainerInspectResponse inspect;
+                try
+                {
+                    inspect = await client.Containers.InspectContainerAsync(container.ID, ct);
+                }
+                catch (DockerApiException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but dependency container '{container.ID}' disappeared before it became ready.", ex);
+                }
+
+                var state = inspect.State;
+                if (state?.Running != true)
+                {
+                    var actual = state?.Status ?? "unknown";
+                    if (actual is "created" or "restarting" or "unknown")
+                    {
+                        waiting.Add($"{container.ID[..Math.Min(12, container.ID.Length)]} ({actual})");
+                        continue;
+                    }
+
+                    throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but dependency container '{container.ID}' entered state '{actual}' before it became ready.");
+                }
+
+                if (requireHealthy && string.Equals(state.Health?.Status, "unhealthy", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but dependency container '{container.ID}' became unhealthy.");
+
+                if (requireHealthy && !string.Equals(state.Health?.Status, "healthy", StringComparison.OrdinalIgnoreCase))
+                    waiting.Add($"{container.ID[..Math.Min(12, container.ID.Length)]} ({state.Health?.Status ?? "health status unavailable"})");
+            }
+
+            if (waiting.Count == 0)
+                return;
+
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                var readiness = requireHealthy ? "healthy" : "running";
+                throw new TimeoutException($"Service '{blockedService}' timed out waiting for dependency '{dependency.Name}' to become {readiness}. Pending containers: {string.Join(", ", waiting)}.");
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(200), ct);
+        }
+    }
+
     public async Task RestartContainersAsync(DockerClient client, string projectName, IReadOnlyList<string>? services, int? timeout, CancellationToken ct)
     {
         var containers = await GetTargetContainersAsync(client, projectName, services, true, ct);

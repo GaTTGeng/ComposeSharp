@@ -79,14 +79,15 @@ public sealed class ComposeService : IComposeService
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
 
-        // Ensure project networks and volumes exist before any containers are created.
-        await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
-
-        // Ordered so dependencies are created before their dependents (see OrderServices).
+        // Validate and order the full dependency closure before creating any project resources.
         var targetServices = GetOrderedServices(project, context.Profiles, options?.Services);
+        var servicesByName = project.Services.ToDictionary(service => service.Name, StringComparer.OrdinalIgnoreCase);
+        await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
 
         foreach (var service in targetServices)
         {
+            await WaitForDependenciesAsync(client, context.ProjectName, service, servicesByName, cancellationToken);
+
             // Replica precedence: an explicit Scale option wins over deploy.replicas, which wins over 1.
             var replicas = 1;
             if (options?.Scale is { Count: > 0 } scale && scale.TryGetValue(service.Name, out var s))
@@ -149,20 +150,21 @@ public sealed class ComposeService : IComposeService
     }
 
     /// <summary>
-    /// Creates and starts project containers without pulling images; existing service containers are
-    /// removed first unless <c>NoRecreate</c> is set.
+    /// Creates and starts project containers without pulling images, after their dependencies are ready.
     /// </summary>
     public async Task CreateAsync(ComposeProjectContext context, ComposeCreateOptions? options = null, CancellationToken cancellationToken = default)
     {
-        // Load project -> open client -> ensure networks/volumes exist.
+        // Load project -> open client.
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
-
-        // Create services in dependency order so dependents come after their depends_on targets.
+        // Validate and order the full dependency closure before creating any project resources.
         var targetServices = GetOrderedServices(project, context.Profiles, options?.Services);
+        var servicesByName = project.Services.ToDictionary(service => service.Name, StringComparer.OrdinalIgnoreCase);
+        await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
         foreach (var service in targetServices)
         {
+            await WaitForDependenciesAsync(client, context.ProjectName, service, servicesByName, cancellationToken);
+
             // Replica count comes from an explicit Scale option, else default to 1.
             var replicas = 1;
             if (options?.Scale is { Count: > 0 } scale && scale.TryGetValue(service.Name, out var s))
@@ -188,13 +190,29 @@ public sealed class ComposeService : IComposeService
         }
     }
 
-    /// <summary>Starts existing containers of the selected services.</summary>
+    /// <summary>Starts selected existing containers and their dependencies in dependency order.</summary>
     public async Task StartAsync(ComposeProjectContext context, ComposeStartOptions? options = null, CancellationToken cancellationToken = default)
     {
-        // Filter by selected services, then start their existing containers.
-        var services = SelectExistingServices(context, options?.Services).ServiceNames;
         using var client = _clientFactory.CreateClient(context.SocketPath);
-        await _containers.StartContainersAsync(client, context.ProjectName, services, cancellationToken);
+        ComposeProject project;
+        try
+        {
+            project = LoadProjectInternal(context);
+        }
+        catch (FileNotFoundException) when (context.Profiles is not { Count: > 0 })
+        {
+            // Keep label-only startup available when the source Compose file has been removed.
+            await _containers.StartContainersAsync(client, context.ProjectName, options?.Services, cancellationToken);
+            return;
+        }
+
+        var targetServices = GetOrderedServices(project, context.Profiles, options?.Services);
+        var servicesByName = project.Services.ToDictionary(service => service.Name, StringComparer.OrdinalIgnoreCase);
+        foreach (var service in targetServices)
+        {
+            await WaitForDependenciesAsync(client, context.ProjectName, service, servicesByName, cancellationToken);
+            await _containers.StartContainersAsync(client, context.ProjectName, [service.Name], cancellationToken);
+        }
     }
 
     /// <summary>Stops existing containers of the selected services, waiting up to <c>TimeoutSeconds</c> before killing them.</summary>
@@ -1044,35 +1062,24 @@ public sealed class ComposeService : IComposeService
         IReadOnlyList<string>? profiles,
         IReadOnlyList<string>? services)
     {
-        // Profile-filter first, then apply depends_on ordering.
-        return OrderServices(ProfileServiceSelector.Select(project, profiles, services));
+        // Profile-filter first; explicit selections then pull in their dependency closure.
+        var selected = ProfileServiceSelector.Select(project, profiles, services);
+        return DependencyOrderPlanner.Plan(project.Services, selected.Select(service => service.Name).ToList());
     }
 
-    // Topological order over depends_on: services whose dependencies are all scheduled go first.
-    // Cycles cannot be ordered, so any leftovers are appended as-is rather than failing the up.
-    private static IReadOnlyList<ServiceDefinition> OrderServices(IReadOnlyList<ServiceDefinition> services)
+    private async Task WaitForDependenciesAsync(
+        DockerClient client,
+        string projectName,
+        ServiceDefinition service,
+        IReadOnlyDictionary<string, ServiceDefinition> servicesByName,
+        CancellationToken cancellationToken)
     {
-        var result = new List<ServiceDefinition>();
-        var remaining = services.ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
-        while (remaining.Count > 0)
+        foreach (var dependencyName in service.DependsOn)
         {
-            // Ready = every depends_on entry already scheduled.
-            var ready = remaining.Values
-                .Where(service => service.DependsOn.All(dep => !remaining.ContainsKey(dep)))
-                .ToList();
-            if (ready.Count == 0)
-            {
-                // Cycle fallback: drain the rest in dictionary order instead of failing.
-                result.AddRange(remaining.Values);
-                break;
-            }
-            foreach (var service in ready)
-            {
-                result.Add(service);
-                remaining.Remove(service.Name);
-            }
+            var dependency = servicesByName[dependencyName];
+            await _containers.WaitForDependencyReadinessAsync(
+                client, projectName, service.Name, dependency, TimeSpan.FromSeconds(60), cancellationToken);
         }
-        return result;
     }
 
     // Docker's build API streams progress but does not fail the call on a build error, so the first

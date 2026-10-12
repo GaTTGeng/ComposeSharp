@@ -101,7 +101,7 @@ builder.Services.AddComposeSharp();
 - `LoadMerged` 按字段逐步合并后置文件：标量由后置值覆盖，映射递归合并，列表追加；服务资源、`command` 和 `entrypoint` 有明确的替换规则。它仍不是 Docker Compose 的完整合并算法；精确规则和不支持的 YAML 标签见[合并语义](docs/merge-semantics.md)。
 - `ComposeProjectContext.Profiles` 会在加载项目，以及面向服务的生命周期、检查、镜像、日志、事件和 watch 操作中统一选择服务：未配置 `profiles` 的服务始终会被选择；配置了 profile 的服务会在任一 profile 被激活时被选择。显式指定服务的操作即使未激活该服务的 profile，也可以选择它；选择结果为空时不会退化成操作项目中的全部容器。
 - 加载器可以保留引擎尚未应用的字段。在运行时依赖某个 Compose 属性之前，请查阅 [Compose 字段支持矩阵](docs/compose-field-matrix.md)。
-- `depends_on` 已被读取并能体现在依赖图中，但尚未实现完整的启动排序和健康就绪调度。
+- `depends_on` 会将所选服务的传递依赖纳入启动范围，并按稳定顺序启动。未启用健康检查的依赖必须处于运行状态；启用了健康检查的依赖必须通过健康检查。缺失服务和依赖环会返回诊断错误；长格式条件仍不支持。
 
 默认端点在 Windows 是 `npipe://./pipe/docker_engine`，Unix 是 `unix:///var/run/docker.sock`；也可以通过 `SocketPath` 显式指定。
 

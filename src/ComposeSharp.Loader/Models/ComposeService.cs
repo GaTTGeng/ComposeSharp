@@ -11,7 +11,7 @@ namespace ComposeSharp.Loader.Models;
 /// <item><description><c>Command</c>/<c>Entrypoint</c>: scalar YAML becomes a single-element list rather than being shell-split.</description></item>
 /// <item><description><c>Environment</c>: flattened <c>KEY=VALUE</c> entries — values from each <c>env_file</c> first, then the inline <c>environment</c> block. <c>env_file</c> contents are container inputs and are not interpolation sources for the YAML text.</description></item>
 /// <item><description><c>Ports</c>: short syntax only; long syntax is rejected at load time.</description></item>
-/// <item><description><c>DependsOn</c>: dependency names only — long-form conditions are dropped, and the engine does not yet provide complete ordering or health readiness.</description></item>
+/// <item><description><c>DependsOn</c>: dependency names only — long-form conditions are dropped. The engine starts selected dependencies first, waits for running state when no health check is enabled, and waits for healthy state when one is enabled.</description></item>
 /// <item><description><c>Profiles</c>: selection happens later via <c>ComposeProjectContext.Profiles</c>; the loader does not filter services here.</description></item>
 /// <item><description><c>Deploy</c>: only <c>replicas</c> currently affects the engine.</description></item>
 /// <item><description><c>Secrets</c>/<c>Configs</c>: names are parsed and surfaced but never provisioned or mounted.</description></item>
