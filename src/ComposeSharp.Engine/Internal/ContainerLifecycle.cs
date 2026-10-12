@@ -185,7 +185,7 @@ internal sealed class ContainerLifecycle
                 }
 
                 var state = inspect.State;
-                var requireHealthy = RequiresHealthy(dependency.Healthcheck, inspect);
+                var requireHealthy = RequiresHealthy(inspect);
                 waitingForHealthy |= requireHealthy;
 
                 if (requireHealthy && string.Equals(state?.Health?.Status, "unhealthy", StringComparison.OrdinalIgnoreCase))
@@ -220,14 +220,10 @@ internal sealed class ContainerLifecycle
         }
     }
 
-    internal static bool RequiresHealthy(ComposeHealthcheck? composeHealthcheck, ContainerInspectResponse inspect)
+    internal static bool RequiresHealthy(ContainerInspectResponse inspect)
     {
-        var composeTest = composeHealthcheck is { Disabled: false, Test.Count: > 0 } healthcheck
-            ? healthcheck.Test
-            : null;
         var effectiveTest = inspect.Config?.Healthcheck?.Test;
-        return HasEnabledHealthcheck(composeTest) ||
-               HasEnabledHealthcheck(effectiveTest) ||
+        return HasEnabledHealthcheck(effectiveTest) ||
                inspect.State?.Health is not null;
     }
 

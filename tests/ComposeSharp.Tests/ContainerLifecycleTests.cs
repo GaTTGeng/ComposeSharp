@@ -96,7 +96,7 @@ public class ContainerLifecycleTests
             Config = new Config { Healthcheck = new HealthConfig { Test = ["CMD", "check"] } }
         };
 
-        Assert.True(ContainerLifecycle.RequiresHealthy(null, inspect));
+        Assert.True(ContainerLifecycle.RequiresHealthy(inspect));
     }
 
     [Fact]
@@ -111,9 +111,14 @@ public class ContainerLifecycleTests
             Config = new Config { Healthcheck = new HealthConfig { Test = ["NONE"] } }
         };
 
-        Assert.True(ContainerLifecycle.RequiresHealthy(null, healthState));
-        Assert.False(ContainerLifecycle.RequiresHealthy(
-            new ComposeHealthcheck(true, [], null, null, null, null), disabled));
+        Assert.True(ContainerLifecycle.RequiresHealthy(healthState));
+        Assert.False(ContainerLifecycle.RequiresHealthy(disabled));
+    }
+
+    [Fact]
+    public void RequiresHealthy_IgnoresHealthcheckAddedAfterExistingContainerWasCreated()
+    {
+        Assert.False(ContainerLifecycle.RequiresHealthy(new ContainerInspectResponse()));
     }
 
     [Theory]

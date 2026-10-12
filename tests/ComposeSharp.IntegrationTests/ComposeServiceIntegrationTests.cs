@@ -300,6 +300,68 @@ public class ComposeServiceIntegrationTests
     }
 
     [Fact]
+    public async Task StartAsync_UsesExistingContainerHealthcheckConfiguration()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-existing-healthcheck-{suffix}");
+        Directory.CreateDirectory(directory);
+        var composePath = Path.Combine(directory, "compose.yaml");
+        File.WriteAllText(composePath, """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-existing-healthcheck-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+            await service.StopAsync(context, new ComposeStopOptions { Services = ["database"] });
+            File.WriteAllText(composePath, """
+                services:
+                  app:
+                    image: busybox:1.36
+                    command: ["sleep", "300"]
+                    depends_on: [database]
+                  database:
+                    image: busybox:1.36
+                    command: ["sleep", "300"]
+                    healthcheck:
+                      test: ["CMD-SHELL", "sleep 1"]
+                      interval: 1s
+                      timeout: 3s
+                      retries: 3
+                """);
+
+            await service.StartAsync(context, new ComposeStartOptions
+            {
+                Services = ["app"],
+                DependencyWaitTimeoutSeconds = 5
+            });
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
     public async Task StartupOperations_RejectUnknownRequestedServicesBeforeDockerAccess()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"unknown-dependency-{Guid.NewGuid():N}");
