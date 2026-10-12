@@ -249,6 +249,57 @@ public class ComposeServiceIntegrationTests
     }
 
     [Fact]
+    public async Task StartAsync_DoesNotRestartRetainedOneOffDependencyContainers()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-oneoff-start-{suffix}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-oneoff-start-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+            var oneOffId = await service.RunAsync(context, "database", new ComposeRunOptions
+            {
+                Detach = true,
+                Remove = false
+            });
+            await service.StopAsync(context, new ComposeStopOptions { Services = ["database"] });
+
+            await service.StartAsync(context, new ComposeStartOptions { Services = ["app"] });
+
+            using var client = new DockerClientFactory().CreateClient();
+            var oneOff = await client.Containers.InspectContainerAsync(oneOffId);
+            Assert.False(oneOff.State.Running);
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
     public async Task StartupOperations_RejectUnknownRequestedServicesBeforeDockerAccess()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"unknown-dependency-{Guid.NewGuid():N}");

@@ -20,7 +20,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- `StartAsync` reports Docker start failures, and dependency readiness ignores retained one-off containers.
+- `StartAsync` reports Docker start failures and excludes retained one-off containers from dependency starts and readiness checks.
 - Canceling `WatchAsync` propagates cancellation without emitting a false rebuild notification.
 
 ## [3.0.0] - 2026-10-09

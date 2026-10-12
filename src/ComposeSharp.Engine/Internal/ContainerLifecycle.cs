@@ -143,7 +143,8 @@ internal sealed class ContainerLifecycle
 
     public async Task StartContainersAsync(DockerClient client, string projectName, IReadOnlyList<string>? services, CancellationToken ct)
     {
-        var containers = await GetTargetContainersAsync(client, projectName, services, true, ct);
+        var containers = FilterOneOffContainers(
+            await GetTargetContainersAsync(client, projectName, services, true, ct), includeOneOff: false);
         foreach (var container in containers)
         {
             try { await client.Containers.StartContainerAsync(container.ID, new ContainerStartParameters(), ct); }
