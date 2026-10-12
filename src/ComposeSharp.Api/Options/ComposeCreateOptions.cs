@@ -31,4 +31,7 @@ public sealed record ComposeCreateOptions
 
     /// <summary>Grace period in seconds when stopping containers during recreation.</summary>
     public int? TimeoutSeconds { get; init; }
+
+    /// <summary>Maximum seconds to wait for each dependency to become ready; null waits until readiness, failure, or cancellation.</summary>
+    public int? DependencyWaitTimeoutSeconds { get; init; }
 }

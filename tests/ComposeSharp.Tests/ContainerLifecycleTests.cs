@@ -1,6 +1,9 @@
 using ComposeSharp.Api;
 using ComposeSharp.Engine.Internal;
+using ComposeSharp.Loader.Models;
+using Docker.DotNet;
 using Docker.DotNet.Models;
+using System.Net;
 
 namespace ComposeSharp.Tests;
 
@@ -83,5 +86,62 @@ public class ContainerLifecycleTests
         };
 
         Assert.Equal(replicaTwo, ContainerLifecycle.SelectContainerForArchive([replicaTwo, replicaOne], "app", 2));
+    }
+
+    [Fact]
+    public void RequiresHealthy_DetectsImageInheritedHealthcheck()
+    {
+        var inspect = new ContainerInspectResponse
+        {
+            Config = new Config { Healthcheck = new HealthConfig { Test = ["CMD", "check"] } }
+        };
+
+        Assert.True(ContainerLifecycle.RequiresHealthy(inspect));
+    }
+
+    [Fact]
+    public void RequiresHealthy_UsesHealthStateAndHonorsDisabledComposeOverride()
+    {
+        var healthState = new ContainerInspectResponse
+        {
+            State = new ContainerState { Health = new Health { Status = "starting" } }
+        };
+        var disabled = new ContainerInspectResponse
+        {
+            Config = new Config { Healthcheck = new HealthConfig { Test = ["NONE"] } }
+        };
+
+        Assert.True(ContainerLifecycle.RequiresHealthy(healthState));
+        Assert.False(ContainerLifecycle.RequiresHealthy(disabled));
+    }
+
+    [Fact]
+    public void RequiresHealthy_IgnoresHealthcheckAddedAfterExistingContainerWasCreated()
+    {
+        Assert.False(ContainerLifecycle.RequiresHealthy(new ContainerInspectResponse()));
+    }
+
+    [Theory]
+    [InlineData(true, false, false, true)]
+    [InlineData(true, true, false, false)]
+    [InlineData(true, false, true, false)]
+    [InlineData(false, false, false, false)]
+    public void IsRunningNormally_RejectsPausedAndRestartingStates(bool running, bool paused, bool restarting, bool expected)
+    {
+        Assert.Equal(expected, ContainerLifecycle.IsRunningNormally(new ContainerState
+        {
+            Running = running,
+            Paused = paused,
+            Restarting = restarting
+        }));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotModified, true)]
+    [InlineData(HttpStatusCode.Conflict, false)]
+    [InlineData(HttpStatusCode.InternalServerError, false)]
+    public void IsAlreadyStartedResponse_IgnoresOnlyDockerAlreadyStartedStatus(HttpStatusCode statusCode, bool expected)
+    {
+        Assert.Equal(expected, ContainerLifecycle.IsAlreadyStartedResponse(new DockerApiException(statusCode, "start failed")));
     }
 }

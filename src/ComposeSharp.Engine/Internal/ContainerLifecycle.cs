@@ -82,7 +82,8 @@ internal sealed class ContainerLifecycle
 
         // Stage 2: recreate-based reconcile removes every existing service container before
         // creating replacements, which keeps container names and replica indexes stable.
-        var existing = await ListServiceContainersAsync(client, projectName, service.Name, true, ct);
+        var existing = FilterOneOffContainers(
+            await ListServiceContainersAsync(client, projectName, service.Name, true, ct), includeOneOff: false).ToList();
         foreach (var container in existing)
         {
             await RemoveContainerAsync(client, container.ID, true, ct);
@@ -143,12 +144,102 @@ internal sealed class ContainerLifecycle
 
     public async Task StartContainersAsync(DockerClient client, string projectName, IReadOnlyList<string>? services, CancellationToken ct)
     {
-        var containers = await GetTargetContainersAsync(client, projectName, services, true, ct);
+        var containers = FilterOneOffContainers(
+            await GetTargetContainersAsync(client, projectName, services, true, ct), includeOneOff: false);
         foreach (var container in containers)
         {
             try { await client.Containers.StartContainerAsync(container.ID, new ContainerStartParameters(), ct); }
-            catch (DockerApiException) { }
+            catch (DockerApiException ex) when (IsAlreadyStartedResponse(ex)) { }
         }
+    }
+
+    /// <summary>Waits until every container for a service satisfies the dependency readiness policy.</summary>
+    public async Task WaitForDependencyReadinessAsync(
+        DockerClient client,
+        string projectName,
+        string blockedService,
+        ServiceDefinition dependency,
+        TimeSpan? timeout,
+        CancellationToken ct)
+    {
+        var containers = FilterOneOffContainers(
+            await ListServiceContainersAsync(client, projectName, dependency.Name, true, ct), includeOneOff: false).ToList();
+        if (containers.Count == 0)
+            throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but the dependency has no containers to start.");
+
+        var deadline = timeout is { } limit ? DateTimeOffset.UtcNow + limit : (DateTimeOffset?)null;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var waiting = new List<string>();
+            var waitingForHealthy = false;
+            foreach (var container in containers)
+            {
+                ContainerInspectResponse inspect;
+                try
+                {
+                    inspect = await client.Containers.InspectContainerAsync(container.ID, ct);
+                }
+                catch (DockerApiException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but dependency container '{container.ID}' disappeared before it became ready.", ex);
+                }
+
+                var state = inspect.State;
+                var requireHealthy = RequiresHealthy(inspect);
+                waitingForHealthy |= requireHealthy;
+
+                if (requireHealthy && string.Equals(state?.Health?.Status, "unhealthy", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but dependency container '{container.ID}' became unhealthy.");
+
+                if (!IsRunningNormally(state))
+                {
+                    var actual = state?.Paused == true ? "paused"
+                        : state?.Restarting == true ? "restarting"
+                        : state?.Status ?? "unknown";
+                    if (state?.Paused == true || state?.Restarting == true || actual is "created" or "restarting" or "unknown")
+                    {
+                        waiting.Add($"{container.ID[..Math.Min(12, container.ID.Length)]} ({actual})");
+                        continue;
+                    }
+
+                    throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but dependency container '{container.ID}' entered state '{actual}' before it became ready.");
+                }
+
+                if (requireHealthy && !string.Equals(state?.Health?.Status, "healthy", StringComparison.OrdinalIgnoreCase))
+                    waiting.Add($"{container.ID[..Math.Min(12, container.ID.Length)]} ({state?.Health?.Status ?? "health status unavailable"})");
+            }
+
+            if (waiting.Count == 0)
+                return;
+
+            if (deadline is { } expiry && DateTimeOffset.UtcNow >= expiry)
+            {
+                var readiness = waitingForHealthy ? "healthy" : "running";
+                throw new TimeoutException($"Service '{blockedService}' timed out waiting for dependency '{dependency.Name}' to become {readiness}. Pending containers: {string.Join(", ", waiting)}.");
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(200), ct);
+        }
+    }
+
+    internal static bool RequiresHealthy(ContainerInspectResponse inspect)
+    {
+        var effectiveTest = inspect.Config?.Healthcheck?.Test;
+        return HasEnabledHealthcheck(effectiveTest) ||
+               inspect.State?.Health is not null;
+    }
+
+    internal static bool IsRunningNormally(ContainerState? state)
+        => state?.Running == true && state?.Paused != true && state?.Restarting != true;
+
+    internal static bool IsAlreadyStartedResponse(DockerApiException exception)
+        => exception.StatusCode == System.Net.HttpStatusCode.NotModified;
+
+    private static bool HasEnabledHealthcheck(IEnumerable<string>? test)
+    {
+        var first = test?.FirstOrDefault();
+        return first is not null && !string.Equals(first, "NONE", StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task RestartContainersAsync(DockerClient client, string projectName, IReadOnlyList<string>? services, int? timeout, CancellationToken ct)

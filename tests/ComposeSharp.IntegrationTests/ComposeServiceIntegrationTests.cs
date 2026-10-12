@@ -4,6 +4,8 @@ using ComposeSharp.Loader;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using System.Formats.Tar;
+using System.Net;
+using System.Net.Sockets;
 
 namespace ComposeSharp.IntegrationTests;
 
@@ -69,6 +71,453 @@ public class ComposeServiceIntegrationTests
 
         var result = await service.PsAsync(context);
         Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task UpAsync_IncludesSelectedDependenciesAndWaitsForTheirHealthchecks()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-readiness-{suffix}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                healthcheck:
+                  test: ["CMD-SHELL", "sleep 3"]
+                  interval: 1s
+                  timeout: 5s
+                  retries: 5
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-readiness-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            var started = System.Diagnostics.Stopwatch.StartNew();
+            await service.UpAsync(context, new ComposeUpOptions { Services = ["app"], DependencyWaitTimeoutSeconds = 15 });
+            started.Stop();
+
+            Assert.True(started.Elapsed >= TimeSpan.FromSeconds(2), $"UpAsync returned before the dependency health check completed ({started.Elapsed}).");
+            var containers = await service.PsAsync(context);
+            Assert.Equal(["app", "database"], containers.Select(container => container.Service).Order(StringComparer.Ordinal));
+            Assert.All(containers, container => Assert.Equal("running", container.State));
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task UpAsync_ReportsBothServicesWhenDependencyReadinessTimesOut()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-timeout-{suffix}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                healthcheck:
+                  test: ["CMD-SHELL", "sleep 3"]
+                  interval: 1s
+                  timeout: 5s
+                  retries: 5
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-timeout-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            var error = await Assert.ThrowsAsync<TimeoutException>(() => service.UpAsync(
+                context, new ComposeUpOptions { Services = ["app"], DependencyWaitTimeoutSeconds = 1 }));
+
+            Assert.Contains("app", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("database", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_ReportsDependencyStartFailureInsteadOfWaitingForReadiness()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        int occupiedPort;
+        using (var portProbe = new TcpListener(IPAddress.Loopback, 0))
+        {
+            portProbe.Start();
+            occupiedPort = ((IPEndPoint)portProbe.LocalEndpoint).Port;
+        }
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-start-failure-{suffix}");
+        var blockerDirectory = Path.Combine(Path.GetTempPath(), $"dependency-start-blocker-{suffix}");
+        Directory.CreateDirectory(directory);
+        Directory.CreateDirectory(blockerDirectory);
+        File.WriteAllText(Path.Combine(blockerDirectory, "compose.yaml"), $$"""
+            services:
+              blocker:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                ports:
+                  - "127.0.0.1:{{occupiedPort}}:80"
+            """);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), $$"""
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                ports:
+                  - "127.0.0.1:{{occupiedPort}}:80"
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-start-failure-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var blockerContext = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-start-blocker-{suffix}",
+            WorkingDirectory = blockerDirectory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+            await service.StopAsync(context);
+            await service.UpAsync(blockerContext);
+
+            await Assert.ThrowsAsync<DockerApiException>(() => service.StartAsync(
+                context, new ComposeStartOptions { Services = ["app"] }));
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally
+            {
+                try { await service.DownAsync(blockerContext); }
+                finally
+                {
+                    Directory.Delete(directory, recursive: true);
+                    Directory.Delete(blockerDirectory, recursive: true);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_DoesNotRestartRetainedOneOffDependencyContainers()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-oneoff-start-{suffix}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-oneoff-start-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+            var oneOffId = await service.RunAsync(context, "database", new ComposeRunOptions
+            {
+                Detach = true,
+                Remove = false
+            });
+            await service.StopAsync(context, new ComposeStopOptions { Services = ["database"] });
+
+            await service.StartAsync(context, new ComposeStartOptions { Services = ["app"] });
+
+            using var client = new DockerClientFactory().CreateClient();
+            var oneOff = await client.Containers.InspectContainerAsync(oneOffId);
+            Assert.False(oneOff.State.Running);
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_UsesExistingContainerHealthcheckConfiguration()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-existing-healthcheck-{suffix}");
+        Directory.CreateDirectory(directory);
+        var composePath = Path.Combine(directory, "compose.yaml");
+        File.WriteAllText(composePath, """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-existing-healthcheck-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+            await service.StopAsync(context, new ComposeStopOptions { Services = ["database"] });
+            File.WriteAllText(composePath, """
+                services:
+                  app:
+                    image: busybox:1.36
+                    command: ["sleep", "300"]
+                    depends_on: [database]
+                  database:
+                    image: busybox:1.36
+                    command: ["sleep", "300"]
+                    healthcheck:
+                      test: ["CMD-SHELL", "sleep 1"]
+                      interval: 1s
+                      timeout: 3s
+                      retries: 3
+                """);
+
+            await service.StartAsync(context, new ComposeStartOptions
+            {
+                Services = ["app"],
+                DependencyWaitTimeoutSeconds = 5
+            });
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task UpAsyncAndCreateAsync_PreserveRetainedOneOffDependencyContainers()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-oneoff-reconcile-{suffix}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-oneoff-reconcile-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+            var upOneOffId = await service.RunAsync(context, "database", new ComposeRunOptions
+            {
+                Detach = true,
+                Remove = false
+            });
+            await service.UpAsync(context, new ComposeUpOptions { Services = ["app"] });
+
+            using var client = new DockerClientFactory().CreateClient();
+            Assert.NotNull(await client.Containers.InspectContainerAsync(upOneOffId));
+
+            var createOneOffId = await service.RunAsync(context, "database", new ComposeRunOptions
+            {
+                Detach = true,
+                Remove = false
+            });
+            await service.CreateAsync(context, new ComposeCreateOptions { Services = ["app"] });
+
+            Assert.NotNull(await client.Containers.InspectContainerAsync(createOneOffId));
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_DoesNotTreatPausedDependencyAsReady()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-paused-{suffix}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-paused-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+        string? databaseId = null;
+        string? appId = null;
+
+        try
+        {
+            await service.UpAsync(context);
+            var containers = await service.PsAsync(context);
+            databaseId = containers.Single(container => container.Service == "database").ID;
+            appId = containers.Single(container => container.Service == "app").ID;
+            using var client = new DockerClientFactory().CreateClient();
+            await service.StopAsync(context, new ComposeStopOptions { Services = ["app"] });
+            await client.Containers.PauseContainerAsync(databaseId);
+
+            await Assert.ThrowsAsync<DockerApiException>(() => service.StartAsync(context, new ComposeStartOptions
+            {
+                Services = ["app"],
+                DependencyWaitTimeoutSeconds = 1
+            }));
+
+            Assert.False((await client.Containers.InspectContainerAsync(appId)).State.Running);
+        }
+        finally
+        {
+            if (databaseId is not null)
+            {
+                try
+                {
+                    using var client = new DockerClientFactory().CreateClient();
+                    await client.Containers.UnpauseContainerAsync(databaseId);
+                }
+                catch (DockerApiException) { }
+            }
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task StartupOperations_RejectUnknownRequestedServicesBeforeDockerAccess()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"unknown-dependency-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"unknown-dependency-{Guid.NewGuid():N}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            var upError = await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpAsync(
+                context, new ComposeUpOptions { Services = ["app", "missing"] }));
+            var createError = await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreateAsync(
+                context, new ComposeCreateOptions { Services = ["missing"] }));
+            var startError = await Assert.ThrowsAsync<InvalidOperationException>(() => service.StartAsync(
+                context, new ComposeStartOptions { Services = ["missing"] }));
+
+            Assert.Contains("missing", upError.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("missing", createError.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("missing", startError.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]

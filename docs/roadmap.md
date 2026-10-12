@@ -51,6 +51,8 @@ Reimplement every Docker Compose CLI UX feature. The public SDK should prioritiz
 
 **Goal:** Make repeated project reconciliation safe enough for applications that manage more than one development lifecycle.
 
+Dependency-aware startup now includes selected services' transitive dependencies, rejects missing dependencies and cycles, and waits for dependencies to run or become healthy before starting dependents. Health checks inherited from images are detected, and callers can set an optional per-dependency timeout. Long-form `depends_on` conditions remain unsupported.
+
 ### Exit criteria
 
 - Dependency-aware create/start sequencing and health-readiness behavior.

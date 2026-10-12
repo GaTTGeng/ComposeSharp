@@ -17,4 +17,7 @@ public sealed record ComposeStartOptions
 
     /// <summary>Upper bound in seconds for <see cref="Wait"/> before the call fails.</summary>
     public int? WaitTimeoutSeconds { get; init; }
+
+    /// <summary>Maximum seconds to wait for each dependency to become ready; null waits until readiness, failure, or cancellation.</summary>
+    public int? DependencyWaitTimeoutSeconds { get; init; }
 }
