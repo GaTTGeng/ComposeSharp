@@ -4,6 +4,8 @@ using ComposeSharp.Loader;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using System.Formats.Tar;
+using System.Net;
+using System.Net.Sockets;
 
 namespace ComposeSharp.IntegrationTests;
 
@@ -167,6 +169,82 @@ public class ComposeServiceIntegrationTests
         {
             try { await service.DownAsync(context); }
             finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_ReportsDependencyStartFailureInsteadOfWaitingForReadiness()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        int occupiedPort;
+        using (var portProbe = new TcpListener(IPAddress.Loopback, 0))
+        {
+            portProbe.Start();
+            occupiedPort = ((IPEndPoint)portProbe.LocalEndpoint).Port;
+        }
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"dependency-start-failure-{suffix}");
+        var blockerDirectory = Path.Combine(Path.GetTempPath(), $"dependency-start-blocker-{suffix}");
+        Directory.CreateDirectory(directory);
+        Directory.CreateDirectory(blockerDirectory);
+        File.WriteAllText(Path.Combine(blockerDirectory, "compose.yaml"), $$"""
+            services:
+              blocker:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                ports:
+                  - "127.0.0.1:{{occupiedPort}}:80"
+            """);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), $$"""
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                depends_on: [database]
+              database:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+                ports:
+                  - "127.0.0.1:{{occupiedPort}}:80"
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-start-failure-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var blockerContext = new ComposeProjectContext
+        {
+            ProjectName = $"dependency-start-blocker-{suffix}",
+            WorkingDirectory = blockerDirectory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+            await service.StopAsync(context);
+            await service.UpAsync(blockerContext);
+
+            await Assert.ThrowsAsync<DockerApiException>(() => service.StartAsync(
+                context, new ComposeStartOptions { Services = ["app"] }));
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally
+            {
+                try { await service.DownAsync(blockerContext); }
+                finally
+                {
+                    Directory.Delete(directory, recursive: true);
+                    Directory.Delete(blockerDirectory, recursive: true);
+                }
+            }
         }
     }
 

@@ -1,7 +1,9 @@
 using ComposeSharp.Api;
 using ComposeSharp.Engine.Internal;
 using ComposeSharp.Loader.Models;
+using Docker.DotNet;
 using Docker.DotNet.Models;
+using System.Net;
 
 namespace ComposeSharp.Tests;
 
@@ -112,5 +114,14 @@ public class ContainerLifecycleTests
         Assert.True(ContainerLifecycle.RequiresHealthy(null, healthState));
         Assert.False(ContainerLifecycle.RequiresHealthy(
             new ComposeHealthcheck(true, [], null, null, null, null), disabled));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotModified, true)]
+    [InlineData(HttpStatusCode.Conflict, false)]
+    [InlineData(HttpStatusCode.InternalServerError, false)]
+    public void IsAlreadyStartedResponse_IgnoresOnlyDockerAlreadyStartedStatus(HttpStatusCode statusCode, bool expected)
+    {
+        Assert.Equal(expected, ContainerLifecycle.IsAlreadyStartedResponse(new DockerApiException(statusCode, "start failed")));
     }
 }

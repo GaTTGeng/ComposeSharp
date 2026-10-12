@@ -147,7 +147,7 @@ internal sealed class ContainerLifecycle
         foreach (var container in containers)
         {
             try { await client.Containers.StartContainerAsync(container.ID, new ContainerStartParameters(), ct); }
-            catch (DockerApiException) { }
+            catch (DockerApiException ex) when (IsAlreadyStartedResponse(ex)) { }
         }
     }
 
@@ -160,7 +160,8 @@ internal sealed class ContainerLifecycle
         TimeSpan? timeout,
         CancellationToken ct)
     {
-        var containers = await ListServiceContainersAsync(client, projectName, dependency.Name, true, ct);
+        var containers = FilterOneOffContainers(
+            await ListServiceContainersAsync(client, projectName, dependency.Name, true, ct), includeOneOff: false).ToList();
         if (containers.Count == 0)
             throw new InvalidOperationException($"Service '{blockedService}' depends on '{dependency.Name}', but the dependency has no containers to start.");
 
@@ -228,6 +229,9 @@ internal sealed class ContainerLifecycle
                HasEnabledHealthcheck(effectiveTest) ||
                inspect.State?.Health is not null;
     }
+
+    internal static bool IsAlreadyStartedResponse(DockerApiException exception)
+        => exception.StatusCode == System.Net.HttpStatusCode.NotModified;
 
     private static bool HasEnabledHealthcheck(IEnumerable<string>? test)
     {
