@@ -1,4 +1,5 @@
 using ComposeSharp.Loader;
+using ComposeSharp.Loader.Models;
 using ComposeSharp.Loader.Interpolation;
 
 namespace ComposeSharp.Tests;
@@ -129,7 +130,7 @@ public sealed class VariableInterpolationTests
         string dotEnv,
         string envFile,
         string composeFile,
-        Action<ComposeSharp.Loader.Models.ComposeProject> assertion)
+        Action<ComposeProject> assertion)
     {
         var directory = Path.Combine(Path.GetTempPath(), "compose-interpolation-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);

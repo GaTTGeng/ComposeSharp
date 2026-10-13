@@ -1,7 +1,8 @@
+// Rider inspection rationale: This synchronous path is intentionally used here; switching overloads changes fixture or call sequencing.
+// ReSharper disable MethodHasAsyncOverload
 using ComposeSharp.Api;
 using ComposeSharp.Engine.Internal;
 using Docker.DotNet;
-using Docker.DotNet.Models;
 
 namespace ComposeSharp.Tests;
 
@@ -172,3 +173,4 @@ public sealed class ImageCommitPublishTests
             cancellationToken: cancellation.Token));
     }
 }
+// ReSharper restore MethodHasAsyncOverload

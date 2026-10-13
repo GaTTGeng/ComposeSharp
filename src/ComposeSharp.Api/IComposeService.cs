@@ -1,3 +1,11 @@
+// Rider inspection rationale: This public member is part of a package contract and is intended for downstream callers.
+// ReSharper disable UnusedMember.Global
+// Rider inspection rationale: This interface member is part of the public service contract for downstream callers.
+// ReSharper disable UnusedMemberInSuper.Global
+// Rider inspection rationale: The return value is part of the public service contract and is consumed by downstream callers.
+// ReSharper disable UnusedMethodReturnValue.Global
+// Rider inspection rationale: This parameter is part of a public interface contract and is consumed by implementations or callers outside this solution.
+// ReSharper disable UnusedParameter.Global
 namespace ComposeSharp.Api;
 
 /// <summary>
@@ -178,3 +186,7 @@ public interface IComposeService
     /// </remarks>
     Task<IReadOnlyList<PublishResult>> PublishAsync(ComposeProjectContext context, string repository, ComposePublishOptions? options = null, CancellationToken cancellationToken = default);
 }
+// ReSharper restore UnusedParameter.Global
+// ReSharper restore UnusedMethodReturnValue.Global
+// ReSharper restore UnusedMemberInSuper.Global
+// ReSharper restore UnusedMember.Global

@@ -1,3 +1,5 @@
+// Rider inspection rationale: This folder layout organizes source files, while the established public namespace is kept stable for callers.
+// ReSharper disable CheckNamespace
 namespace ComposeSharp.Api;
 
 /// <summary>
@@ -15,3 +17,4 @@ public sealed record WatchEvent
     /// <summary>Absolute path of the changed, created, deleted, or renamed build-context entry.</summary>
     public required string Path { get; init; }
 }
+// ReSharper restore CheckNamespace

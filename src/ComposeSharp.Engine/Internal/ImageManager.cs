@@ -14,8 +14,6 @@ internal sealed class ImageManager
     // the daemon expects the legacy index URL rather than a registry hostname.
     private const string DockerHubRegistryAddress = "https://index.docker.io/v1/";
 
-    private readonly DockerClientFactory _factory = new();
-
     public async Task PullImageAsync(DockerClient client, DockerRegistryAuth? auth, string image, CancellationToken ct)
     {
         // The create/pull API wants repository and tag as separate fields.
@@ -47,7 +45,7 @@ internal sealed class ImageManager
     }
 
     // Images are discovered through project containers rather than a daemon-wide image scan.
-    public async Task<IReadOnlyList<Api.ImageSummary>> ListImagesAsync(DockerClient client, string projectName, IReadOnlyList<string>? services, CancellationToken ct)
+    public async Task<IReadOnlyList<ImageSummary>> ListImagesAsync(DockerClient client, string projectName, IReadOnlyList<string>? services, CancellationToken ct)
     {
         var containers = await client.Containers.ListContainersAsync(new ContainersListParameters
         {
@@ -55,7 +53,7 @@ internal sealed class ImageManager
             Filters = LabelHelper.ProjectLabelFilter(projectName)
         }, ct);
 
-        var result = new List<Api.ImageSummary>();
+        var result = new List<ImageSummary>();
         var seen = new HashSet<string>();
 
         foreach (var container in containers)
@@ -73,7 +71,7 @@ internal sealed class ImageManager
             try
             {
                 var inspect = await client.Images.InspectImageAsync(container.ImageID, ct);
-                result.Add(new Api.ImageSummary
+                result.Add(new ImageSummary
                 {
                     ID = inspect.ID,
                     Repository = container.Image.Split(':').FirstOrDefault() ?? container.Image,

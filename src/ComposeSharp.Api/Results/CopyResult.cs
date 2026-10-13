@@ -1,3 +1,7 @@
+// Rider inspection rationale: This folder layout organizes source files, while the established public namespace is kept stable for callers.
+// ReSharper disable CheckNamespace
+// Rider inspection rationale: This public member is part of a package contract and is intended for downstream callers.
+// ReSharper disable UnusedMember.Global
 namespace ComposeSharp.Api;
 
 /// <summary>Outcome of a host/container copy operation.</summary>
@@ -15,3 +19,5 @@ public sealed record CopyResult
     /// <summary>Process exit code of the underlying copy operation; 0 on success for managed copies.</summary>
     public int ExitCode { get; init; }
 }
+// ReSharper restore UnusedMember.Global
+// ReSharper restore CheckNamespace

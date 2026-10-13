@@ -1,3 +1,5 @@
+// Rider inspection rationale: Synchronous disposal is intentional for this resource path and preserves its existing teardown behavior.
+// ReSharper disable UseAwaitUsing
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using ComposeSharp.Api;
@@ -164,8 +166,7 @@ internal sealed class EventStreamer
         IDictionary<string, string>? attributes)
     {
         if (attributes is not null &&
-            attributes.TryGetValue(ComposeConstants.ProjectLabel, out var owner) &&
-            owner is not null)
+            attributes.TryGetValue(ComposeConstants.ProjectLabel, out var owner))
         {
             return string.Equals(owner, projectName, StringComparison.Ordinal);
         }
@@ -190,3 +191,4 @@ internal sealed class EventStreamer
         return false;
     }
 }
+// ReSharper restore UseAwaitUsing

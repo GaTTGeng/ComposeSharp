@@ -1,3 +1,5 @@
+// Rider inspection rationale: This synchronous path is intentionally used here; switching overloads changes fixture or call sequencing.
+// ReSharper disable MethodHasAsyncOverload
 using System.Globalization;
 using ComposeSharp.Api;
 using ComposeSharp.Engine;
@@ -163,3 +165,4 @@ public sealed class GenerateConfigurationTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 }
+// ReSharper restore MethodHasAsyncOverload

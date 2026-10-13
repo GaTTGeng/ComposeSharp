@@ -1,6 +1,6 @@
+// Rider inspection rationale: The current visibility is retained for existing helper and test interactions.
+// ReSharper disable MemberCanBePrivate.Global
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
-using System.Text;
 using ComposeSharp.Api;
 using ComposeSharp.Loader.Models;
 using Docker.DotNet;
@@ -15,7 +15,6 @@ namespace ComposeSharp.Engine.Internal;
 internal sealed class ContainerLifecycle
 {
     private readonly LabelHelper _labels = new();
-    private readonly NetworkManager _networks = new();
 
     /// <summary>
     /// Creates and starts one container for a service, labeling it as replica <paramref name="index"/>
@@ -231,7 +230,7 @@ internal sealed class ContainerLifecycle
     }
 
     internal static bool IsRunningNormally(ContainerState? state)
-        => state?.Running == true && state?.Paused != true && state?.Restarting != true;
+        => state?.Running == true && state.Paused != true && state.Restarting != true;
 
     internal static bool IsAlreadyStartedResponse(DockerApiException exception)
         => exception.StatusCode == System.Net.HttpStatusCode.NotModified;
@@ -533,3 +532,4 @@ internal sealed class ContainerLifecycle
         return string.Join(':', parts);
     }
 }
+// ReSharper restore MemberCanBePrivate.Global

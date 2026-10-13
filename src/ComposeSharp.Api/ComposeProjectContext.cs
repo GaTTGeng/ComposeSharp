@@ -1,3 +1,5 @@
+// Rider inspection rationale: This public member is part of a package contract and is intended for downstream callers.
+// ReSharper disable UnusedMember.Global
 namespace ComposeSharp.Api;
 
 /// <summary>
@@ -54,3 +56,4 @@ public sealed record DockerRegistryAuth
     /// <summary>Registry server address; null lets the engine infer it from the image reference.</summary>
     public string? ServerAddress { get; init; }
 }
+// ReSharper restore UnusedMember.Global

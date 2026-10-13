@@ -1,6 +1,5 @@
 using ComposeSharp.Api;
 using ComposeSharp.Loader;
-using ComposeSharp.Loader.Models;
 using Xunit.Abstractions;
 
 namespace ComposeSharp.Tests;
@@ -261,6 +260,9 @@ public class ComposeFileLoaderTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); }
-        catch { }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Temporary-directory cleanup must not hide the test result.
+        }
     }
 }

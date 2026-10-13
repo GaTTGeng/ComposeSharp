@@ -1,3 +1,9 @@
+// Rider inspection rationale: The inline lambda keeps the local assertion or callback context visible.
+// ReSharper disable ConvertClosureToMethodGroup
+// Rider inspection rationale: This synchronous path is intentionally used here; switching overloads changes fixture or call sequencing.
+// ReSharper disable MethodHasAsyncOverload
+// Rider inspection rationale: Cancellation is intentionally not part of this short-lived helper or test scenario.
+// ReSharper disable MethodSupportsCancellation
 using ComposeSharp.Api;
 using ComposeSharp.Engine;
 using ComposeSharp.Engine.Internal;
@@ -299,3 +305,6 @@ public sealed class BuildContextWatcherTests
         return Directory.CreateDirectory(path).FullName;
     }
 }
+// ReSharper restore MethodSupportsCancellation
+// ReSharper restore MethodHasAsyncOverload
+// ReSharper restore ConvertClosureToMethodGroup

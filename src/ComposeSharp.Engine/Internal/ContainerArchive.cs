@@ -1,3 +1,9 @@
+// Rider inspection rationale: The explicit local is retained for readability and easier debugging.
+// ReSharper disable MoveVariableDeclarationInsideLoopCondition
+// Rider inspection rationale: The verbatim form is retained for consistency with the surrounding path literal.
+// ReSharper disable RedundantVerbatimStringPrefix
+// Rider inspection rationale: Synchronous disposal is intentional for this resource path and preserves its existing teardown behavior.
+// ReSharper disable UseAwaitUsing
 using System.Formats.Tar;
 using System.Text.RegularExpressions;
 
@@ -277,3 +283,6 @@ internal readonly record struct ContainerCopyPath(bool IsContainer, string? Serv
 
     private static readonly Regex ServiceNamePattern = new(@"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$", RegexOptions.Compiled);
 }
+// ReSharper restore UseAwaitUsing
+// ReSharper restore RedundantVerbatimStringPrefix
+// ReSharper restore MoveVariableDeclarationInsideLoopCondition

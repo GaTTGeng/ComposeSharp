@@ -1,3 +1,5 @@
+// Rider inspection rationale: The inline lambda keeps the local assertion or callback context visible.
+// ReSharper disable ConvertClosureToMethodGroup
 using ComposeSharp.Api;
 using Docker.DotNet;
 using Docker.DotNet.Models;
@@ -101,3 +103,4 @@ internal sealed class ProcessInspector
             ? replica
             : string.Empty;
 }
+// ReSharper restore ConvertClosureToMethodGroup

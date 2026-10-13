@@ -1,3 +1,5 @@
+// Rider inspection rationale: The inline lambda keeps the local assertion or callback context visible.
+// ReSharper disable ConvertClosureToMethodGroup
 using ComposeSharp.Loader;
 using YamlDotNet.Core;
 
@@ -302,7 +304,11 @@ public sealed class ComposeLoaderValidationTests
         public void Dispose()
         {
             try { Directory.Delete(DirectoryPath, recursive: true); }
-            catch { }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Temporary-directory cleanup must not hide the test result.
+            }
         }
     }
 }
+// ReSharper restore ConvertClosureToMethodGroup

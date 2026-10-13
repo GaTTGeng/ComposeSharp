@@ -1,6 +1,7 @@
+// Rider inspection rationale: The current visibility is retained for existing helper and test interactions.
+// ReSharper disable MemberCanBePrivate.Global
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Threading.Channels;
 using ComposeSharp.Api;
 using Docker.DotNet;
 using Docker.DotNet.Models;
@@ -121,3 +122,4 @@ internal sealed class LogStreamer
         return false;
     }
 }
+// ReSharper restore MemberCanBePrivate.Global

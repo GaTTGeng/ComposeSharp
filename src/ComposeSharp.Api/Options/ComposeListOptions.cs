@@ -1,3 +1,7 @@
+// Rider inspection rationale: This folder layout organizes source files, while the established public namespace is kept stable for callers.
+// ReSharper disable CheckNamespace
+// Rider inspection rationale: This public member is part of a package contract and is intended for downstream callers.
+// ReSharper disable UnusedMember.Global
 namespace ComposeSharp.Api;
 
 /// <summary>Options for listing Compose projects known to the Docker daemon.</summary>
@@ -15,3 +19,5 @@ public sealed record ComposeListOptions
     /// <summary>Return only project names, omitting summary details.</summary>
     public bool Quiet { get; init; }
 }
+// ReSharper restore UnusedMember.Global
+// ReSharper restore CheckNamespace

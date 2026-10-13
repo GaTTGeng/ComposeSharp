@@ -1,3 +1,5 @@
+// Rider inspection rationale: Public model properties are consumed by package callers even when this solution does not read them.
+// ReSharper disable NotAccessedPositionalProperty.Global
 namespace ComposeSharp.Loader.Models;
 
 /// <summary>
@@ -27,3 +29,4 @@ public sealed record ComposeHealthcheck(
     TimeSpan? Timeout,
     int? Retries,
     TimeSpan? StartPeriod);
+// ReSharper restore NotAccessedPositionalProperty.Global
