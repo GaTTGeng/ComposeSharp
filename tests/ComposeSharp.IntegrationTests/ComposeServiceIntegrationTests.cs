@@ -530,6 +530,60 @@ public class ComposeServiceIntegrationTests
         Assert.NotNull(result);
     }
 
+    [Fact]
+    public async Task ListAsync_DerivesStatusFromAllProjectContainersAndHonorsAll()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), $"list-status-{suffix}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              first:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+              second:
+                image: busybox:1.36
+                command: ["sleep", "300"]
+            """);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = $"list-status-{suffix}",
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+
+        try
+        {
+            await service.UpAsync(context);
+            Assert.Equal("running", Assert.Single(await service.ListAsync(), stack => stack.Name == context.ProjectName).Status);
+
+            using (var client = new DockerClientFactory().CreateClient())
+            {
+                var containers = await service.PsAsync(context);
+                var first = Assert.Single(containers, container => container.Service == "first");
+                await client.Containers.StopContainerAsync(first.ID, new ContainerStopParameters { WaitBeforeKillSeconds = 1 });
+            }
+
+            Assert.Equal("partial", Assert.Single(await service.ListAsync(), stack => stack.Name == context.ProjectName).Status);
+            Assert.Equal("partial", Assert.Single(await service.ListAsync(new ComposeListOptions { All = true }), stack => stack.Name == context.ProjectName).Status);
+
+            await service.StopAsync(context);
+            Assert.DoesNotContain(await service.ListAsync(), stack => stack.Name == context.ProjectName);
+            var stopped = Assert.Single(await service.ListAsync(new ComposeListOptions { All = true }), stack => stack.Name == context.ProjectName);
+            Assert.Equal("exited", stopped.Status);
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
     // Pure loader path; does not need Docker, so it has no DockerAvailable guard.
     [Fact]
     public void LoadProject_ParsesConfig()

@@ -53,6 +53,8 @@ Reimplement every Docker Compose CLI UX feature. The public SDK should prioritiz
 
 Dependency-aware startup now includes selected services' transitive dependencies, rejects missing dependencies and cycles, and waits for dependencies to run or become healthy before starting dependents. Health checks inherited from images are detected, and callers can set an optional per-dependency timeout. Long-form `depends_on` conditions remain unsupported.
 
+`ListAsync` derives each stack's status from all project-labeled container states. It reports `running`, `exited`, `partial`, or `unknown`, and includes projects without running containers only when `All` is enabled.
+
 ### Exit criteria
 
 - Dependency-aware create/start sequencing and health-readiness behavior.

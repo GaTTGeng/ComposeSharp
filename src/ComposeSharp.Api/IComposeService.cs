@@ -79,7 +79,8 @@ public interface IComposeService
     /// <summary>Lists the project's containers with their state, ports, and labels.</summary>
     Task<IReadOnlyList<ContainerSummary>> PsAsync(ComposeProjectContext context, ComposePsOptions? options = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Lists Compose projects discovered from containers carrying the project label.</summary>
+    /// <summary>Lists Compose projects and derives their aggregate status from project-labeled containers.</summary>
+    /// <remarks>Projects without running containers are omitted unless <see cref="ComposeListOptions.All"/> is set.</remarks>
     Task<IReadOnlyList<Stack>> ListAsync(ComposeListOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Lists running processes inside the project's running service containers.</summary>

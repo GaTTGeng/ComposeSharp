@@ -109,7 +109,7 @@ The loader can retain fields that the engine does not yet apply. Consult the [Co
 | --- | --- |
 | Project lifecycle | Creates project networks, creates/starts/removes labeled containers, lists project containers, removes project networks and optional volumes, and builds selected services through Docker Engine. |
 | Service operations | Supports start, stop, restart, pause, unpause, kill, remove, run, exec, attach, pull, push, scale, wait, and port lookup. |
-| Inspection | Provides project list, containers, images, volumes, logs, process listings via `TopAsync`, and a DOT graph via `VizAsync`. |
+| Inspection | Provides project list with aggregate container status (projects without running containers require `All`), containers, images, volumes, logs, process listings via `TopAsync`, and a DOT graph via `VizAsync`. |
 | Streaming | `LogsAsync` streams Docker logs. `EventsAsync` subscribes to the Docker event stream filtered by the project label. |
 | File change signal | `WatchAsync` continuously monitors selected build contexts together and yields `rebuild` notifications with absolute changed paths. Shared contexts notify every associated service. It does not start services, rebuild, or synchronize files. |
 
