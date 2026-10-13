@@ -9,7 +9,8 @@ public sealed record Stack
     /// <summary>Project name as recorded in the project label.</summary>
     public required string Name { get; init; }
 
-    /// <summary>Aggregate status of the project.</summary>
+    /// <summary>Aggregate status: <c>running</c>, <c>exited</c>, <c>partial</c>, or <c>unknown</c>.</summary>
+    /// <remarks>Running and stopped containers together produce <c>partial</c>; unsupported or missing container states produce <c>unknown</c>.</remarks>
     public required string Status { get; init; }
 
     /// <summary>Compose files associated with the project, when known.</summary>

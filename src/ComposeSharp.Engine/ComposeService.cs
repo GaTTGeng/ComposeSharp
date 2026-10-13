@@ -526,26 +526,51 @@ public sealed class ComposeService : IComposeService
     /// <summary>
     /// Lists known Compose stacks by finding containers that carry the project label on this daemon.
     /// </summary>
-    /// <remarks>Only label-owned resources are considered; unlabeled containers are never reported.</remarks>
+    /// <remarks>
+    /// Only label-owned resources are considered; unlabeled containers are never reported. Status is
+    /// <c>running</c> when all containers run, <c>exited</c> when all are exited or dead, <c>partial</c>
+    /// when running and stopped containers are mixed, and <c>unknown</c> for unsupported or missing states.
+    /// Without <see cref="ComposeListOptions.All"/>, Docker's default container listing determines which
+    /// projects are included, so paused or restarting containers remain visible when Docker includes them.
+    /// </remarks>
     public async Task<IReadOnlyList<Stack>> ListAsync(ComposeListOptions? options = null, CancellationToken cancellationToken = default)
     {
-        // Query every container carrying the project label; unlabeled containers are never reported.
+        // Read stopped containers too so a project with running and stopped services is not mislabeled.
         using var client = _clientFactory.CreateClient();
         var containers = await client.Containers.ListContainersAsync(new ContainersListParameters
         {
-            All = options?.All ?? false,
+            All = true,
             Filters = new Dictionary<string, IDictionary<string, bool>>
             {
                 ["label"] = new Dictionary<string, bool> { [$"{ComposeConstants.ProjectLabel}"] = true }
             }
         }, cancellationToken);
 
-        // Collapse the label values into distinct stack names.
+        var visibleProjects = options?.All == true
+            ? null
+            : (await client.Containers.ListContainersAsync(new ContainersListParameters
+            {
+                All = false,
+                Filters = new Dictionary<string, IDictionary<string, bool>>
+                {
+                    ["label"] = new Dictionary<string, bool> { [$"{ComposeConstants.ProjectLabel}"] = true }
+                }
+            }, cancellationToken))
+            .Where(container => container.Labels?.TryGetValue(ComposeConstants.ProjectLabel, out _) == true)
+            .Select(container => container.Labels![ComposeConstants.ProjectLabel])
+            .ToHashSet(StringComparer.Ordinal);
+
         return containers
-            .Select(c => c.Labels != null && c.Labels.TryGetValue(ComposeConstants.ProjectLabel, out var p) ? p : null)
-            .Where(p => p is not null)
-            .Distinct()
-            .Select(name => new Stack { ID = name!, Name = name!, Status = "running", ConfigFiles = "" })
+            .Where(container => container.Labels?.TryGetValue(ComposeConstants.ProjectLabel, out _) == true)
+            .GroupBy(container => container.Labels![ComposeConstants.ProjectLabel], StringComparer.Ordinal)
+            .Where(group => visibleProjects is null || visibleProjects.Contains(group.Key))
+            .Select(group => new Stack
+            {
+                ID = group.Key,
+                Name = group.Key,
+                Status = StackStatus.FromContainerStates(group.Select(container => container.State)),
+                ConfigFiles = ""
+            })
             .ToList();
     }
 
