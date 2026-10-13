@@ -26,9 +26,8 @@ coverage.*
 BenchmarkDotNet.Artifacts/
 
 # Local environment and secrets
-# Track the repository-wide contributor rules; keep nested local instruction files ignored.
+# Local environment and secrets
 AGENTS.md
-!/AGENTS.md
 .env
 .env.*
 !.env.example
