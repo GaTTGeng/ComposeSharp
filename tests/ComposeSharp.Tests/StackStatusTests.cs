@@ -21,5 +21,6 @@ public sealed class StackStatusTests
     {
         Assert.Equal("unknown", StackStatus.FromContainerStates(["running", null]));
         Assert.Equal("unknown", StackStatus.FromContainerStates(["paused"]));
+        Assert.Equal("unknown", StackStatus.FromContainerStates(["restarting"]));
     }
 }

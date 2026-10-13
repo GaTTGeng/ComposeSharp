@@ -15,12 +15,13 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- `ListAsync` derives project status from all labeled containers and omits projects without running containers unless `All` is enabled.
+- `ListAsync` derives project status from all labeled containers and follows Docker's default container listing for project inclusion unless `All` is enabled.
 - `WatchAsync` continuously monitors selected build contexts together, fans out shared-context changes, and reports missing contexts and watcher failures; unsupported pruning and container-based generation selections now fail explicitly.
 - `EventsAsync` now consumes the Docker event stream filtered by the project label instead of polling container state on an interval.
 
 ### Fixed
 
+- `ListAsync` keeps projects with paused or restarting containers in the default listing, following Docker's non-`All` container results.
 - `StartAsync` reports Docker start failures and excludes retained one-off containers from dependency starts and readiness checks.
 - `StartAsync` bases dependency health readiness on each existing container's inspected health configuration.
 - `UpAsync` and `CreateAsync` preserve retained one-off containers while reconciling dependency services.

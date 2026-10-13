@@ -562,6 +562,11 @@ public class ComposeServiceIntegrationTests
             await service.UpAsync(context);
             Assert.Equal("running", Assert.Single(await service.ListAsync(), stack => stack.Name == context.ProjectName).Status);
 
+            await service.PauseAsync(context);
+            var paused = Assert.Single(await service.ListAsync(), stack => stack.Name == context.ProjectName);
+            Assert.Equal("unknown", paused.Status);
+            await service.UnPauseAsync(context);
+
             using (var client = new DockerClientFactory().CreateClient())
             {
                 var containers = await service.PsAsync(context);

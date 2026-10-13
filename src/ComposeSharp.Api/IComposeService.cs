@@ -80,7 +80,7 @@ public interface IComposeService
     Task<IReadOnlyList<ContainerSummary>> PsAsync(ComposeProjectContext context, ComposePsOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Lists Compose projects and derives their aggregate status from project-labeled containers.</summary>
-    /// <remarks>Projects without running containers are omitted unless <see cref="ComposeListOptions.All"/> is set.</remarks>
+    /// <remarks>By default, Docker's non-<c>All</c> container listing determines project inclusion, so paused or restarting containers remain visible when Docker includes them. Set <see cref="ComposeListOptions.All"/> to include projects with containers excluded by that listing.</remarks>
     Task<IReadOnlyList<Stack>> ListAsync(ComposeListOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Lists running processes inside the project's running service containers.</summary>

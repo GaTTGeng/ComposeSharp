@@ -85,7 +85,7 @@ builder.Services.AddComposeSharp();
 | --- | --- |
 | 项目生命周期 | 创建项目网络，创建/启动/删除带标签的容器，列举项目容器，按需删除网络和卷，并通过 Docker Engine 构建已选择的服务。 |
 | 服务控制 | start、stop、restart、pause、unpause、kill、remove、run、exec、attach、pull、push、scale、wait 和端口查询。 |
-| 观察 | 容器、镜像、卷、日志、项目列表及其容器聚合状态（没有运行中容器的项目需设置 `All`）、`TopAsync` 进程清单，以及 `VizAsync` 输出的 DOT 依赖图。 |
+| 观察 | 容器、镜像、卷、日志、项目列表及其容器聚合状态（Docker 默认容器列表中不包含的项目需设置 `All`）、`TopAsync` 进程清单，以及 `VizAsync` 输出的 DOT 依赖图。 |
 | 事件与文件变化 | `EventsAsync` 订阅按项目标签过滤的 Docker 事件流；`WatchAsync` 同时持续监听选中服务的 build context，以发生变化的绝对路径发出 `rebuild` 通知，共享 context 的每个服务都会收到通知。它不会启动服务、重建或同步文件。 |
 
 请特别留意以下事实：

@@ -530,7 +530,8 @@ public sealed class ComposeService : IComposeService
     /// Only label-owned resources are considered; unlabeled containers are never reported. Status is
     /// <c>running</c> when all containers run, <c>exited</c> when all are exited or dead, <c>partial</c>
     /// when running and stopped containers are mixed, and <c>unknown</c> for unsupported or missing states.
-    /// Without <see cref="ComposeListOptions.All"/>, projects with no running containers are omitted.
+    /// Without <see cref="ComposeListOptions.All"/>, Docker's default container listing determines which
+    /// projects are included, so paused or restarting containers remain visible when Docker includes them.
     /// </remarks>
     public async Task<IReadOnlyList<Stack>> ListAsync(ComposeListOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -545,10 +546,24 @@ public sealed class ComposeService : IComposeService
             }
         }, cancellationToken);
 
+        var visibleProjects = options?.All == true
+            ? null
+            : (await client.Containers.ListContainersAsync(new ContainersListParameters
+            {
+                All = false,
+                Filters = new Dictionary<string, IDictionary<string, bool>>
+                {
+                    ["label"] = new Dictionary<string, bool> { [$"{ComposeConstants.ProjectLabel}"] = true }
+                }
+            }, cancellationToken))
+            .Where(container => container.Labels?.TryGetValue(ComposeConstants.ProjectLabel, out _) == true)
+            .Select(container => container.Labels![ComposeConstants.ProjectLabel])
+            .ToHashSet(StringComparer.Ordinal);
+
         return containers
             .Where(container => container.Labels?.TryGetValue(ComposeConstants.ProjectLabel, out _) == true)
             .GroupBy(container => container.Labels![ComposeConstants.ProjectLabel], StringComparer.Ordinal)
-            .Where(group => options?.All == true || group.Any(container => string.Equals(container.State, "running", StringComparison.OrdinalIgnoreCase)))
+            .Where(group => visibleProjects is null || visibleProjects.Contains(group.Key))
             .Select(group => new Stack
             {
                 ID = group.Key,

@@ -3,7 +3,7 @@ namespace ComposeSharp.Api;
 /// <summary>Options for listing Compose projects known to the Docker daemon.</summary>
 public sealed record ComposeListOptions
 {
-    /// <summary>Include projects that have no running containers.</summary>
+    /// <summary>Include projects with containers excluded by Docker's default listing.</summary>
     public bool All { get; init; }
 
     /// <summary>Output format template applied to each project row.</summary>
