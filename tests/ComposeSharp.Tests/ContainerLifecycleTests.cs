@@ -1,6 +1,7 @@
+// Rider inspection rationale: The existing collection construction is retained to make its concrete type and initialization clear.
+// ReSharper disable UseCollectionExpression
 using ComposeSharp.Api;
 using ComposeSharp.Engine.Internal;
-using ComposeSharp.Loader.Models;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using System.Net;
@@ -145,3 +146,4 @@ public class ContainerLifecycleTests
         Assert.Equal(expected, ContainerLifecycle.IsAlreadyStartedResponse(new DockerApiException(statusCode, "start failed")));
     }
 }
+// ReSharper restore UseCollectionExpression

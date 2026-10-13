@@ -67,8 +67,8 @@ public sealed class ComposeLoaderConformanceTests
                     Assert.Equal(["app-data"], project.Volumes);
                     Assert.Equal(["frontend"], project.Networks);
                     Assert.Collection(app.Ports,
-                        port => Assert.Equal(new ComposePort("8080", "8081/tcp", "tcp"), port),
-                        port => Assert.Equal(new ComposePort("9090", "9091/udp", "udp"), port));
+                        port => Assert.Equal(new ComposePort("8080", "8081/tcp"), port),
+                        port => Assert.Equal(new ComposePort("9090", "9091/udp"), port));
                     Assert.Equal(["app-data:/var/lib/app"], app.Volumes);
                     Assert.Equal(["frontend"], app.Networks);
                     Assert.Equal("api", app.Labels["com.example.component"]);
@@ -140,7 +140,7 @@ public sealed class ComposeLoaderConformanceTests
         Assert.Equal("api", app.Labels["com.example.component"]);
         Assert.Equal("override", app.Labels["com.example.shared"]);
         Assert.Equal(
-            [new ComposePort("8080", "80/tcp", "tcp"), new ComposePort("9090", "81/tcp", "tcp")],
+            [new ComposePort("8080", "80/tcp"), new ComposePort("9090", "81/tcp")],
             app.Ports);
         Assert.Equal(["override-data:/var/lib/app", "cache:/cache", "logs:/var/log/app"], app.Volumes);
         Assert.Equal(["frontend", "backend"], app.Networks);

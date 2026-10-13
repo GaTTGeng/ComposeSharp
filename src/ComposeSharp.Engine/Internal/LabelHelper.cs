@@ -1,8 +1,9 @@
+// Rider inspection rationale: The current visibility is retained for existing helper and test interactions.
+// ReSharper disable MemberCanBePrivate.Global
+// Rider inspection rationale: This public member is part of a package contract and is intended for downstream callers.
+// ReSharper disable UnusedMember.Global
 using ComposeSharp.Api;
 using ComposeSharp.Loader.Models;
-using Docker.DotNet;
-using Docker.DotNet.Models;
-
 namespace ComposeSharp.Engine.Internal;
 
 /// <summary>
@@ -72,3 +73,5 @@ internal sealed class LabelHelper
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input))).ToLowerInvariant();
     }
 }
+// ReSharper restore UnusedMember.Global
+// ReSharper restore MemberCanBePrivate.Global

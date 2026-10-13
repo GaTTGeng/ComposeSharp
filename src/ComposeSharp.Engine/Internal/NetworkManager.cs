@@ -1,3 +1,6 @@
+// Rider inspection rationale: The current visibility is retained for existing helper and test interactions.
+// ReSharper disable MemberCanBePrivate.Global
+using ComposeSharp.Api;
 using ComposeSharp.Loader.Models;
 using Docker.DotNet;
 using Docker.DotNet.Models;
@@ -19,7 +22,7 @@ internal sealed class NetworkManager
                 Name = name,
                 Driver = "bridge",
                 CheckDuplicate = true,
-                Labels = new Dictionary<string, string> { [ComposeSharp.Api.ComposeConstants.ProjectLabel] = projectName }
+                Labels = new Dictionary<string, string> { [ComposeConstants.ProjectLabel] = projectName }
             }, ct);
         }
         // An existing network is not an error: creation is idempotent by design.
@@ -60,7 +63,7 @@ internal sealed class NetworkManager
             await client.Volumes.CreateAsync(new VolumesCreateParameters
             {
                 Name = name,
-                Labels = new Dictionary<string, string> { [ComposeSharp.Api.ComposeConstants.ProjectLabel] = projectName }
+                Labels = new Dictionary<string, string> { [ComposeConstants.ProjectLabel] = projectName }
             }, ct);
         }
         // An existing volume is not an error: creation is idempotent by design.
@@ -100,3 +103,4 @@ internal sealed class NetworkManager
         return GetNetworkName(projectName, network);
     }
 }
+// ReSharper restore MemberCanBePrivate.Global

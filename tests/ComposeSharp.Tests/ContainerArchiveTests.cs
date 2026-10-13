@@ -1,3 +1,9 @@
+// Rider inspection rationale: This synchronous path is intentionally used here; switching overloads changes fixture or call sequencing.
+// ReSharper disable MethodHasAsyncOverload
+// Rider inspection rationale: Synchronous disposal is intentional for this resource path and preserves its existing teardown behavior.
+// ReSharper disable UseAwaitUsing
+// Rider inspection rationale: The current byte construction is retained to keep the fixture representation explicit.
+// ReSharper disable UseUtf8StringLiteral
 using System.Formats.Tar;
 using System.Text;
 using ComposeSharp.Engine.Internal;
@@ -151,3 +157,6 @@ public class ContainerArchiveTests
         }
     }
 }
+// ReSharper restore UseUtf8StringLiteral
+// ReSharper restore UseAwaitUsing
+// ReSharper restore MethodHasAsyncOverload

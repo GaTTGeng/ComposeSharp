@@ -1,3 +1,5 @@
+// Rider inspection rationale: This folder layout organizes source files, while the established public namespace is kept stable for callers.
+// ReSharper disable CheckNamespace
 namespace ComposeSharp.Api;
 
 /// <summary>Options for rendering the loaded configuration within one Compose project.</summary>
@@ -16,3 +18,4 @@ public sealed record ComposeGenerateOptions
     /// <summary>Legacy container names or IDs; generation cannot inspect containers and rejects nonempty values.</summary>
     public IReadOnlyList<string>? Containers { get; init; }
 }
+// ReSharper restore CheckNamespace

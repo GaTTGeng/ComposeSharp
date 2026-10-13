@@ -1,3 +1,9 @@
+// Rider inspection rationale: TryGetValue is retained because the lookup and fallback decision are intentionally explicit.
+// ReSharper disable CanSimplifyDictionaryTryGetValueWithGetValueOrDefault
+// Rider inspection rationale: The current branch shape is retained to keep interpolation behavior easy to follow.
+// ReSharper disable MergeConditionalExpression
+// Rider inspection rationale: This parameter is part of a public interface contract and is consumed by implementations or callers outside this solution.
+// ReSharper disable UnusedParameter.Global
 using System.Text.RegularExpressions;
 
 namespace ComposeSharp.Loader.Interpolation;
@@ -66,3 +72,6 @@ public static partial class VariableInterpolator
         return dotenv.TryGetValue(name, out var dotEnvValue) ? dotEnvValue : null;
     }
 }
+// ReSharper restore UnusedParameter.Global
+// ReSharper restore MergeConditionalExpression
+// ReSharper restore CanSimplifyDictionaryTryGetValueWithGetValueOrDefault

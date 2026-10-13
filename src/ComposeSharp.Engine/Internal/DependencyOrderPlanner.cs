@@ -1,3 +1,5 @@
+// Rider inspection rationale: The existing collection construction is retained to make its concrete type and initialization clear.
+// ReSharper disable UseCollectionExpression
 using ComposeSharp.Loader.Models;
 
 namespace ComposeSharp.Engine.Internal;
@@ -117,3 +119,4 @@ internal static class DependencyOrderPlanner
         }
     }
 }
+// ReSharper restore UseCollectionExpression

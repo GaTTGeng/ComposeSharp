@@ -1,7 +1,10 @@
+// Rider inspection rationale: This public member is part of a package contract and is intended for downstream callers.
+// ReSharper disable UnusedMember.Global
+// Rider inspection rationale: This public type is part of the package contract and is intended for downstream callers.
+// ReSharper disable UnusedType.Global
 using ComposeSharp.Api;
 using ComposeSharp.Engine;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace ComposeSharp.DependencyInjection;
 
@@ -12,7 +15,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddComposeSharp(this IServiceCollection services)
     {
         // Simple path: singleton registration with the parameterless implementation.
-        services.AddSingleton<IComposeService, ComposeService>();
+        services.AddSingleton<IComposeService>(_ => new ComposeService());
         return services;
     }
 
@@ -23,12 +26,8 @@ public static class ServiceCollectionExtensions
         var options = new ComposeSharpOptions();
         configure(options);
         services.AddSingleton(options);
-        // Factory registration leaves room for optional logger wiring around the service.
-        services.AddSingleton<IComposeService>(sp =>
-        {
-            var logger = sp.GetService<ILogger<ComposeService>>();
-            return new ComposeService();
-        });
+        // Keep the same explicit construction path as the parameterless registration overload.
+        services.AddSingleton<IComposeService>(_ => new ComposeService());
         return services;
     }
 }
@@ -42,3 +41,5 @@ public sealed class ComposeSharpOptions
     /// <summary>Default project name used when a project context does not specify one.</summary>
     public string? DefaultProjectName { get; init; }
 }
+// ReSharper restore UnusedType.Global
+// ReSharper restore UnusedMember.Global

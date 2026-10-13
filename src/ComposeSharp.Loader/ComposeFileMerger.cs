@@ -1,3 +1,7 @@
+// Rider inspection rationale: This public member is part of a package contract and is intended for downstream callers.
+// ReSharper disable UnusedMember.Global
+// Rider inspection rationale: This public type is part of the package contract and is intended for downstream callers.
+// ReSharper disable UnusedType.Global
 using ComposeSharp.Loader.Models;
 
 namespace ComposeSharp.Loader;
@@ -36,3 +40,5 @@ public sealed class ComposeFileMerger
         return _loader.LoadMerged(workingDirectory, composeFiles);
     }
 }
+// ReSharper restore UnusedType.Global
+// ReSharper restore UnusedMember.Global

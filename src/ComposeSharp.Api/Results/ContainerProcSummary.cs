@@ -1,3 +1,7 @@
+// Rider inspection rationale: This folder layout organizes source files, while the established public namespace is kept stable for callers.
+// ReSharper disable CheckNamespace
+// Rider inspection rationale: These public names mirror Docker identifiers and are retained to avoid breaking the API.
+// ReSharper disable InconsistentNaming
 namespace ComposeSharp.Api;
 
 /// <summary>Process listing of one service container.</summary>
@@ -21,3 +25,5 @@ public sealed record ContainerProcSummary
     /// <summary>One entry per process, with fields aligned to <see cref="Titles"/>.</summary>
     public IReadOnlyList<IReadOnlyList<string>> Processes { get; init; } = [];
 }
+// ReSharper restore InconsistentNaming
+// ReSharper restore CheckNamespace

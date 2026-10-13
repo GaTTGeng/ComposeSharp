@@ -1,3 +1,5 @@
+// Rider inspection rationale: This public member is part of a package contract and is intended for downstream callers.
+// ReSharper disable UnusedMember.Global
 namespace ComposeSharp.Api;
 
 /// <summary>
@@ -31,3 +33,4 @@ public static class ComposeConstants
     /// <summary>Label listing the Compose files that produced the resource.</summary>
     public const string ConfigFilesLabel = "com.docker.compose.project.config_files";
 }
+// ReSharper restore UnusedMember.Global

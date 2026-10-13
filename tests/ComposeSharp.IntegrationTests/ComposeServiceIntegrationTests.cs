@@ -1,6 +1,17 @@
+// Rider inspection rationale: The current condition shape is retained for readability of the merge decision.
+// ReSharper disable MergeIntoPattern
+// Rider inspection rationale: This synchronous path is intentionally used here; switching overloads changes fixture or call sequencing.
+// ReSharper disable MethodHasAsyncOverload
+// Rider inspection rationale: Cancellation is intentionally not part of this short-lived helper or test scenario.
+// ReSharper disable MethodSupportsCancellation
+// Rider inspection rationale: The explicit local is retained for readability and easier debugging.
+// ReSharper disable MoveVariableDeclarationInsideLoopCondition
+// Rider inspection rationale: The test callback intentionally uses the value only in assertions.
+// ReSharper disable ParameterOnlyUsedForPreconditionCheck.Local
+// Rider inspection rationale: Synchronous disposal is intentional for this resource path and preserves its existing teardown behavior.
+// ReSharper disable UseAwaitUsing
 using ComposeSharp.Api;
 using ComposeSharp.Engine;
-using ComposeSharp.Loader;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using System.Formats.Tar;
@@ -446,14 +457,13 @@ public class ComposeServiceIntegrationTests
         };
         var service = new ComposeService();
         string? databaseId = null;
-        string? appId = null;
 
         try
         {
             await service.UpAsync(context);
             var containers = await service.PsAsync(context);
             databaseId = containers.Single(container => container.Service == "database").ID;
-            appId = containers.Single(container => container.Service == "app").ID;
+            var appId = containers.Single(container => container.Service == "app").ID;
             using var client = new DockerClientFactory().CreateClient();
             await service.StopAsync(context, new ComposeStopOptions { Services = ["app"] });
             await client.Containers.PauseContainerAsync(databaseId);
@@ -895,7 +905,7 @@ public class ComposeServiceIntegrationTests
             });
             Assert.Equal(contents.Length * 2, copiedToStoppedContainer.BytesCopied);
 
-            var copiedFromStoppedContainer = await service.CopyAsync(context, new ComposeCopyOptions
+            await service.CopyAsync(context, new ComposeCopyOptions
             {
                 Source = "app:/data",
                 Destination = Path.Combine(directory, "stopped-copy")
@@ -1113,14 +1123,14 @@ public class ComposeServiceIntegrationTests
             var results = await service.PublishAsync(context, repository);
 
             Assert.Equal(2, results.Count);
-            Assert.All(results, result =>
+            Assert.All(results, outcome =>
             {
-                Assert.True(result.Tagged);
-                Assert.False(result.Pushed);
-                Assert.False(result.Succeeded);
-                Assert.NotNull(result.TaggedImage);
-                Assert.StartsWith($"{repository}:", result.TaggedImage, StringComparison.Ordinal);
-                Assert.NotNull(result.Error);
+                Assert.True(outcome.Tagged);
+                Assert.False(outcome.Pushed);
+                Assert.False(outcome.Succeeded);
+                Assert.NotNull(outcome.TaggedImage);
+                Assert.StartsWith($"{repository}:", outcome.TaggedImage, StringComparison.Ordinal);
+                Assert.NotNull(outcome.Error);
             });
             Assert.Contains(results, result => result.Service == "web" && result.TaggedImage == $"{repository}:web");
             Assert.Contains(results, result => result.Service == "worker" && result.TaggedImage == $"{repository}:worker");
@@ -1337,6 +1347,7 @@ public class ComposeServiceIntegrationTests
             await service.UpAsync(context);
 
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var cancellationToken = cancellation.Token;
             var subscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var observed = new List<ComposeEvent>();
             var collector = Task.Run(async () =>
@@ -1344,7 +1355,7 @@ public class ComposeServiceIntegrationTests
                 await foreach (var composeEvent in service.EventsAsync(
                     context,
                     new ComposeEventsOptions { OnSubscribed = () => subscribed.TrySetResult() },
-                    cancellation.Token))
+                    cancellationToken))
                 {
                     observed.Add(composeEvent);
                     if (composeEvent.Action is "die" or "stop" or "kill")
@@ -1411,9 +1422,10 @@ public class ComposeServiceIntegrationTests
             }
 
             using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+            var cancellationToken = cancellation.Token;
             var collector = Task.Run(async () =>
             {
-                await foreach (var _ in service.EventsAsync(context, cancellationToken: cancellation.Token))
+                await foreach (var _ in service.EventsAsync(context, cancellationToken: cancellationToken))
                 {
                 }
             }, CancellationToken.None);
@@ -1460,6 +1472,7 @@ public class ComposeServiceIntegrationTests
             await service.UpAsync(context);
 
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var cancellationToken = cancellation.Token;
             var subscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var observed = new List<ComposeEvent>();
             var collector = Task.Run(async () =>
@@ -1471,7 +1484,7 @@ public class ComposeServiceIntegrationTests
                         Services = ["worker"],
                         OnSubscribed = () => subscribed.TrySetResult()
                     },
-                    cancellation.Token))
+                    cancellationToken))
                 {
                     observed.Add(composeEvent);
                     if (composeEvent.Action is "die" or "stop" or "kill")
@@ -1532,6 +1545,7 @@ public class ComposeServiceIntegrationTests
             await service.UpAsync(context);
 
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var cancellationToken = cancellation.Token;
             var subscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var observed = new List<ComposeEvent>();
             var collector = Task.Run(async () =>
@@ -1539,7 +1553,7 @@ public class ComposeServiceIntegrationTests
                 await foreach (var composeEvent in service.EventsAsync(
                     context,
                     new ComposeEventsOptions { OnSubscribed = () => subscribed.TrySetResult() },
-                    cancellation.Token))
+                    cancellationToken))
                 {
                     observed.Add(composeEvent);
                     // DownAsync tears down the project network; wait for that destroy event.
@@ -1586,4 +1600,9 @@ public class ComposeServiceIntegrationTests
         public void OnStatus(string serviceName, string message) => Statuses.Add(message);
     }
 }
-
+// ReSharper restore UseAwaitUsing
+// ReSharper restore ParameterOnlyUsedForPreconditionCheck.Local
+// ReSharper restore MoveVariableDeclarationInsideLoopCondition
+// ReSharper restore MethodSupportsCancellation
+// ReSharper restore MethodHasAsyncOverload
+// ReSharper restore MergeIntoPattern

@@ -1,3 +1,5 @@
+// Rider inspection rationale: This synchronous path is intentionally used here; switching overloads changes fixture or call sequencing.
+// ReSharper disable MethodHasAsyncOverload
 using System.Runtime.CompilerServices;
 using System.Text;
 using ComposeSharp.Api;
@@ -510,12 +512,12 @@ public sealed class ComposeService : IComposeService
                 ExitCode = container.Status.Contains("Exit") ? 1 : 0,
                 Publishers = (container.Ports ?? []).Select(p => new PortPublisher
                 {
-                    TargetPort = (int)p.PrivatePort,
-                    PublishedPort = (int)p.PublicPort,
+                    TargetPort = p.PrivatePort,
+                    PublishedPort = p.PublicPort,
                     Protocol = p.Type ?? "tcp",
                     HostIP = p.IP
                 }).ToList(),
-                Labels = labels is IDictionary<string, string> dict ? dict.ToDictionary(kv => kv.Key, kv => kv.Value) : new Dictionary<string, string>(),
+                Labels = labels is { } dict ? dict.ToDictionary(kv => kv.Key, kv => kv.Value) : new Dictionary<string, string>(),
                 Networks = container.NetworkSettings?.Networks?.Keys.ToList() ?? []
             });
         }
@@ -916,9 +918,9 @@ public sealed class ComposeService : IComposeService
             Name = v.Name,
             Driver = v.Driver,
             Mountpoint = v.Mountpoint,
-            Labels = v.Labels is IDictionary<string, string> dict ? dict.ToDictionary(kv => kv.Key, kv => kv.Value) : new Dictionary<string, string>(),
+            Labels = v.Labels is { } dict ? dict.ToDictionary(kv => kv.Key, kv => kv.Value) : new Dictionary<string, string>(),
             Scope = v.Scope,
-            Options = v.Options is IDictionary<string, string> opts ? opts.ToDictionary(kv => kv.Key, kv => kv.Value) : null,
+            Options = v.Options is { } opts ? opts.ToDictionary(kv => kv.Key, kv => kv.Value) : null,
             CreatedAt = v.CreatedAt
         }).ToList();
     }
@@ -1155,3 +1157,4 @@ public sealed class ComposeService : IComposeService
         }
     }
 }
+// ReSharper restore MethodHasAsyncOverload

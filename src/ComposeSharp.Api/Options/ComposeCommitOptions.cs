@@ -1,3 +1,7 @@
+// Rider inspection rationale: This folder layout organizes source files, while the established public namespace is kept stable for callers.
+// ReSharper disable CheckNamespace
+// Rider inspection rationale: Public DTO accessors are consumed by callers outside this solution and remain part of the contract.
+// ReSharper disable UnusedAutoPropertyAccessor.Global
 namespace ComposeSharp.Api;
 
 /// <summary>Options for committing a service container to a new image.</summary>
@@ -24,3 +28,5 @@ public sealed record ComposeCommitOptions
     /// <summary>Replica index within the service; null commits the first matching container.</summary>
     public int? Index { get; init; }
 }
+// ReSharper restore UnusedAutoPropertyAccessor.Global
+// ReSharper restore CheckNamespace

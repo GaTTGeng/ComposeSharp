@@ -1,3 +1,7 @@
+// Rider inspection rationale: The current condition shape is retained for readability of the merge decision.
+// ReSharper disable MergeIntoPattern
+// Rider inspection rationale: The default value is intentional and keeps the current fallback semantics explicit.
+// ReSharper disable PreferConcreteValueOverDefault
 using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
@@ -25,7 +29,7 @@ public sealed class ComposeFileLoader
         // Pipeline: resolve the file, load/interpolate/parse it with provenance, then map to models.
         var composePath = ResolveComposePath(workingDirectory, composeFileName);
         var document = LoadDocument(composePath);
-        return ParseProject(composePath, document.Root, document.Environment, document.Provenance);
+        return ParseProject(composePath, document.Root, document.Provenance);
     }
 
     /// <summary>
@@ -51,7 +55,6 @@ public sealed class ComposeFileLoader
         // The first file seeds the base map; each later file overlays it with its own provenance.
         Dictionary<object, object?>? mergedRoot = null;
         string? primaryComposePath = null;
-        IReadOnlyDictionary<string, string>? primaryEnvironment = null;
         Dictionary<string, string>? provenance = null;
         foreach (var file in composeFiles)
         {
@@ -63,7 +66,6 @@ public sealed class ComposeFileLoader
             {
                 mergedRoot = document.Root;
                 primaryComposePath = composePath;
-                primaryEnvironment = document.Environment;
                 provenance = document.Provenance;
             }
             else
@@ -76,7 +78,7 @@ public sealed class ComposeFileLoader
         }
 
         // The primary file owns path resolution and carries the service definitions' display paths.
-        return ParseProject(primaryComposePath!, mergedRoot!, primaryEnvironment!, provenance!);
+        return ParseProject(primaryComposePath!, mergedRoot!, provenance!);
     }
 
     /// <summary>
@@ -109,11 +111,7 @@ public sealed class ComposeFileLoader
                        ?? throw new ComposeValidationException(composePath, "$", "the document is empty.");
 
             // Provenance is built from the deserialized tree, so every member and list index gets a path.
-            return new LoadedDocument(root, env, BuildProvenance(root, composePath));
-        }
-        catch (ComposeValidationException)
-        {
-            throw;
+            return new LoadedDocument(root, BuildProvenance(root, composePath));
         }
         catch (YamlException exception)
         {
@@ -136,7 +134,6 @@ public sealed class ComposeFileLoader
     private ComposeProject ParseProject(
         string composePath,
         Dictionary<object, object?> root,
-        IReadOnlyDictionary<string, string> env,
         IReadOnlyDictionary<string, string> provenance)
     {
         // Stage: structural validation first (so bad shapes fail with provenance), then model mapping.
@@ -157,7 +154,7 @@ public sealed class ComposeFileLoader
             var serviceName = serviceNameObj.ToString()!;
             var map = (Dictionary<object, object?>)serviceValue!;
 
-            services.Add(ParseService(serviceName, map, composePath, env));
+            services.Add(ParseService(serviceName, map, composePath));
         }
 
         return new ComposeProject(
@@ -170,13 +167,11 @@ public sealed class ComposeFileLoader
             extensions);
     }
 
-    /// <summary>A deserialized YAML document with its interpolation environment and provenance map.</summary>
+    /// <summary>A deserialized YAML document with its source provenance map.</summary>
     /// <param name="Root">Deserialized YAML mapping tree.</param>
-    /// <param name="Environment">Values from the <c>.env</c> file beside this document.</param>
     /// <param name="Provenance">Property path to source Compose file mapping for diagnostics.</param>
     private sealed record LoadedDocument(
         Dictionary<object, object?> Root,
-        IReadOnlyDictionary<string, string> Environment,
         Dictionary<string, string> Provenance);
 
     /// <summary>
@@ -330,7 +325,7 @@ public sealed class ComposeFileLoader
                 continue;
             }
 
-            if (baseValue is List<object?> baseList &&
+            if (baseValue is List<object?> &&
                 overlayValue is List<object?> overlayList &&
                 mergedValue is List<object?> mergedList &&
                 !ReplacementListFields.Contains(GetLeaf(memberPath)) &&
@@ -1024,8 +1019,7 @@ public sealed class ComposeFileLoader
     private ServiceDefinition ParseService(
         string serviceName,
         Dictionary<object, object?> map,
-        string composePath,
-        IReadOnlyDictionary<string, string> env)
+        string composePath)
     {
         var image = GetString(map, "image");
         var build = ParseBuildConfig(map);
@@ -1649,3 +1643,5 @@ public sealed class ComposeFileLoader
         return null;
     }
 }
+// ReSharper restore PreferConcreteValueOverDefault
+// ReSharper restore MergeIntoPattern

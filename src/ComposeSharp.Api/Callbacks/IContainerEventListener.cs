@@ -1,3 +1,11 @@
+// Rider inspection rationale: This folder layout organizes source files, while the established public namespace is kept stable for callers.
+// ReSharper disable CheckNamespace
+// Rider inspection rationale: The public contract type is instantiated by downstream callers, outside this solution.
+// ReSharper disable ClassNeverInstantiated.Global
+// Rider inspection rationale: This public member is part of a package contract and is intended for downstream callers.
+// ReSharper disable UnusedMember.Global
+// Rider inspection rationale: This public type is part of the package contract and is intended for downstream callers.
+// ReSharper disable UnusedType.Global
 namespace ComposeSharp.Api;
 
 /// <summary>Callback interface for observing lifecycle events of project containers.</summary>
@@ -31,3 +39,7 @@ public sealed record ContainerEvent
     /// <summary>Whether the container is being restarted rather than staying stopped.</summary>
     public bool Restarting { get; init; }
 }
+// ReSharper restore UnusedType.Global
+// ReSharper restore UnusedMember.Global
+// ReSharper restore ClassNeverInstantiated.Global
+// ReSharper restore CheckNamespace

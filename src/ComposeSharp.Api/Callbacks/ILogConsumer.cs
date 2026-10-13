@@ -1,3 +1,7 @@
+// Rider inspection rationale: This folder layout organizes source files, while the established public namespace is kept stable for callers.
+// ReSharper disable CheckNamespace
+// Rider inspection rationale: This parameter is part of a public interface contract and is consumed by implementations or callers outside this solution.
+// ReSharper disable UnusedParameter.Global
 namespace ComposeSharp.Api;
 
 /// <summary>
@@ -15,3 +19,5 @@ public interface ILogConsumer
     /// <summary>Called with progress or status updates that are not container log output.</summary>
     void OnStatus(string serviceName, string message);
 }
+// ReSharper restore UnusedParameter.Global
+// ReSharper restore CheckNamespace

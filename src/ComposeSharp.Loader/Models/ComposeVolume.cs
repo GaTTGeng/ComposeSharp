@@ -1,3 +1,7 @@
+// Rider inspection rationale: Public model properties are consumed by package callers even when this solution does not read them.
+// ReSharper disable NotAccessedPositionalProperty.Global
+// Rider inspection rationale: This public type is part of the package contract and is intended for downstream callers.
+// ReSharper disable UnusedType.Global
 namespace ComposeSharp.Loader.Models;
 
 /// <summary>
@@ -16,3 +20,5 @@ public sealed record ComposeVolume(
     string? Driver,
     IReadOnlyDictionary<string, string>? Labels,
     IReadOnlyDictionary<string, string>? DriverOpts);
+// ReSharper restore UnusedType.Global
+// ReSharper restore NotAccessedPositionalProperty.Global

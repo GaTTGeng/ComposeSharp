@@ -1,3 +1,5 @@
+// Rider inspection rationale: The explicit local is retained for readability and easier debugging.
+// ReSharper disable MoveVariableDeclarationInsideLoopCondition
 using System.Formats.Tar;
 using System.Net.Sockets;
 using System.Reflection;
@@ -5,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using ComposeSharp.Api;
 using ComposeSharp.Engine.Internal;
+using ComposeSharp.Loader.Models;
 using ComposeSharp.Loader;
 
 namespace ComposeSharp.Tests;
@@ -1049,8 +1052,8 @@ public sealed class DockerBuildParametersFactoryTests
                 entries.Add(entry);
 
             Assert.Equal("__external_dockerfile__", archivePath);
-            Assert.DoesNotContain(entries, entry => entry.Name == "Dockerfile");
-            Assert.Contains(entries, entry => entry.Name == archivePath && entry.EntryType == TarEntryType.RegularFile);
+            Assert.DoesNotContain(entries, item => item.Name == "Dockerfile");
+            Assert.Contains(entries, item => item.Name == archivePath && item.EntryType == TarEntryType.RegularFile);
         }
         finally
         {
@@ -1135,7 +1138,7 @@ public sealed class DockerBuildParametersFactoryTests
                 entries.Add(entry);
 
             Assert.Equal("__external_dockerfile__", archivePath);
-            Assert.Contains(entries, entry => entry.Name == archivePath && entry.EntryType == TarEntryType.RegularFile);
+            Assert.Contains(entries, item => item.Name == archivePath && item.EntryType == TarEntryType.RegularFile);
         }
         finally
         {
@@ -1188,7 +1191,7 @@ public sealed class DockerBuildParametersFactoryTests
             while ((entry = reader.GetNextEntry()) is not null)
                 entries.Add(entry.Name);
 
-            Assert.Equal(1, entries.Count(entry => entry == "__external_dockerfile__"));
+            Assert.Equal(1, entries.Count(item => item == "__external_dockerfile__"));
         }
         finally
         {
@@ -1522,7 +1525,7 @@ public sealed class DockerBuildParametersFactoryTests
     }
 
     // Loads a single-service compose document and returns its service definition.
-    private static ComposeSharp.Loader.Models.ServiceDefinition LoadService(string compose)
+    private static ServiceDefinition LoadService(string compose)
     {
         var directory = Path.Combine(Path.GetTempPath(), $"build-parameters-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
@@ -1539,3 +1542,4 @@ public sealed class DockerBuildParametersFactoryTests
         }
     }
 }
+// ReSharper restore MoveVariableDeclarationInsideLoopCondition

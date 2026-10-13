@@ -35,7 +35,7 @@ internal static class BuildContextWatcher
                     nameof(registrations), exception);
             }
 
-            if (!System.IO.Directory.Exists(directory))
+            if (!Directory.Exists(directory))
                 throw new DirectoryNotFoundException($"Build context for service '{registration.ServiceName}' does not exist: '{directory}'.");
 
             if (!contexts.TryGetValue(directory, out var services))
@@ -89,8 +89,7 @@ internal static class BuildContextWatcher
                 watcher.Created += (_, args) => Report(args.FullPath);
                 watcher.Deleted += (_, args) => Report(args.FullPath);
                 watcher.Renamed += (_, args) => Report(args.FullPath);
-                watcher.Error += (_, args) => channel.Writer.TryComplete(args.GetException()
-                    ?? new IOException($"Build context watcher failed for '{directory}'."));
+                watcher.Error += (_, args) => channel.Writer.TryComplete(args.GetException());
                 watchers.Add(watcher);
             }
 

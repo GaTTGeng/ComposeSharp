@@ -1,3 +1,9 @@
+// Rider inspection rationale: The init setter supports caller-side option construction and must remain configurable.
+// ReSharper disable AutoPropertyCanBeMadeGetOnly.Global
+// Rider inspection rationale: This folder layout organizes source files, while the established public namespace is kept stable for callers.
+// ReSharper disable CheckNamespace
+// Rider inspection rationale: This public member is part of a package contract and is intended for downstream callers.
+// ReSharper disable UnusedMember.Global
 namespace ComposeSharp.Api;
 
 /// <summary>Options controlling which container log lines are streamed.</summary>
@@ -27,3 +33,6 @@ public sealed record ComposeLogsOptions
     /// <summary>Drop the per-line service-name prefix.</summary>
     public bool NoLogPrefix { get; init; }
 }
+// ReSharper restore UnusedMember.Global
+// ReSharper restore CheckNamespace
+// ReSharper restore AutoPropertyCanBeMadeGetOnly.Global

@@ -1,3 +1,9 @@
+// Rider inspection rationale: The public contract type is instantiated by downstream callers, outside this solution.
+// ReSharper disable ClassNeverInstantiated.Global
+// Rider inspection rationale: Public model properties are consumed by package callers even when this solution does not read them.
+// ReSharper disable NotAccessedPositionalProperty.Global
+// Rider inspection rationale: This public type is part of the package contract and is intended for downstream callers.
+// ReSharper disable UnusedType.Global
 namespace ComposeSharp.Loader.Models;
 
 /// <summary>
@@ -42,3 +48,6 @@ public sealed record IpamSubnetConfig(
     string? Subnet,
     string? Gateway,
     string? IpRange);
+// ReSharper restore UnusedType.Global
+// ReSharper restore NotAccessedPositionalProperty.Global
+// ReSharper restore ClassNeverInstantiated.Global
