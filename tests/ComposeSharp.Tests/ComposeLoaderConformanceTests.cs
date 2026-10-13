@@ -68,7 +68,7 @@ public sealed class ComposeLoaderConformanceTests
                     Assert.Equal(["frontend"], project.Networks);
                     Assert.Collection(app.Ports,
                         port => Assert.Equal(new ComposePort("8080", "8081/tcp"), port),
-                        port => Assert.Equal(new ComposePort("9090", "9091/udp"), port));
+                        port => Assert.Equal(new ComposePort("9090", "9091/udp", "udp"), port));
                     Assert.Equal(["app-data:/var/lib/app"], app.Volumes);
                     Assert.Equal(["frontend"], app.Networks);
                     Assert.Equal("api", app.Labels["com.example.component"]);
