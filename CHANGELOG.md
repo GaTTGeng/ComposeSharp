@@ -21,6 +21,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `WaitAsync` collects container exit codes without concurrent dictionary writes and chooses its aggregate code deterministically by ordinal container ID.
 - `ListAsync` keeps projects with paused or restarting containers in the default listing, following Docker's non-`All` container results.
 - `StartAsync` reports Docker start failures and excludes retained one-off containers from dependency starts and readiness checks.
 - `StartAsync` bases dependency health readiness on each existing container's inspected health configuration.
