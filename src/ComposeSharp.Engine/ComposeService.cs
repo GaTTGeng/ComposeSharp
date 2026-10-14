@@ -745,21 +745,15 @@ public sealed class ComposeService : IComposeService
         var containers = await _containers.ListProjectContainersAsync(client, context.ProjectName, false, cancellationToken);
         containers = FilterContainersByService(containers, services);
 
-        // Wait on all containers in parallel; a Docker failure is recorded as exit code -1.
-        var exitCodes = new Dictionary<string, int>();
-        var tasks = containers.Select(async container =>
+        return await WaitResultCollector.CollectAsync(containers.Select(container => container.ID), async containerId =>
         {
             try
             {
-                var result = await client.Containers.WaitContainerAsync(container.ID, cancellationToken);
-                exitCodes[container.ID] = (int)result.StatusCode;
+                var result = await client.Containers.WaitContainerAsync(containerId, cancellationToken);
+                return (int)result.StatusCode;
             }
-            catch (DockerApiException) { exitCodes[container.ID] = -1; }
-        }).ToArray();
-
-        await Task.WhenAll(tasks);
-        // Aggregate code is the first non-zero exit code, else 0.
-        return new WaitResult { ExitCodes = exitCodes, Code = exitCodes.Values.FirstOrDefault(c => c != 0) };
+            catch (DockerApiException) { return -1; }
+        });
     }
 
     /// <summary>Continuously observes selected service build contexts and reports file changes.</summary>

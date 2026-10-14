@@ -94,6 +94,7 @@ builder.Services.AddComposeSharp();
 - `CopyAsync` 使用 Docker archive API，`ExportAsync` 通过 Docker Engine 流式导出服务容器文件系统 tar；两者都可以针对运行中、已停止或已创建的服务容器。复制时，容器侧路径使用 `service:/绝对路径`，本地侧使用文件系统路径；容器路径按目录处理。本地文件上传会写入所有匹配的服务容器；`ComposeCopyOptions.Index` 可指定一个副本，下载时默认只选择一个副本。`ComposeCopyOptions.All` 会包含通过 `RunAsync` 创建的一次性容器，`CopyResult.BytesCopied` 表示所有上传目标的文件内容字节总数。本地符号链接和下载归档中的符号链接会被拒绝；下载时保留 Unix 文件权限，并将硬链接展开为普通文件。
 - `CommitAsync` 使用 Docker Engine commit 接口，并返回记录到新镜像上的镜像引用。它会应用 author、message、Dockerfile 风格的 `Changes`、`Pause`，并支持用 `ComposeCommitOptions.Index` 选择副本。
 - `TopAsync` 使用 Docker Engine 进程列表 API，为每个运行中的服务容器返回一份进程清单；非运行中的容器会被省略。
+- `WaitAsync` 会返回每个等待容器的退出码。汇总字段 `Code` 按容器 ID 的 ordinal 顺序选择第一个非零退出码，不受各 wait 的完成顺序影响。
 - `GenerateAsync` 返回项目摘要和 `ComposeProjectConfig.RenderedYaml`，后者是加载器保留字段的规范化快照。`ComposeGenerateOptions.Services` 按服务名选择服务（可包含未激活 profile 的服务）；空列表不选择任何服务，未知名称会报错。`ProjectName` 只改变输出名称。非空的旧 `Containers` 选项会抛出异常，因为生成操作不会检查 Docker 容器。`LoadProject` 仍返回摘要，不包含渲染后的 YAML。
 - 生成的 YAML 包含已解析的服务环境变量，`env_file` 的值会合并到 `environment`，因此可能包含秘密值。路径仍相对于源 Compose 文件目录。未建模字段、长格式依赖条件，以及名称之外的顶层资源定义无法恢复。加载器特有的 deploy 结构会被保留，因此这是模型快照，不等同于完整的 Compose CLI 配置输出。该操作不会写入文件。详细语义见[生成与监听契约](docs/generate-watch.md)。
 - `WatchAsync` 持续报告创建、写入、删除和重命名通知，直到取消或释放枚举器。系统通知可能重复；不同 context 的到达顺序由文件系统决定，共享 context 的服务通知按服务名的 ordinal 顺序发出。没有 build 定义的服务会被忽略；没有选中的 build 服务时立即结束。未知服务、缺失 context、监听失败和缓冲区溢出会报错。取消会抛出取消异常，不会产生虚假的变化事件。`NoUp` 和 `Quiet` 作为兼容选项不执行操作；`Prune = true` 会抛出异常。监听不会解释 `develop.watch` 或 `.dockerignore`。

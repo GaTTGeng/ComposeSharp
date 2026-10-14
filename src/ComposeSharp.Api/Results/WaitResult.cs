@@ -10,7 +10,7 @@ public sealed record WaitResult
     /// <summary>Exit code per container ID.</summary>
     public IReadOnlyDictionary<string, int> ExitCodes { get; init; } = new Dictionary<string, int>();
 
-    /// <summary>First non-zero exit code observed, or 0 when every container exited cleanly.</summary>
+    /// <summary>First non-zero exit code by ordinal container ID, or 0 when every container exited cleanly.</summary>
     public int Code { get; init; }
 }
 // ReSharper restore UnusedAutoPropertyAccessor.Global
