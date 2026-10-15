@@ -584,7 +584,7 @@ public class ComposeServiceIntegrationTests
                 await client.Containers.StopContainerAsync(first.ID, new ContainerStopParameters { WaitBeforeKillSeconds = 1 });
             }
 
-            Assert.Equal("partial", Assert.Single(await service.ListAsync(), stack => stack.Name == context.ProjectName).Status);
+            await WaitForStackStatusAsync(service, context, "partial");
             Assert.Equal("partial", Assert.Single(await service.ListAsync(new ComposeListOptions { All = true }), stack => stack.Name == context.ProjectName).Status);
 
             await service.StopAsync(context);
@@ -597,6 +597,26 @@ public class ComposeServiceIntegrationTests
             try { await service.DownAsync(context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
+    }
+
+    private static async Task WaitForStackStatusAsync(
+        ComposeService service,
+        ComposeProjectContext context,
+        string expectedStatus)
+    {
+        const int attempts = 100;
+        Stack? stack = null;
+
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            stack = (await service.ListAsync()).SingleOrDefault(candidate => candidate.Name == context.ProjectName);
+            if (stack?.Status == expectedStatus)
+                return;
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+        }
+
+        Assert.Equal(expectedStatus, stack?.Status);
     }
 
     // Pure loader path; does not need Docker, so it has no DockerAvailable guard.

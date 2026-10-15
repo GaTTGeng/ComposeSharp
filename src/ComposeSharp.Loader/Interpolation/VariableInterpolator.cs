@@ -97,14 +97,24 @@ public static partial class VariableInterpolator
             var comparison = OperatingSystem.IsWindows()
                 ? StringComparison.OrdinalIgnoreCase
                 : StringComparison.Ordinal;
+            var found = false;
+            var matchedValue = string.Empty;
 
             foreach (var (key, candidate) in environmentOverrides)
             {
                 if (string.Equals(key, name, comparison))
                 {
-                    value = candidate;
-                    return true;
+                    // Process environment assignments are applied in enumeration order, so the last
+                    // Windows alias must win when an ordinal dictionary contains multiple casings.
+                    matchedValue = candidate;
+                    found = true;
                 }
+            }
+
+            if (found)
+            {
+                value = matchedValue;
+                return true;
             }
         }
 

@@ -38,7 +38,7 @@ public sealed class VariableInterpolationTests
             WithFixture(
                 string.Empty,
                 string.Empty,
-                "services:\n  app:\n    image: ${" + name + "}",
+                "services:\n  app:\n    image: ${" + name + ":-fallback-image}",
                 directory =>
                 {
                     var project = new ComposeFileMerger().MergeWithEnv(
@@ -52,8 +52,37 @@ public sealed class VariableInterpolationTests
                             [name.ToUpperInvariant()] = "override"
                         });
 
-                    Assert.Equal(OperatingSystem.IsWindows() ? "override" : string.Empty,
+                    Assert.Equal(OperatingSystem.IsWindows() ? "override" : "fallback-image",
                         Assert.Single(project.Services).Image);
+                });
+        });
+    }
+
+    [Fact]
+    public void MergeWithEnv_UsesLastMatchingOverride()
+    {
+        const string name = "composeSharp_case_sensitive_override";
+
+        WithEnvironmentVariable(name, null, () =>
+        {
+            WithFixture(
+                string.Empty,
+                string.Empty,
+                "services:\n  app:\n    image: ${" + name + "}",
+                directory =>
+                {
+                    var overrides = new SortedDictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        [name.ToUpperInvariant()] = "first",
+                        [name] = "second"
+                    };
+
+                    var project = new ComposeFileMerger().MergeWithEnv(
+                        directory,
+                        ["compose.yaml"],
+                        overrides);
+
+                    Assert.Equal("second", Assert.Single(project.Services).Image);
                 });
         });
     }
