@@ -80,7 +80,13 @@ public static partial class VariableInterpolator
     {
         // Per-call values replace process environment values, preserving MergeWithEnv precedence without global mutation.
         if (TryGetEnvironmentOverride(environmentOverrides, name, out var overrideValue))
-            return overrideValue;
+        {
+            if (overrideValue.Length > 0 || Environment.Version.Major >= 9)
+                return overrideValue;
+
+            // Before .NET 9 an empty process assignment deleted the variable, so it fell through to .env.
+            return dotenv.TryGetValue(name, out var fallbackValue) ? fallbackValue : null;
+        }
 
         var value = Environment.GetEnvironmentVariable(name);
         if (value is not null) return value;

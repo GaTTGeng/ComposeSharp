@@ -88,6 +88,31 @@ public sealed class VariableInterpolationTests
     }
 
     [Fact]
+    public void MergeWithEnv_EmptyOverrideFollowsRuntimeEnvironmentSemantics()
+    {
+        const string name = "ENV_EMPTY_OVERRIDE";
+
+        WithEnvironmentVariable(name, "from-process", () =>
+        {
+            WithFixture(
+                $"{name}=from-dotenv",
+                string.Empty,
+                "services:\n  app:\n    image: test-image\n    labels:\n      value: \"${" + name + "}\"",
+                directory =>
+                {
+                    var project = new ComposeFileMerger().MergeWithEnv(
+                        directory,
+                        ["compose.yaml"],
+                        new Dictionary<string, string> { [name] = string.Empty });
+
+                    var expected = Environment.Version.Major < 9 ? "from-dotenv" : string.Empty;
+                    Assert.Equal(expected, Assert.Single(project.Services).Labels["value"]);
+                    Assert.Equal("from-process", Environment.GetEnvironmentVariable(name));
+                });
+        });
+    }
+
+    [Fact]
     public async Task MergeWithEnv_IsolatesConcurrentOverridesWithoutChangingProcessEnvironment()
     {
         const string name = "COMPOSESHARP_MERGE_OVERRIDE_ISOLATION";
