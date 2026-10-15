@@ -26,8 +26,10 @@ public sealed class VariableInterpolationTests
         });
     }
 
-    [Fact]
-    public void Expand_MatchesOverrideNamesUsingPlatformEnvironmentSemantics()
+    [Theory]
+    [InlineData(StringComparison.Ordinal)]
+    [InlineData(StringComparison.OrdinalIgnoreCase)]
+    public void Expand_MatchesOverrideNamesUsingPlatformEnvironmentSemantics(StringComparison dictionaryComparer)
     {
         const string name = "composeSharp_case_sensitive_override";
 
@@ -42,7 +44,13 @@ public sealed class VariableInterpolationTests
                     var project = new ComposeFileMerger().MergeWithEnv(
                         directory,
                         ["compose.yaml"],
-                        new Dictionary<string, string> { [name.ToUpperInvariant()] = "override" });
+                        new Dictionary<string, string>(
+                            dictionaryComparer == StringComparison.OrdinalIgnoreCase
+                                ? StringComparer.OrdinalIgnoreCase
+                                : StringComparer.Ordinal)
+                        {
+                            [name.ToUpperInvariant()] = "override"
+                        });
 
                     Assert.Equal(OperatingSystem.IsWindows() ? "override" : string.Empty,
                         Assert.Single(project.Services).Image);

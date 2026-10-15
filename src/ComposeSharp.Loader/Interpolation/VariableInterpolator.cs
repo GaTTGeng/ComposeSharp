@@ -92,14 +92,15 @@ public static partial class VariableInterpolator
         string name,
         out string value)
     {
-        if (environmentOverrides is not null && environmentOverrides.TryGetValue(name, out value!))
-            return true;
-
-        if (OperatingSystem.IsWindows() && environmentOverrides is not null)
+        if (environmentOverrides is not null)
         {
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+
             foreach (var (key, candidate) in environmentOverrides)
             {
-                if (string.Equals(key, name, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(key, name, comparison))
                 {
                     value = candidate;
                     return true;
