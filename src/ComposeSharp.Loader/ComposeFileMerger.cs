@@ -24,20 +24,16 @@ public sealed class ComposeFileMerger
     }
 
     /// <summary>
-    /// Same as <see cref="Merge"/>, but each override is injected into the process environment
-    /// first so it wins over the project's <c>.env</c> during interpolation.
+    /// Same as <see cref="Merge"/>, but explicit values take precedence over the process
+    /// environment and project <c>.env</c> files for this call only.
     /// </summary>
+    /// <remarks>
+    /// Overrides are applied to interpolation without changing process-wide environment
+    /// variables, so concurrent merges remain isolated and callers need no environment cleanup.
+    /// </remarks>
     public ComposeProject MergeWithEnv(string workingDirectory, IReadOnlyList<string> composeFiles, IReadOnlyDictionary<string, string> overrides)
     {
-        // Overrides are process-wide and are not reverted afterwards; callers must not rely on
-        // the previous environment being restored between calls.
-        // Injected before load so interpolation resolves them as process-environment values
-        // and they win over each file's adjacent .env.
-        foreach (var (key, value) in overrides)
-        {
-            Environment.SetEnvironmentVariable(key, value);
-        }
-        return _loader.LoadMerged(workingDirectory, composeFiles);
+        return _loader.LoadMergedWithEnvironment(workingDirectory, composeFiles, overrides);
     }
 }
 // ReSharper restore UnusedType.Global

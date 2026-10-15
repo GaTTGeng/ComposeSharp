@@ -26,6 +26,53 @@ public sealed class VariableInterpolationTests
         });
     }
 
+    [Fact]
+    public async Task MergeWithEnv_IsolatesConcurrentOverridesWithoutChangingProcessEnvironment()
+    {
+        const string name = "COMPOSESHARP_MERGE_OVERRIDE_ISOLATION";
+        const string processValue = "from-process";
+        var previousValue = Environment.GetEnvironmentVariable(name);
+        var directories = new[]
+        {
+            Path.Combine(Path.GetTempPath(), "compose-merge-env-" + Guid.NewGuid().ToString("N")),
+            Path.Combine(Path.GetTempPath(), "compose-merge-env-" + Guid.NewGuid().ToString("N"))
+        };
+
+        try
+        {
+            foreach (var directory in directories)
+            {
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(Path.Combine(directory, ".env"), $"{name}=from-dotenv");
+                File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+                    services:
+                      app:
+                        image: ${VARIABLE}
+                    """.Replace("VARIABLE", name, StringComparison.Ordinal));
+            }
+
+            Environment.SetEnvironmentVariable(name, processValue);
+            using var startTogether = new Barrier(2);
+            var first = MergeWithOverrideAsync(directories[0], name, "first-override", startTogether);
+            var second = MergeWithOverrideAsync(directories[1], name, "second-override", startTogether);
+
+            var results = await Task.WhenAll(first, second);
+
+            Assert.Equal("first-override", results[0]);
+            Assert.Equal("second-override", results[1]);
+            Assert.Equal(processValue, Environment.GetEnvironmentVariable(name));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(name, previousValue);
+            foreach (var directory in directories)
+            {
+                try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+                catch { /* best effort */ }
+            }
+        }
+    }
+
     // .env supplies quoted values for interpolation, but service env_file entries only reach the
     // container environment and are never used as interpolation sources.
     [Fact]
@@ -185,5 +232,22 @@ public sealed class VariableInterpolationTests
         {
             Environment.SetEnvironmentVariable(name, previous);
         }
+    }
+
+    private static Task<string?> MergeWithOverrideAsync(
+        string directory,
+        string name,
+        string value,
+        Barrier startTogether)
+    {
+        return Task.Run(() =>
+        {
+            Assert.True(startTogether.SignalAndWait(TimeSpan.FromSeconds(10)));
+            var project = new ComposeFileMerger().MergeWithEnv(
+                directory,
+                ["compose.yaml"],
+                new Dictionary<string, string> { [name] = value });
+            return Assert.Single(project.Services).Image;
+        });
     }
 }

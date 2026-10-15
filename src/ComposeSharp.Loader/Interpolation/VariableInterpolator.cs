@@ -32,30 +32,39 @@ public static partial class VariableInterpolator
         IReadOnlyDictionary<string, string> dotenv,
         bool strict = false)
     {
+        return Expand(text, dotenv, strict, environmentOverrides: null);
+    }
+
+    internal static string Expand(
+        string text,
+        IReadOnlyDictionary<string, string> dotenv,
+        bool strict,
+        IReadOnlyDictionary<string, string>? environmentOverrides)
+    {
         return VariablePattern().Replace(text, match =>
         {
             // $$ escapes to a literal dollar; bare $NAME resolves without any default operator.
             if (match.Value == "$$") return "$";
 
             if (match.Groups["shellName"].Success)
-                return ResolveVariable(match.Groups["shellName"].Value, dotenv) ?? "";
+                return ResolveVariable(match.Groups["shellName"].Value, dotenv, environmentOverrides) ?? "";
 
             var name = match.Groups["name"].Value;
             var op = match.Groups["op"].Success ? match.Groups["op"].Value : "";
             var defaultValue = match.Groups["default"].Success ? match.Groups["default"].Value : "";
 
-            var value = ResolveVariable(name, dotenv);
+            var value = ResolveVariable(name, dotenv, environmentOverrides);
 
             // Colon operators treat empty string as unset; bare operators only treat missing as unset.
             // Alternate/default values are expanded recursively so nested ${} inside them works.
             return op switch
             {
-                ":-" => string.IsNullOrEmpty(value) ? Expand(defaultValue, dotenv) : value,
-                "-" => value is null ? Expand(defaultValue, dotenv) : value,
+                ":-" => string.IsNullOrEmpty(value) ? Expand(defaultValue, dotenv, strict, environmentOverrides) : value,
+                "-" => value is null ? Expand(defaultValue, dotenv, strict, environmentOverrides) : value,
                 ":?" => string.IsNullOrEmpty(value) ? ThrowRequiredVariable(name, defaultValue) : value,
                 "?" => value is null ? ThrowRequiredVariable(name, defaultValue) : value,
-                ":+" => string.IsNullOrEmpty(value) ? "" : Expand(defaultValue, dotenv),
-                "+" => value is null ? "" : Expand(defaultValue, dotenv),
+                ":+" => string.IsNullOrEmpty(value) ? "" : Expand(defaultValue, dotenv, strict, environmentOverrides),
+                "+" => value is null ? "" : Expand(defaultValue, dotenv, strict, environmentOverrides),
                 _ => value ?? ""
             };
         });
@@ -64,9 +73,15 @@ public static partial class VariableInterpolator
     private static string ThrowRequiredVariable(string name, string message)
         => throw new InvalidOperationException($"Variable '{name}' is required{(string.IsNullOrWhiteSpace(message) ? string.Empty : $": {message}")}");
 
-    private static string? ResolveVariable(string name, IReadOnlyDictionary<string, string> dotenv)
+    private static string? ResolveVariable(
+        string name,
+        IReadOnlyDictionary<string, string> dotenv,
+        IReadOnlyDictionary<string, string>? environmentOverrides)
     {
-        // This precedence is intentionally centralized so all ${NAME} and $NAME forms behave alike.
+        // Per-call values replace process environment values, preserving MergeWithEnv precedence without global mutation.
+        if (environmentOverrides is not null && environmentOverrides.TryGetValue(name, out var overrideValue))
+            return overrideValue;
+
         var value = Environment.GetEnvironmentVariable(name);
         if (value is not null) return value;
         return dotenv.TryGetValue(name, out var dotEnvValue) ? dotEnvValue : null;

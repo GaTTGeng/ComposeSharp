@@ -46,10 +46,34 @@ public sealed class ComposeFileLoader
     /// </remarks>
     public ComposeProject LoadMerged(string workingDirectory, IReadOnlyList<string> composeFiles)
     {
+        return LoadMergedCore(workingDirectory, composeFiles, environmentOverrides: null);
+    }
+
+    /// <summary>
+    /// Loads and merges Compose files using per-call interpolation values ahead of the process
+    /// environment and each file's adjacent <c>.env</c> values.
+    /// </summary>
+    internal ComposeProject LoadMergedWithEnvironment(
+        string workingDirectory,
+        IReadOnlyList<string> composeFiles,
+        IReadOnlyDictionary<string, string> environmentOverrides)
+    {
+        return LoadMergedCore(workingDirectory, composeFiles, environmentOverrides);
+    }
+
+    private ComposeProject LoadMergedCore(
+        string workingDirectory,
+        IReadOnlyList<string> composeFiles,
+        IReadOnlyDictionary<string, string>? environmentOverrides)
+    {
         if (composeFiles.Count == 0)
             throw new ArgumentException("At least one compose file is required.");
         if (composeFiles.Count == 1)
-            return Load(workingDirectory, composeFiles[0]);
+        {
+            var composePath = ResolveComposePath(workingDirectory, composeFiles[0]);
+            var document = LoadDocument(composePath, environmentOverrides);
+            return ParseProject(composePath, document.Root, document.Provenance);
+        }
 
         // Stage: fold every file into one document, then validate and map once at the end.
         // The first file seeds the base map; each later file overlays it with its own provenance.
@@ -61,7 +85,7 @@ public sealed class ComposeFileLoader
             var composePath = ResolveComposePath(workingDirectory, file);
             // Each file is interpolated against the .env beside it before merging, so overlays
             // never see the base file's variables and vice versa.
-            var document = LoadDocument(composePath);
+            var document = LoadDocument(composePath, environmentOverrides);
             if (mergedRoot is null)
             {
                 mergedRoot = document.Root;
@@ -85,7 +109,9 @@ public sealed class ComposeFileLoader
     /// Reads one Compose file: loads the adjacent <c>.env</c>, interpolates variables,
     /// rejects unsupported merge tags, and deserializes the YAML mapping with provenance.
     /// </summary>
-    private static LoadedDocument LoadDocument(string composePath)
+    private static LoadedDocument LoadDocument(
+        string composePath,
+        IReadOnlyDictionary<string, string>? environmentOverrides = null)
     {
         // Stage: .env load -> variable interpolation -> merge-tag rejection -> YAML map + provenance.
         // The project .env (adjacent to the compose file) is an interpolation source only;
@@ -95,7 +121,8 @@ public sealed class ComposeFileLoader
         string expanded;
         try
         {
-            expanded = VariableInterpolator.Expand(raw, env);
+            expanded = VariableInterpolator.Expand(
+                raw, env, strict: false, environmentOverrides: environmentOverrides);
         }
         catch (InvalidOperationException exception)
         {
