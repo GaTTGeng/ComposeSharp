@@ -79,12 +79,36 @@ public static partial class VariableInterpolator
         IReadOnlyDictionary<string, string>? environmentOverrides)
     {
         // Per-call values replace process environment values, preserving MergeWithEnv precedence without global mutation.
-        if (environmentOverrides is not null && environmentOverrides.TryGetValue(name, out var overrideValue))
+        if (TryGetEnvironmentOverride(environmentOverrides, name, out var overrideValue))
             return overrideValue;
 
         var value = Environment.GetEnvironmentVariable(name);
         if (value is not null) return value;
         return dotenv.TryGetValue(name, out var dotEnvValue) ? dotEnvValue : null;
+    }
+
+    private static bool TryGetEnvironmentOverride(
+        IReadOnlyDictionary<string, string>? environmentOverrides,
+        string name,
+        out string value)
+    {
+        if (environmentOverrides is not null && environmentOverrides.TryGetValue(name, out value!))
+            return true;
+
+        if (OperatingSystem.IsWindows() && environmentOverrides is not null)
+        {
+            foreach (var (key, candidate) in environmentOverrides)
+            {
+                if (string.Equals(key, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = candidate;
+                    return true;
+                }
+            }
+        }
+
+        value = null!;
+        return false;
     }
 }
 // ReSharper restore UnusedParameter.Global

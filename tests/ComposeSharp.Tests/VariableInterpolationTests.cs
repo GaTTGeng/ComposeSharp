@@ -27,6 +27,30 @@ public sealed class VariableInterpolationTests
     }
 
     [Fact]
+    public void Expand_MatchesOverrideNamesUsingPlatformEnvironmentSemantics()
+    {
+        const string name = "composeSharp_case_sensitive_override";
+
+        WithEnvironmentVariable(name, null, () =>
+        {
+            WithFixture(
+                string.Empty,
+                string.Empty,
+                "services:\n  app:\n    image: ${" + name + "}",
+                directory =>
+                {
+                    var project = new ComposeFileMerger().MergeWithEnv(
+                        directory,
+                        ["compose.yaml"],
+                        new Dictionary<string, string> { [name.ToUpperInvariant()] = "override" });
+
+                    Assert.Equal(OperatingSystem.IsWindows() ? "override" : string.Empty,
+                        Assert.Single(project.Services).Image);
+                });
+        });
+    }
+
+    [Fact]
     public async Task MergeWithEnv_IsolatesConcurrentOverridesWithoutChangingProcessEnvironment()
     {
         const string name = "COMPOSESHARP_MERGE_OVERRIDE_ISOLATION";
