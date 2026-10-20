@@ -471,6 +471,16 @@ public sealed class ComposeFileLoader
         // Stage 1: presence rules (image/build) and top-level field shapes.
         ValidateOptionalScalar(service, "image", $"{path}.image", context);
         ValidateBuild(service, path, context);
+        ValidateOptionalScalar(service, "restart", $"{path}.restart", context);
+        var restart = GetString(service, "restart");
+        if (restart?.Contains(':') == true)
+        {
+            var parts = restart.Split(':');
+            if (parts.Length != 2 || !parts[0].Equals("on-failure", StringComparison.OrdinalIgnoreCase) ||
+                !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out _))
+                throw Validation(context, $"{path}.restart",
+                    "restart retry count must use 'on-failure:N' with N between 0 and 2147483647.");
+        }
 
         var hasImage = TryGetValue(service, "image", out var image) && image is not null;
         var hasBuild = TryGetValue(service, "build", out var build) && build is not null;
@@ -1138,7 +1148,7 @@ public sealed class ComposeFileLoader
             OomKillDisable: GetBool(map, "oom_kill_disable") ?? false ? 1L : null,
             OomScoreAdj: GetString(map, "oom_score_adj"),
             GroupAdd: GetStringList(map, "group_add"),
-            // `restart: on-failure:3` style keeps the retry count separately; the engine does not send it yet.
+            // Keep the suffix for callers inspecting the loaded model; the engine applies Restart verbatim.
             RestartMaxRetries: GetString(map, "restart")?.Contains(":") == true
                 ? GetString(map, "restart")!.Split(':').Last()
                 : null,

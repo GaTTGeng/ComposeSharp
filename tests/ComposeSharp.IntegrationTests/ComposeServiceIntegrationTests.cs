@@ -31,6 +31,48 @@ public class ComposeServiceIntegrationTests
     private static readonly SemaphoreSlim ImageGate = new(1, 1);
     private static bool _busyBoxReady;
 
+    [Theory]
+    [InlineData("on-failure", 0)]
+    [InlineData("on-failure:5", 5)]
+    public async Task CreateAsync_AppliesRestartRetryCount(string restart, int retries)
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+        var projectName = $"restart-retries-{Guid.NewGuid():N}";
+        var directory = Path.Combine(Path.GetTempPath(), projectName);
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"),
+            $"services:\n  app:\n    image: busybox:1.36\n    restart: '{restart}'\n");
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml"
+        };
+        var service = new ComposeService();
+        try
+        {
+            await service.CreateAsync(context);
+            using var client = new DockerClientFactory().CreateClient();
+            var containers = await client.Containers.ListContainersAsync(new ContainersListParameters
+            {
+                All = true,
+                Filters = new Dictionary<string, IDictionary<string, bool>>
+                {
+                    ["label"] = new Dictionary<string, bool> { [$"com.docker.compose.project={projectName}"] = true }
+                }
+            });
+            var container = await client.Containers.InspectContainerAsync(Assert.Single(containers).ID);
+            Assert.Equal(RestartPolicyKind.OnFailure, container.HostConfig.RestartPolicy.Name);
+            Assert.Equal(retries, container.HostConfig.RestartPolicy.MaximumRetryCount);
+        }
+        finally
+        {
+            try { await service.DownAsync(context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
     // Probes `docker info` once per test class; a missing CLI or unreachable daemon disables the Docker cases.
     private static bool CheckDockerAvailable()
     {

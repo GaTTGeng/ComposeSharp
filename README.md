@@ -107,6 +107,8 @@ The loader can retain fields that the engine does not yet apply. Consult the [Co
 
 ## What the engine does today
 
+`restart: on-failure:N` applies the retry limit to Docker. Counts must be between 0 and 2147483647; zero or omission means unlimited retries. Malformed suffixes are rejected with source, service, and property diagnostics.
+
 | Area | Current behavior |
 | --- | --- |
 | Project lifecycle | Creates project networks, creates/starts/removes labeled containers, lists project containers, removes project networks and optional volumes, and builds selected services through Docker Engine. |
