@@ -245,6 +245,35 @@ public sealed class ComposeLoaderValidationTests
             exception, files.OverlayPath!, "api", "services.api.ports[1]", "short port mapping");
     }
 
+    [Theory]
+    [InlineData("on-failure:")]
+    [InlineData("on-failure:-1")]
+    [InlineData("on-failure:+1")]
+    [InlineData("on-failure: 5")]
+    [InlineData("on-failure:1.5")]
+    [InlineData("on-failure:abc")]
+    [InlineData("on-failure:2147483648")]
+    [InlineData("on-failure:5:6")]
+    [InlineData("always:5")]
+    public void Load_InvalidRestartSuffix_ReportsFullContext(string restart)
+    {
+        using var files = new ComposeFiles($"services:\n  api:\n    image: app\n    restart: '{restart}'\n");
+        var exception = Assert.Throws<ComposeValidationException>(() => files.Load());
+        AssertServiceDiagnostic(exception, files.PrimaryPath, "api", "services.api.restart", "on-failure:N");
+    }
+
+    [Theory]
+    [InlineData("on-failure")]
+    [InlineData("on-failure:0")]
+    [InlineData("on-failure:5")]
+    [InlineData("on-failure:2147483647")]
+    public void Load_ValidRestartSuffix_PreservesValue(string restart)
+    {
+        using var files = new ComposeFiles($"services:\n  api:\n    image: app\n    restart: '{restart}'\n");
+        var project = new ComposeFileLoader().Load(files.DirectoryPath, "compose.yaml");
+        Assert.Equal(restart, Assert.Single(project.Services).Restart);
+    }
+
     // Asserts project-level diagnostics carry the source file and root property path but no service name.
     private static void AssertProjectDiagnostic(
         ComposeValidationException exception,

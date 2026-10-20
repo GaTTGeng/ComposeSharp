@@ -10,6 +10,37 @@ namespace ComposeSharp.Tests;
 
 public class ContainerLifecycleTests
 {
+    [Theory]
+    [InlineData("on-failure", RestartPolicyKind.OnFailure, 0)]
+    [InlineData("on-failure:5", RestartPolicyKind.OnFailure, 5)]
+    [InlineData("on-failure:0", RestartPolicyKind.OnFailure, 0)]
+    [InlineData("on-failure:2147483647", RestartPolicyKind.OnFailure, int.MaxValue)]
+    [InlineData("always", RestartPolicyKind.Always, 0)]
+    [InlineData("unless-stopped", RestartPolicyKind.UnlessStopped, 0)]
+    [InlineData("no", RestartPolicyKind.No, 0)]
+    public void BuildRestartPolicy_PreservesRetryCount(string restart, RestartPolicyKind kind, int retries)
+    {
+        var policy = ContainerLifecycle.BuildRestartPolicy(restart);
+        Assert.NotNull(policy);
+        Assert.Equal(kind, policy.Name);
+        Assert.Equal(retries, policy.MaximumRetryCount);
+    }
+
+    [Theory]
+    [InlineData("on-failure:")]
+    [InlineData("on-failure:-1")]
+    [InlineData("on-failure:+1")]
+    [InlineData("on-failure: 5")]
+    [InlineData("on-failure:1.5")]
+    [InlineData("on-failure:abc")]
+    [InlineData("on-failure:2147483648")]
+    [InlineData("on-failure:5:6")]
+    [InlineData("always:5")]
+    public void BuildRestartPolicy_RejectsInvalidSuffix(string restart)
+    {
+        Assert.Throws<ArgumentException>(() => ContainerLifecycle.BuildRestartPolicy(restart));
+    }
+
     [Fact]
     public void FindByContainerNumber_UsesLabelInsteadOfListPosition()
     {

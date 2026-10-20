@@ -479,11 +479,11 @@ internal sealed class ContainerLifecycle
         return result.Count == 0 ? null : result;
     }
 
-    private static RestartPolicy? BuildRestartPolicy(string? restart)
+    internal static RestartPolicy? BuildRestartPolicy(string? restart)
     {
         if (string.IsNullOrWhiteSpace(restart)) return null;
-        // "on-failure:N" splits off the max-retry suffix; only the policy kind is mapped here.
-        var normalized = restart.Split(':').First();
+        var parts = restart.Split(':');
+        var normalized = parts[0];
         var kind = normalized.ToLowerInvariant() switch
         {
             "always" => RestartPolicyKind.Always,
@@ -492,7 +492,12 @@ internal sealed class ContainerLifecycle
             "no" => RestartPolicyKind.No,
             _ => RestartPolicyKind.Undefined
         };
-        return new RestartPolicy { Name = kind };
+        var retries = 0;
+        if (parts.Length > 1 && (kind != RestartPolicyKind.OnFailure || parts.Length != 2 ||
+            !int.TryParse(parts[1], System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out retries)))
+            throw new ArgumentException("Restart retry count must use on-failure:N with N between 0 and 2147483647.", nameof(restart));
+        return new RestartPolicy { Name = kind, MaximumRetryCount = retries };
     }
 
     private static HealthConfig? BuildHealthcheck(ComposeHealthcheck? healthcheck)

@@ -19,7 +19,7 @@ namespace ComposeSharp.Loader.Models;
 /// <item><description><c>Develop</c>: watch configuration is not interpreted.</description></item>
 /// <item><description><c>EnvFile</c>: original entries kept for inspection; their values are already folded into <c>Environment</c>.</description></item>
 /// <item><description><c>StopSignal</c>/<c>StopGracePeriod</c>/<c>Sysctls</c>/<c>Logging</c>/<c>Platform</c>/<c>PullPolicy</c>/<c>Dns</c>/<c>DnsSearch</c>/<c>Links</c>/<c>CpuQuota</c>/<c>Annotations</c>/<c>OomScoreAdj</c>: parsed only, not sent to Docker.</description></item>
-/// <item><description><c>RestartMaxRetries</c>: retry count stripped from an <c>on-failure:N</c> restart value; parsed but not sent.</description></item>
+/// <item><description><c>RestartMaxRetries</c>: retry count stripped from an <c>on-failure:N</c> restart value; the engine applies the count from <c>Restart</c>. Zero or omission means unlimited retries; counts must be between 0 and 2147483647.</description></item>
 /// <item><description><c>OomKillDisable</c>: retained as <c>1</c> only when the YAML value is <c>true</c>; an explicit <c>false</c> is indistinguishable from omission.</description></item>
 /// </list>
 /// </remarks>
