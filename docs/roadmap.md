@@ -55,6 +55,8 @@ Reimplement every Docker Compose CLI UX feature. The public SDK should prioritiz
 
 Dependency-aware startup now includes selected services' transitive dependencies, rejects missing dependencies and cycles, and waits for dependencies to run or become healthy before starting dependents. Health checks inherited from images are detected, and callers can set an optional per-dependency timeout. Long-form `depends_on` conditions remain unsupported.
 
+Project loading reports value-free diagnostics for unknown, unsupported, and partially applied non-default Compose fields. Callers can inspect them through `LoadProject` or `GenerateAsync`, or select strict validation to reject the configuration before Docker Engine operations. See the [field matrix](compose-field-matrix.md) for diagnostic coverage and each field's actual behavior.
+
 `ListAsync` derives each stack's status from all project-labeled container states. It reports `running`, `exited`, `partial`, or `unknown`; by default, Docker's non-`All` container listing determines which projects are included, while `All` includes projects with only stopped containers.
 
 ### Exit criteria

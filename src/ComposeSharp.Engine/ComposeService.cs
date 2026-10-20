@@ -879,6 +879,7 @@ public sealed class ComposeService : IComposeService
             Volumes = project.Volumes.ToList(),
             Secrets = project.Secrets.ToList(),
             Configs = project.Configs.ToList(),
+            Diagnostics = ToApiDiagnostics(project),
             RenderedYaml = yaml
         });
     }
@@ -920,6 +921,7 @@ public sealed class ComposeService : IComposeService
     }
 
     /// <summary>Loads the project and returns its configuration with services filtered by the active profiles.</summary>
+    /// <remarks>The result includes value-free diagnostics for unknown, unsupported, or partially applied non-default fields.</remarks>
     public ComposeProjectConfig LoadProject(ComposeProjectContext context)
     {
         // Load from disk, then project only the profile-selected services plus top-level resource lists.
@@ -933,7 +935,8 @@ public sealed class ComposeService : IComposeService
             Networks = project.Networks.ToList(),
             Volumes = project.Volumes.ToList(),
             Secrets = project.Secrets.ToList(),
-            Configs = project.Configs.ToList()
+            Configs = project.Configs.ToList(),
+            Diagnostics = ToApiDiagnostics(project)
         };
     }
 
@@ -1030,8 +1033,29 @@ public sealed class ComposeService : IComposeService
     private ComposeProject LoadProjectInternal(ComposeProjectContext context)
     {
         // Single entry point for Compose file loading; all public methods funnel through here.
-        return _loader.Load(context.WorkingDirectory, context.ComposeFileName);
+        var project = _loader.Load(context.WorkingDirectory, context.ComposeFileName);
+        if (context.ValidationMode == ComposeValidationMode.Strict && project.Diagnostics.Count > 0)
+        {
+            var diagnostic = project.Diagnostics[0];
+            throw new ComposeValidationException(
+                diagnostic.SourceFile,
+                diagnostic.PropertyPath,
+                $"{diagnostic.Code}: {diagnostic.Message}",
+                diagnostic.ServiceName);
+        }
+
+        return project;
     }
+
+    private static IReadOnlyList<ComposeDiagnostic> ToApiDiagnostics(ComposeProject project)
+        => project.Diagnostics.Select(diagnostic => new ComposeDiagnostic
+        {
+            SourceFile = diagnostic.SourceFile,
+            PropertyPath = diagnostic.PropertyPath,
+            ServiceName = diagnostic.ServiceName,
+            Code = diagnostic.Code,
+            Message = diagnostic.Message
+        }).ToList();
 
     // A missing Compose file (without active profiles) falls back to label-only selection so
     // existing containers can still be listed, stopped, or removed without project source on disk.

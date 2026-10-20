@@ -166,6 +166,7 @@ public sealed class ComposeFileLoader
         // Stage: structural validation first (so bad shapes fail with provenance), then model mapping.
         var validation = new ValidationContext(composePath, provenance);
         ValidateProject(root, validation);
+        var diagnostics = CollectProjectDiagnostics(root, validation);
         var servicesMap = (Dictionary<object, object?>)root["services"]!;
 
         // Top-level resource maps contribute only their declared names to the project model.
@@ -191,8 +192,253 @@ public sealed class ComposeFileLoader
             networks,
             secrets,
             configs,
-            extensions);
+            extensions)
+        {
+            Diagnostics = diagnostics
+        };
     }
+
+    private static readonly HashSet<string> KnownProjectFields = new(StringComparer.Ordinal)
+    {
+        "name", "version", "services", "volumes", "networks", "secrets", "configs"
+    };
+
+    private static readonly HashSet<string> KnownServiceFields = new(StringComparer.Ordinal)
+    {
+        "image", "build", "container_name", "command", "entrypoint", "environment", "env_file", "ports",
+        "volumes", "restart", "healthcheck", "depends_on", "networks", "extra_hosts", "privileged",
+        "network_mode", "ipc", "shm_size", "profiles", "deploy", "secrets", "configs", "labels", "logging",
+        "hostname", "domainname", "user", "working_dir", "tty", "stdin_open", "stop_signal", "stop_grace_period",
+        "read_only", "tmpfs", "cap_add", "cap_drop", "devices", "sysctls", "security_opt", "init", "platform",
+        "pull_policy", "dns", "dns_search", "pid", "mac_address", "cgroup_parent", "extends", "develop", "links",
+        "cpu_shares", "cpu_quota", "cpuset", "mem_limit", "memswap_limit", "mem_reservation", "oom_kill_disable",
+        "oom_score_adj", "group_add", "annotations"
+    };
+
+    private static readonly HashSet<string> UnsupportedServiceFields = new(StringComparer.Ordinal)
+    {
+        "secrets", "configs", "logging", "stop_signal", "stop_grace_period", "sysctls", "platform",
+        "pull_policy", "dns", "dns_search", "links", "cpu_quota", "oom_kill_disable", "oom_score_adj",
+        "annotations", "extends", "develop"
+    };
+
+    private static IReadOnlyList<ComposeProjectDiagnostic> CollectProjectDiagnostics(
+        Dictionary<object, object?> root,
+        ValidationContext context)
+    {
+        var diagnostics = new List<ComposeProjectDiagnostic>();
+        foreach (var (keyNode, value) in root)
+        {
+            var key = keyNode.ToString() ?? string.Empty;
+            if (key == "name" && IsMeaningful(value))
+            {
+                AddDiagnostic(diagnostics, context, "name", null,
+                    "partially-supported-field", "The project name is supplied by ComposeProjectContext and this field does not change resource labels.");
+                continue;
+            }
+
+            if (!KnownProjectFields.Contains(key) && !key.StartsWith("x-", StringComparison.Ordinal) && IsMeaningful(value))
+            {
+                AddDiagnostic(diagnostics, context, AppendPathSegment(string.Empty, key), null,
+                    "unsupported-field", "This project field is not recognized and has no engine behavior.");
+            }
+        }
+
+        foreach (var (nameNode, value) in (Dictionary<object, object?>)root["services"]!)
+        {
+            var serviceName = nameNode.ToString() ?? string.Empty;
+            var displayPath = $"services.{serviceName}";
+            var serviceContext = context.ForService(
+                serviceName, displayPath, AppendPathSegment("services", serviceName));
+            if (value is not Dictionary<object, object?> service)
+                continue;
+
+            foreach (var (keyNode, fieldValue) in service)
+            {
+                var key = keyNode.ToString() ?? string.Empty;
+                var path = $"{displayPath}.{key}";
+                if (!KnownServiceFields.Contains(key) && !key.StartsWith("x-", StringComparison.Ordinal) && IsMeaningful(fieldValue))
+                {
+                    AddDiagnostic(diagnostics, serviceContext, path, serviceName,
+                        "unsupported-field", "This service field is not recognized and has no engine behavior.");
+                    continue;
+                }
+
+                if (UnsupportedServiceFields.Contains(key) && IsMeaningful(fieldValue))
+                {
+                    AddDiagnostic(diagnostics, serviceContext, path, serviceName,
+                        "unsupported-field", "This service field is retained or parsed but is not applied to Docker resources.");
+                }
+            }
+
+            AddPartialDiagnostics(service, serviceName, displayPath, serviceContext, diagnostics);
+        }
+
+        AddProjectResourceDiagnostics(root, "volumes", context, diagnostics);
+        AddProjectResourceDiagnostics(root, "networks", context, diagnostics);
+        AddUnappliedProjectResourceDiagnostics(root, "secrets", context, diagnostics);
+        AddUnappliedProjectResourceDiagnostics(root, "configs", context, diagnostics);
+
+        return diagnostics;
+    }
+
+    private static void AddPartialDiagnostics(
+        Dictionary<object, object?> service,
+        string serviceName,
+        string servicePath,
+        ValidationContext context,
+        List<ComposeProjectDiagnostic> diagnostics)
+    {
+        if (TryGetValue(service, "command", out var command) && command is string commandText && commandText.Length > 0)
+            AddDiagnostic(diagnostics, context, $"{servicePath}.command", serviceName,
+                "partially-supported-field", "Scalar commands are passed as one argument instead of shell-split arguments.");
+
+        if (TryGetValue(service, "ports", out var ports) && ports is List<object?> portList)
+        {
+            for (var i = 0; i < portList.Count; i++)
+            {
+                if (portList[i] is string port && port.Count(character => character == ':') >= 2)
+                    AddDiagnostic(diagnostics, context, $"{servicePath}.ports[{i}]", serviceName,
+                        "partially-supported-field", "Host IP port bindings are not preserved by the current port model.");
+            }
+        }
+
+        if (TryGetValue(service, "depends_on", out var dependencies) && dependencies is Dictionary<object, object?> dependencyMap)
+        {
+            foreach (var (dependencyName, dependencyValue) in dependencyMap)
+            {
+                if (IsMeaningful(dependencyValue))
+                    AddDiagnostic(diagnostics, context,
+                        $"{servicePath}.depends_on.{dependencyName}", serviceName,
+                        "partially-supported-field", "Long-form dependency conditions and options are not applied.");
+            }
+        }
+
+        if (TryGetValue(service, "deploy", out var deployValue) && deployValue is Dictionary<object, object?> deploy)
+        {
+            foreach (var (field, value) in deploy)
+            {
+                if (!Equals(field.ToString(), "replicas") && IsMeaningful(value))
+                    AddDiagnostic(diagnostics, context, $"{servicePath}.deploy.{field}", serviceName,
+                        "partially-supported-field", "Only deploy.replicas affects service operations.");
+            }
+        }
+
+        if (TryGetValue(service, "build", out var buildValue) && buildValue is Dictionary<object, object?> build &&
+            TryGetValue(build, "cache_to", out var cacheTo) && IsMeaningful(cacheTo))
+        {
+            AddDiagnostic(diagnostics, context, $"{servicePath}.build.cache_to", serviceName,
+                "partially-supported-field", "Build cache export is not applied.");
+        }
+
+        if (TryGetValue(service, "build", out buildValue) && buildValue is Dictionary<object, object?> buildOptions)
+        {
+            foreach (var field in new[] { "secrets", "ssh", "additional_contexts" })
+            {
+                if (TryGetValue(buildOptions, field, out var value) && IsMeaningful(value))
+                    AddDiagnostic(diagnostics, context, $"{servicePath}.build.{field}", serviceName,
+                        "unsupported-field", "This build option is not retained by the loader or applied to Docker.");
+            }
+        }
+
+        if (TryGetValue(service, "healthcheck", out var healthcheckValue) &&
+            healthcheckValue is Dictionary<object, object?> healthcheck)
+        {
+            if (TryGetValue(healthcheck, "start_interval", out var startInterval) && IsMeaningful(startInterval))
+                AddDiagnostic(diagnostics, context, $"{servicePath}.healthcheck.start_interval", serviceName,
+                    "unsupported-field", "Health check start_interval is not retained or applied.");
+            if (TryGetValue(healthcheck, "test", out var test) && test is string testCommand && testCommand.Length > 0)
+                AddDiagnostic(diagnostics, context, $"{servicePath}.healthcheck.test", serviceName,
+                    "partially-supported-field", "Scalar health check commands are not converted to CMD-SHELL.");
+        }
+
+        foreach (var field in new[] { "network_mode", "ipc", "pid" })
+        {
+            if (TryGetValue(service, field, out var mode) && mode is string modeText &&
+                modeText.StartsWith("service:", StringComparison.Ordinal))
+                AddDiagnostic(diagnostics, context, $"{servicePath}.{field}", serviceName,
+                    "partially-supported-field", "Service-container references are not resolved to a service container.");
+        }
+
+        if (TryGetValue(service, "extra_hosts", out var extraHosts) && extraHosts is Dictionary<object, object?> hostMap && hostMap.Count > 0)
+            AddDiagnostic(diagnostics, context, $"{servicePath}.extra_hosts", serviceName,
+                "partially-supported-field", "Mapping syntax loses host addresses and is not supported.");
+
+        if (TryGetValue(service, "networks", out var networks) && networks is Dictionary<object, object?> networkMap)
+        {
+            foreach (var (networkName, options) in networkMap)
+            {
+                if (IsMeaningful(options))
+                    AddDiagnostic(diagnostics, context, $"{servicePath}.networks.{networkName}", serviceName,
+                        "partially-supported-field", "Per-network options and multiple network attachments are not applied.");
+            }
+        }
+
+        if (TryGetValue(service, "devices", out var devices) && devices is List<object?> deviceList)
+        {
+            for (var i = 0; i < deviceList.Count; i++)
+            {
+                if (deviceList[i] is string device && device.Count(character => character == ':') >= 2)
+                    AddDiagnostic(diagnostics, context, $"{servicePath}.devices[{i}]", serviceName,
+                        "partially-supported-field", "Device permission suffixes are not modeled correctly.");
+            }
+        }
+    }
+
+    private static void AddProjectResourceDiagnostics(
+        Dictionary<object, object?> root,
+        string section,
+        ValidationContext context,
+        List<ComposeProjectDiagnostic> diagnostics)
+    {
+        if (!TryGetValue(root, section, out var value) || value is not Dictionary<object, object?> resources)
+            return;
+
+        foreach (var (name, definition) in resources)
+        {
+            if (IsMeaningful(definition))
+                AddDiagnostic(diagnostics, context, $"{section}.{name}", null,
+                    "partially-supported-field", "Only the resource name is retained; resource options are not applied.");
+        }
+    }
+
+    private static void AddUnappliedProjectResourceDiagnostics(
+        Dictionary<object, object?> root,
+        string section,
+        ValidationContext context,
+        List<ComposeProjectDiagnostic> diagnostics)
+    {
+        if (!TryGetValue(root, section, out var value) || value is not Dictionary<object, object?> resources)
+            return;
+
+        foreach (var (name, definition) in resources)
+        {
+            if (IsMeaningful(definition))
+                AddDiagnostic(diagnostics, context, AppendPathSegment(section, name.ToString()!), null,
+                    "unsupported-field", "Project resources are named in the loaded model but are not provisioned or mounted.");
+        }
+    }
+
+    private static void AddDiagnostic(
+        List<ComposeProjectDiagnostic> diagnostics,
+        ValidationContext context,
+        string path,
+        string? serviceName,
+        string code,
+        string message)
+    {
+        diagnostics.Add(new ComposeProjectDiagnostic(context.SourceFor(path), path, serviceName, code, message));
+    }
+
+    private static bool IsMeaningful(object? value) => value switch
+    {
+        null => false,
+        bool boolean => boolean,
+        string text => text.Length > 0,
+        Dictionary<object, object?> map => map.Count > 0,
+        List<object?> list => list.Count > 0,
+        _ => true
+    };
 
     /// <summary>A deserialized YAML document with its source provenance map.</summary>
     /// <param name="Root">Deserialized YAML mapping tree.</param>

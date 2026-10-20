@@ -1,6 +1,9 @@
 // Rider inspection rationale: The inline lambda keeps the local assertion or callback context visible.
 // ReSharper disable ConvertClosureToMethodGroup
 using ComposeSharp.Loader;
+using ComposeSharp.Api;
+using ComposeSharp.Engine;
+using ComposeSharp.Loader.Models;
 using YamlDotNet.Core;
 
 namespace ComposeSharp.Tests;
@@ -87,6 +90,100 @@ public sealed class ComposeLoaderValidationTests
         var port = Assert.Single(Assert.Single(project.Services).Ports);
         Assert.Equal("8080", port.HostPort);
         Assert.Equal("80/tcp", port.ContainerPort);
+    }
+
+    [Fact]
+    public void Load_UnsupportedFields_ReturnsValueFreeDiagnosticsWithSourceAndPath()
+    {
+        using var files = new ComposeFiles(
+            "mystery: hidden-project-value\nservices:\n  api:\n    image: app\n    logging:\n      driver: private-driver\n    access_token: hidden-service-value\n");
+
+        var project = (ComposeProject)files.Load();
+
+        (string SourceFile, string PropertyPath, string? ServiceName, string Code)[] expected =
+        [
+            (files.PrimaryPath, "mystery", null, "unsupported-field"),
+            (files.PrimaryPath, "services.api.logging", "api", "unsupported-field"),
+            (files.PrimaryPath, "services.api.access_token", "api", "unsupported-field")
+        ];
+        Assert.Equal(
+            expected,
+            project.Diagnostics.Select(diagnostic =>
+                (diagnostic.SourceFile, diagnostic.PropertyPath, diagnostic.ServiceName, diagnostic.Code)));
+        Assert.DoesNotContain(project.Diagnostics, diagnostic =>
+            diagnostic.Message.Contains("hidden", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Load_PartialFields_ReturnsDiagnosticsAndLeavesSupportedDefaultsQuiet()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    privileged: false\n    ports:\n      - '127.0.0.1:8080:80'\n  db:\n    image: database\n");
+
+        var project = (ComposeProject)files.Load();
+
+        var diagnostic = Assert.Single(project.Diagnostics);
+        Assert.Equal("services.api.ports[0]", diagnostic.PropertyPath);
+        Assert.Equal("api", diagnostic.ServiceName);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+        Assert.DoesNotContain("127.0.0.1", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Load_SecretDefinitionsNeverExposeSecretMaterialInDiagnostics()
+    {
+        using var files = new ComposeFiles(
+            "secrets:\n  private_key:\n    file: private-key-material\nservices:\n  api:\n    image: app\n    secrets:\n      - private_key\n    environment:\n      API_TOKEN: private-environment-token\n");
+
+        var project = (ComposeProject)files.Load();
+
+        Assert.NotEmpty(project.Diagnostics);
+        foreach (var diagnostic in project.Diagnostics)
+        {
+            Assert.DoesNotContain("private-key-material", diagnostic.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("private-environment-token", diagnostic.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void LoadProject_ExposesDiagnosticsInPublicConfiguration()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    logging:\n      driver: json-file\n");
+        var service = new ComposeService();
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "diagnostic-summary",
+            WorkingDirectory = files.DirectoryPath,
+            ComposeFileName = Path.GetFileName(files.PrimaryPath)
+        };
+
+        var config = service.LoadProject(context);
+
+        var diagnostic = Assert.Single(config.Diagnostics);
+        Assert.Equal("services.api.logging", diagnostic.PropertyPath);
+        Assert.Equal("unsupported-field", diagnostic.Code);
+    }
+
+    [Fact]
+    public async Task Up_StrictModeRejectsUnsupportedFieldsBeforeDockerAccess()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    access_token: hidden-service-value\n");
+        var service = new ComposeService();
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "strict-validation",
+            WorkingDirectory = files.DirectoryPath,
+            ComposeFileName = Path.GetFileName(files.PrimaryPath),
+            SocketPath = "npipe://./pipe/compose-sharp-validation-test-missing",
+            ValidationMode = ComposeValidationMode.Strict
+        };
+
+        var exception = await Assert.ThrowsAsync<ComposeValidationException>(() => service.UpAsync(context));
+
+        Assert.Equal("services.api.access_token", exception.PropertyPath);
+        Assert.DoesNotContain("hidden-service-value", exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]

@@ -8,6 +8,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `LoadProject` and `GenerateAsync` expose value-free diagnostics for unknown, unsupported, and partially applied Compose fields; strict validation rejects them before Docker Engine operations.
 - `UpAsync`, `CreateAsync`, and `StartAsync` include transitive service dependencies, reject cycles and missing services, and wait for effective Docker health checks or running state before starting dependents; an optional per-dependency timeout bounds readiness waits.
 - `GenerateAsync` returns a normalized YAML snapshot of selected loaded services alongside the project summary, with service selection and an output project-name override.
 - `TopAsync` returns real process listings for running project service containers through the Docker Engine process-list API.

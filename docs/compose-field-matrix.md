@@ -14,6 +14,8 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 
 "Applied" describes the SDK's implementation, not full Docker Compose Specification parity. Explicit operation options can override an applied service value where the API allows it.
 
+`ComposeProjectConfig.Diagnostics` reports non-empty unknown fields, parsed-only fields, and the incomplete portions of partially supported fields. Codes are `unsupported-field` and `partially-supported-field`; each diagnostic includes source file, property path, and service name when applicable, but never the field value. `ComposeValidationMode.Strict` rejects any such diagnostic during loading before an Engine operation. Focused cases are covered by [ComposeLoaderValidationTests](../tests/ComposeSharp.Tests/ComposeLoaderValidationTests.cs).
+
 ## Service fields
 
 | Compose field(s) | Model member(s) | Status | Current behavior |
@@ -24,11 +26,11 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `container_name` | `ContainerName` | Applied | Used for a single replica; scaled services retain project-generated names. |
 | `command`, `entrypoint` | `Command`, `Entrypoint` | Partial | List syntax is passed to Docker's create-container request. Scalar values are passed as one argument rather than split into a command and arguments. |
 | `environment`, `env_file` | `Environment`, `EnvFile` | Partial | Inline environment and values read from scalar or list-of-string `env_file` entries are passed to the container, and their original paths are retained for inspection. Long `env_file` syntax and advanced Compose environment semantics are not implemented. |
-| `ports` | `Ports` | Partial | Short `HOST:CONTAINER` string syntax creates a port binding when each container port has one mapping. Container-only entries expose the port but do not create a host binding. Multiple mappings for one container port, long syntax, host IP, ranges, and other per-port options are not modeled. |
+| `ports` | `Ports` | Partial | Short `HOST:CONTAINER` string syntax creates a port binding when each container port has one mapping. Container-only entries expose the port but do not create a host binding. Multiple mappings for one container port, long syntax, ranges, and other per-port options are not modeled. Host IP is dropped and produces a `partially-supported-field` diagnostic at the port entry. |
 | `volumes` | `Volumes` | Partial | Short POSIX bind and named-volume strings are resolved and passed as binds. Long syntax, Windows drive-letter binds, and top-level volume driver/options are not applied. |
 | `restart` | `Restart`, `RestartMaxRetries` | Applied | Docker restart policy name and `on-failure:N` retry count are applied. Counts range from 0 to 2147483647; zero or omission means unlimited retries. Malformed suffixes are rejected with source/service/property diagnostics. Verified by `CreateAsync_AppliesRestartRetryCount` and focused loader/mapping tests. |
 | `healthcheck` | `Healthcheck` | Partial | Disable flag, list-form tests, supported interval/timeout/start-period values, and retries are sent in the create-container request. `start_interval` is not modeled. Durations accept .NET `TimeSpan` syntax or a single whole-number `ms`, `s`, `m`, or `h` unit; fractional and multi-component Compose durations are not accepted. A scalar `test` command is not converted to `CMD-SHELL`. |
-| `depends_on` | `DependsOn` | Partial | Selected services include their transitive dependencies and start in stable topological order; missing services and cycles fail with diagnostics. A dependency with an effective Docker health check, including an image-inherited check, must become healthy before its dependents start; otherwise it must be running. Readiness waits continue until ready, failure, cancellation, or the optional `DependencyWaitTimeoutSeconds` limit. Long-form conditions are not retained, and targeted lifecycle operations still do not start unrelated services. |
+| `depends_on` | `DependsOn` | Partial | Selected services include their transitive dependencies and start in stable topological order; missing services and cycles fail with diagnostics. A dependency with an effective Docker health check, including an image-inherited check, must become healthy before its dependents start; otherwise it must be running. Readiness waits continue until ready, failure, cancellation, or the optional `DependencyWaitTimeoutSeconds` limit. Long-form conditions are not retained and produce `partially-supported-field` diagnostics. Targeted lifecycle operations still do not start unrelated services. |
 | `networks` | `Networks` | Partial | The first declared service network becomes the container network mode. Per-network configuration and multi-network attachment are not applied. When a service declares no network and the project has custom networks, it attaches to the first custom network rather than an implicit default network. |
 | `extra_hosts` | `ExtraHosts` | Partial | Short list entries are passed to Docker as host entries. Mapping syntax loses the host address during loading and is not supported. |
 | `privileged` | `Privileged` | Applied | Passed in the host configuration. |
@@ -37,7 +39,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `deploy` | `Deploy` | Partial | Only `deploy.replicas` affects `UpAsync`; resource memory and literal `nano_cpus` values, placement constraints, restart policy, update/rollback settings, labels, and mode are parsed only. Duration fields use the same restricted duration syntax as health checks. Other placement settings, standard `deploy.resources.*.cpus` values, and scalar `endpoint_mode` are not retained. |
 | `secrets`, `configs` | `Secrets`, `Configs` | Unsupported | Short string entries are parsed and surfaced, but no secret or config is provisioned or mounted. Long syntax is not retained correctly. |
 | `labels` | `Labels` | Applied | Merged into the labels applied to service containers. |
-| `logging` | `Logging` | Parsed only | Driver and options are exposed but not sent to Docker. |
+| `logging` | `Logging` | Parsed only | Driver and options are exposed but not sent to Docker; a non-empty value produces an `unsupported-field` diagnostic. |
 | `hostname`, `domainname`, `user`, `working_dir` | `Hostname`, `Domainname`, `User`, `WorkingDir` | Applied | Passed to Docker's create-container request. |
 | `tty`, `stdin_open` | `Tty`, `StdinOpen` | Applied | Passed to Docker's create-container request. |
 | `stop_signal`, `stop_grace_period` | `StopSignal`, `StopGracePeriod` | Parsed only | Exposed by the loader when the duration uses the supported .NET `TimeSpan` or single whole-number unit syntax; the container create and stop paths do not apply them. |
@@ -69,6 +71,8 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `networks` | `Networks` | Partial | Project-scoped bridge networks are created with generated names and project labels. Driver, IPAM, labels, external networks, and options are not represented. |
 | `secrets`, `configs` | `Secrets`, `Configs` | Unsupported | Names are loaded and reported by `LoadProject`, but are not provisioned or mounted. |
 | `x-*` extensions | `Extensions` | Parsed only | String-valued extensions are retained for inspection and have no engine behavior. |
+
+Unknown non-empty top-level and service fields produce `unsupported-field` diagnostics; `x-*` extensions and empty/default values are ignored. Parsed-only service fields in this matrix produce the same code. The [loader validation tests](../tests/ComposeSharp.Tests/ComposeLoaderValidationTests.cs) cover unknown project and service fields, parsed-only `logging`, partially supported host IP ports, value redaction, and strict rejection before Docker access. The project-level `name` field produces a `partially-supported-field` diagnostic because resource ownership uses `ComposeProjectContext.ProjectName`.
 
 ## Related work
 
