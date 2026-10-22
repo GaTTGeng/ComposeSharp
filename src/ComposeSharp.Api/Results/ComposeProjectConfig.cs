@@ -35,6 +35,10 @@ public sealed record ComposeProjectConfig
     /// <summary>Names of the declared configs.</summary>
     public IReadOnlyList<string> Configs { get; init; } = [];
 
+    /// <summary>Value-free diagnostics for unknown, unsupported, or partially supported Compose fields.</summary>
+    /// <remarks>Diagnostics identify source provenance and field paths without exposing configuration values.</remarks>
+    public IReadOnlyList<ComposeDiagnostic> Diagnostics { get; init; } = [];
+
     /// <summary>Environment values resolved for the project, if requested.</summary>
     public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>();
 
@@ -47,6 +51,25 @@ public sealed record ComposeProjectConfig
     /// environment values are included and may contain secrets; handle this text accordingly.
     /// </remarks>
     public string? RenderedYaml { get; init; }
+}
+
+/// <summary>Identifies a Compose field whose value is not fully applied to project resources.</summary>
+public sealed record ComposeDiagnostic
+{
+    /// <summary>The Compose file that contributed the field.</summary>
+    public required string SourceFile { get; init; }
+
+    /// <summary>The dotted YAML property path.</summary>
+    public required string PropertyPath { get; init; }
+
+    /// <summary>The service associated with a service-level field, or null for a project-level field.</summary>
+    public string? ServiceName { get; init; }
+
+    /// <summary>Stable identifier for the diagnostic category.</summary>
+    public required string Code { get; init; }
+
+    /// <summary>Value-free explanation of the unsupported or partial behavior.</summary>
+    public required string Message { get; init; }
 }
 // ReSharper restore UnusedMember.Global
 // ReSharper restore UnusedAutoPropertyAccessor.Global

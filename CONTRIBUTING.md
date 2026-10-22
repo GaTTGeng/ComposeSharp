@@ -21,6 +21,7 @@ Docker integration tests run only when a reachable Docker daemon is available.
 - Preserve cancellation-token behavior and avoid introducing Docker CLI process calls into the managed SDK.
 - Update XML comments, `README.md` / `README.zh-CN.md`, relevant `docs/*` guides, and `CHANGELOG.md` `[Unreleased]` in the same PR when public behavior or compatibility claims change. Follow the matrix below to identify the affected documents.
 - Include a minimal Compose file or Docker reproduction when fixing compatibility behavior.
+- For every newly parsed Compose field, either apply its semantics in the Docker Engine mapping or add a stable diagnostic and focused test for the unsupported or partial behavior. Update the field matrix with links to that diagnostic and test.
 
 ## Documentation and CHANGELOG
 
