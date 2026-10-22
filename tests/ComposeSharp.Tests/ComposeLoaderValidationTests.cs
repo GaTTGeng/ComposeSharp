@@ -205,6 +205,83 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Fact]
+    public void Load_LongFormServiceVolumeIsDiagnosed()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    volumes:\n      - type: bind\n        source: ./data\n        target: /data\n    networks:\n      first: {}\n      second: {}\n");
+
+        var diagnostics = ((ComposeProject)files.Load()).Diagnostics;
+
+        Assert.Contains(diagnostics, diagnostic =>
+            diagnostic.PropertyPath == "services.api.volumes[0]" &&
+            diagnostic.Code == "partially-supported-field");
+        Assert.Contains(diagnostics, diagnostic =>
+            diagnostic.PropertyPath == "services.api.networks" &&
+            diagnostic.Code == "partially-supported-field");
+    }
+
+    [Fact]
+    public void Load_UnappliedBuildFieldsAreDiagnosed()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    build:\n      context: .\n      dockerfile_inline: FROM scratch\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+
+        Assert.Equal("services.api.build.dockerfile_inline", diagnostic.PropertyPath);
+        Assert.Equal("unsupported-field", diagnostic.Code);
+    }
+
+    [Fact]
+    public void Load_DependencyConditionsOnlyDiagnosesConditionsThatDifferFromReadiness()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    depends_on:\n      healthy:\n        condition: service_healthy\n      started:\n        condition: service_started\n      completed:\n        condition: service_completed_successfully\n  healthy:\n    image: db\n    healthcheck:\n      test: [CMD, true]\n  started:\n    image: cache\n");
+
+        var diagnostics = ((ComposeProject)files.Load()).Diagnostics;
+
+        var diagnostic = Assert.Single(diagnostics);
+
+        Assert.Equal("services.api.depends_on.completed", diagnostic.PropertyPath);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+    }
+
+    [Fact]
+    public void Load_DefaultZeroValuesForUnsupportedFieldsAreQuiet()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    cpu_quota: 0\n    oom_score_adj: 0\n");
+
+        Assert.Empty(((ComposeProject)files.Load()).Diagnostics);
+    }
+
+    [Fact]
+    public void LoadMerged_DependencyNameUsesEscapedPathAndOverlayProvenance()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    depends_on:\n      db: {}\n  db:\n    image: database\n  db.prod:\n    image: database\n",
+            "services:\n  api:\n    depends_on:\n      db.prod:\n        condition: service_completed_successfully\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.LoadMerged()).Diagnostics);
+
+        Assert.Equal(Path.GetFullPath(files.OverlayPath!), diagnostic.SourceFile);
+        Assert.Equal("services.api.depends_on[\"db.prod\"]", diagnostic.PropertyPath);
+    }
+
+    [Fact]
+    public void LoadMerged_UnsupportedMergedMapDiagnosticUsesMeaningfulOverlayProvenance()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    logging: {}\n",
+            "services:\n  api:\n    logging:\n      driver: json-file\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.LoadMerged()).Diagnostics);
+
+        Assert.Equal(Path.GetFullPath(files.OverlayPath!), diagnostic.SourceFile);
+        Assert.Equal("services.api.logging.driver", diagnostic.PropertyPath);
+    }
+
+    [Fact]
     public void LoadMerged_UnknownDottedServiceFieldUsesOverlayProvenance()
     {
         using var files = new ComposeFiles(

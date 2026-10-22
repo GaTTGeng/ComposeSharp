@@ -222,6 +222,13 @@ public sealed class ComposeFileLoader
         "annotations", "extends", "develop"
     };
 
+    private static readonly HashSet<string> KnownBuildFields = new(StringComparer.Ordinal)
+    {
+        "context", "dockerfile", "args", "cache_from", "cache_to", "target", "tags", "labels",
+        "network", "extra_hosts", "privileged", "shm_size", "platforms", "pull", "no_cache",
+        "context_directory", "secrets", "ssh", "additional_contexts"
+    };
+
     private static IReadOnlyList<ComposeProjectDiagnostic> CollectProjectDiagnostics(
         Dictionary<object, object?> root,
         ValidationContext context)
@@ -244,7 +251,8 @@ public sealed class ComposeFileLoader
             }
         }
 
-        foreach (var (nameNode, value) in (Dictionary<object, object?>)root["services"]!)
+        var services = (Dictionary<object, object?>)root["services"]!;
+        foreach (var (nameNode, value) in services)
         {
             var serviceName = nameNode.ToString() ?? string.Empty;
             var displayPath = $"services.{serviceName}";
@@ -265,9 +273,11 @@ public sealed class ComposeFileLoader
                     continue;
                 }
 
-                if (UnsupportedServiceFields.Contains(key) && IsMeaningful(fieldValue))
+                if (UnsupportedServiceFields.Contains(key) && IsMeaningful(fieldValue) &&
+                    !IsDefaultUnsupportedFieldValue(key, fieldValue))
                 {
-                    AddDiagnostic(diagnostics, serviceContext, path, serviceName,
+                    var diagnosticPath = GetUnsupportedFieldDiagnosticPath(serviceContext, path, fieldValue);
+                    AddDiagnostic(diagnostics, serviceContext, diagnosticPath, serviceName,
                         "unsupported-field", "This service field is retained or parsed but is not applied to Docker resources.");
                 }
 
@@ -278,7 +288,7 @@ public sealed class ComposeFileLoader
                 }
             }
 
-            AddPartialDiagnostics(service, serviceName, displayPath, serviceContext, diagnostics);
+            AddPartialDiagnostics(service, services, serviceName, displayPath, serviceContext, diagnostics);
         }
 
         AddProjectResourceDiagnostics(root, "volumes", context, diagnostics);
@@ -291,6 +301,7 @@ public sealed class ComposeFileLoader
 
     private static void AddPartialDiagnostics(
         Dictionary<object, object?> service,
+        Dictionary<object, object?> services,
         string serviceName,
         string servicePath,
         ValidationContext context,
@@ -326,9 +337,10 @@ public sealed class ComposeFileLoader
         {
             foreach (var (dependencyName, dependencyValue) in dependencyMap)
             {
-                if (IsMeaningful(dependencyValue))
+                var dependencyKey = dependencyName.ToString() ?? string.Empty;
+                if (IsMeaningful(dependencyValue) && !IsDependencyConditionApplied(dependencyValue, dependencyKey, services))
                     AddDiagnostic(diagnostics, context,
-                        $"{servicePath}.depends_on.{dependencyName}", serviceName,
+                        AppendPathSegment($"{servicePath}.depends_on", dependencyKey), serviceName,
                         "partially-supported-field", "Long-form dependency conditions and options are not applied.");
             }
         }
@@ -365,6 +377,15 @@ public sealed class ComposeFileLoader
                             ? "This build option is retained but not applied to Docker."
                             : "This build option is not retained by the loader or applied to Docker.");
             }
+
+            foreach (var (fieldNode, value) in buildOptions)
+            {
+                var field = fieldNode.ToString() ?? string.Empty;
+                if (!KnownBuildFields.Contains(field) && IsMeaningful(value))
+                    AddDiagnostic(diagnostics, context,
+                        AppendPathSegment($"{servicePath}.build", field), serviceName,
+                        "unsupported-field", "This build option is not retained by the loader or applied to Docker.");
+            }
         }
 
         if (TryGetValue(service, "healthcheck", out var healthcheckValue) &&
@@ -392,7 +413,17 @@ public sealed class ComposeFileLoader
             AddDiagnostic(diagnostics, context, $"{servicePath}.networks", serviceName,
                 "partially-supported-field", "Only the first declared network is attached to the service.");
         }
-        else if (networks is Dictionary<object, object?> networkMap)
+
+        if (TryGetValue(service, "volumes", out var volumes) && volumes is List<object?> volumeList)
+        {
+            for (var i = 0; i < volumeList.Count; i++)
+            {
+                if (volumeList[i] is Dictionary<object, object?>)
+                    AddDiagnostic(diagnostics, context, $"{servicePath}.volumes[{i}]", serviceName,
+                        "partially-supported-field", "Long-form service volumes are not applied correctly; use short syntax.");
+            }
+        }
+        if (networks is Dictionary<object, object?> networkMap)
         {
             if (networkMap.Count > 1)
                 AddDiagnostic(diagnostics, context, $"{servicePath}.networks", serviceName,
@@ -442,6 +473,104 @@ public sealed class ComposeFileLoader
         return build is Dictionary<object, object?> buildOptions &&
                TryGetValue(buildOptions, "platforms", out var platforms) && IsMeaningful(platforms);
     }
+
+    private static string GetUnsupportedFieldDiagnosticPath(
+        ValidationContext context,
+        string path,
+        object? value)
+    {
+        var source = context.SourceFor(path);
+        return FindMeaningfulDescendantPaths(path, value)
+            .FirstOrDefault(descendant => context.SourceFor(descendant) != source) ?? path;
+    }
+
+    private static IEnumerable<string> FindMeaningfulDescendantPaths(string path, object? value)
+    {
+        switch (value)
+        {
+            case Dictionary<object, object?> map:
+                foreach (var (key, child) in map)
+                {
+                    foreach (var descendant in FindMeaningfulDescendantPaths(
+                                 AppendPathSegment(path, key.ToString() ?? string.Empty), child))
+                        yield return descendant;
+                }
+                break;
+            case List<object?> list:
+                for (var i = 0; i < list.Count; i++)
+                {
+                    foreach (var descendant in FindMeaningfulDescendantPaths($"{path}[{i}]", list[i]))
+                        yield return descendant;
+                }
+                break;
+            default:
+                if (IsMeaningful(value))
+                    yield return path;
+                break;
+        }
+    }
+
+    private static bool IsDefaultUnsupportedFieldValue(string field, object? value)
+    {
+        if (field is not ("cpu_quota" or "oom_score_adj"))
+            return false;
+
+        return value switch
+        {
+            byte number => number == 0,
+            sbyte number => number == 0,
+            short number => number == 0,
+            ushort number => number == 0,
+            int number => number == 0,
+            uint number => number == 0,
+            long number => number == 0,
+            ulong number => number == 0,
+            float number => number == 0,
+            double number => number == 0,
+            decimal number => number == 0,
+            string text => decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var number) && number == 0,
+            _ => false
+        };
+    }
+
+    private static bool IsDependencyConditionApplied(
+        object? dependencyValue,
+        string dependencyName,
+        Dictionary<object, object?> services)
+    {
+        if (dependencyValue is not Dictionary<object, object?> options ||
+            !TryGetValue(options, "condition", out var conditionValue) ||
+            conditionValue is not string condition ||
+            !TryGetValue(services, dependencyName, out var dependency) ||
+            dependency is not Dictionary<object, object?> dependencyService)
+            return false;
+
+        var hasHealthcheck = TryGetValue(dependencyService, "healthcheck", out var healthcheckValue) &&
+                             healthcheckValue is Dictionary<object, object?> healthcheck &&
+                             !(TryGetValue(healthcheck, "disable", out var disabled) && IsTrue(disabled)) &&
+                             TryGetValue(healthcheck, "test", out var test) && IsMeaningful(test) &&
+                             !IsDisabledHealthcheckTest(test);
+        return options.Count == 1 && (condition switch
+        {
+            "service_healthy" => hasHealthcheck,
+            "service_started" => !hasHealthcheck,
+            _ => false
+        });
+    }
+
+    private static bool IsTrue(object? value) => value switch
+    {
+        bool boolean => boolean,
+        string text => bool.TryParse(text, out var parsed) && parsed,
+        _ => false
+    };
+
+    private static bool IsDisabledHealthcheckTest(object? value) => value switch
+    {
+        string test => string.Equals(test, "NONE", StringComparison.Ordinal),
+        List<object?> tests => string.Equals(tests.FirstOrDefault()?.ToString(), "NONE", StringComparison.Ordinal),
+        _ => false
+    };
 
     private static bool IsMeaningfulResourceDefinition(object? definition)
     {
@@ -1620,8 +1749,7 @@ public sealed class ComposeFileLoader
     }
 
     /// <summary>
-    /// Reads <c>depends_on</c> as a name list or a mapping. Mapping form keeps the keys only:
-    /// per-dependency conditions are modeled but not yet acted upon by the engine.
+    /// Reads <c>depends_on</c> as a name list or a mapping, retaining dependency names only.
     /// </summary>
     private static List<string> ReadDependsOn(Dictionary<object, object?> map)
     {
