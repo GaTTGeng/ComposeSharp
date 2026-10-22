@@ -259,7 +259,8 @@ public sealed class ComposeFileLoader
                 var path = $"{displayPath}.{key}";
                 if (!KnownServiceFields.Contains(key) && !key.StartsWith("x-", StringComparison.Ordinal) && IsMeaningful(fieldValue))
                 {
-                    AddDiagnostic(diagnostics, serviceContext, path, serviceName,
+                    AddDiagnostic(diagnostics, serviceContext,
+                        AppendPathSegment(serviceContext.DisplayServicePath!, key), serviceName,
                         "unsupported-field", "This service field is not recognized and has no engine behavior.");
                     continue;
                 }
@@ -289,9 +290,12 @@ public sealed class ComposeFileLoader
         ValidationContext context,
         List<ComposeProjectDiagnostic> diagnostics)
     {
-        if (TryGetValue(service, "command", out var command) && command is string commandText && commandText.Length > 0)
-            AddDiagnostic(diagnostics, context, $"{servicePath}.command", serviceName,
-                "partially-supported-field", "Scalar commands are passed as one argument instead of shell-split arguments.");
+        foreach (var field in new[] { "command", "entrypoint" })
+        {
+            if (TryGetValue(service, field, out var command) && command is string commandText && commandText.Length > 0)
+                AddDiagnostic(diagnostics, context, $"{servicePath}.{field}", serviceName,
+                    "partially-supported-field", "Scalar commands are passed as one argument instead of shell-split arguments.");
+        }
 
         if (TryGetValue(service, "ports", out var ports) && ports is List<object?> portList)
         {
@@ -333,11 +337,14 @@ public sealed class ComposeFileLoader
 
         if (TryGetValue(service, "build", out buildValue) && buildValue is Dictionary<object, object?> buildOptions)
         {
-            foreach (var field in new[] { "secrets", "ssh", "additional_contexts" })
+            foreach (var field in new[] { "secrets", "ssh", "additional_contexts", "privileged" })
             {
                 if (TryGetValue(buildOptions, field, out var value) && IsMeaningful(value))
                     AddDiagnostic(diagnostics, context, $"{servicePath}.build.{field}", serviceName,
-                        "unsupported-field", "This build option is not retained by the loader or applied to Docker.");
+                        field == "privileged" ? "partially-supported-field" : "unsupported-field",
+                        field == "privileged"
+                            ? "This build option is retained but not applied to Docker."
+                            : "This build option is not retained by the loader or applied to Docker.");
             }
         }
 
@@ -347,9 +354,6 @@ public sealed class ComposeFileLoader
             if (TryGetValue(healthcheck, "start_interval", out var startInterval) && IsMeaningful(startInterval))
                 AddDiagnostic(diagnostics, context, $"{servicePath}.healthcheck.start_interval", serviceName,
                     "unsupported-field", "Health check start_interval is not retained or applied.");
-            if (TryGetValue(healthcheck, "test", out var test) && test is string testCommand && testCommand.Length > 0)
-                AddDiagnostic(diagnostics, context, $"{servicePath}.healthcheck.test", serviceName,
-                    "partially-supported-field", "Scalar health check commands are not converted to CMD-SHELL.");
         }
 
         foreach (var field in new[] { "network_mode", "ipc", "pid" })
@@ -364,8 +368,17 @@ public sealed class ComposeFileLoader
             AddDiagnostic(diagnostics, context, $"{servicePath}.extra_hosts", serviceName,
                 "partially-supported-field", "Mapping syntax loses host addresses and is not supported.");
 
-        if (TryGetValue(service, "networks", out var networks) && networks is Dictionary<object, object?> networkMap)
+        if (TryGetValue(service, "networks", out var networks) && networks is List<object?> networkList && networkList.Count > 1)
         {
+            AddDiagnostic(diagnostics, context, $"{servicePath}.networks", serviceName,
+                "partially-supported-field", "Only the first declared network is attached to the service.");
+        }
+        else if (networks is Dictionary<object, object?> networkMap)
+        {
+            if (networkMap.Count > 1)
+                AddDiagnostic(diagnostics, context, $"{servicePath}.networks", serviceName,
+                    "partially-supported-field", "Only the first declared network is attached to the service.");
+
             foreach (var (networkName, options) in networkMap)
             {
                 if (IsMeaningful(options))
@@ -396,11 +409,27 @@ public sealed class ComposeFileLoader
 
         foreach (var (name, definition) in resources)
         {
-            if (IsMeaningful(definition))
+            if (IsMeaningfulResourceDefinition(definition))
                 AddDiagnostic(diagnostics, context, $"{section}.{name}", null,
                     "partially-supported-field", "Only the resource name is retained; resource options are not applied.");
         }
     }
+
+    private static bool IsMeaningfulResourceDefinition(object? definition)
+    {
+        if (definition is not Dictionary<object, object?> options)
+            return IsMeaningful(definition);
+
+        return options.Any(option =>
+            !(Equals(option.Key.ToString(), "external") && IsFalse(option.Value)) && IsMeaningful(option.Value));
+    }
+
+    private static bool IsFalse(object? value) => value switch
+    {
+        bool boolean => !boolean,
+        string text => bool.TryParse(text, out var parsed) && !parsed,
+        _ => false
+    };
 
     private static void AddUnappliedProjectResourceDiagnostics(
         Dictionary<object, object?> root,
@@ -435,8 +464,8 @@ public sealed class ComposeFileLoader
         null => false,
         bool boolean => boolean,
         string text => text.Length > 0,
-        Dictionary<object, object?> map => map.Count > 0,
-        List<object?> list => list.Count > 0,
+        Dictionary<object, object?> map => map.Values.Any(IsMeaningful),
+        List<object?> list => list.Any(IsMeaningful),
         _ => true
     };
 
@@ -1683,9 +1712,9 @@ public sealed class ComposeFileLoader
 
         // test: list form is exec/CMD as written; scalar form is shell syntax and gets CMD-SHELL.
         var disabled = GetBool(healthMap, "disable") ?? false;
-        var test = GetStringList(healthMap, "test");
-        if (test.Count == 0 && GetString(healthMap, "test") is { } testString)
-            test = ["CMD-SHELL", testString];
+        IReadOnlyList<string> test = TryGetValue(healthMap, "test", out var testValue) && testValue is string testString
+            ? ["CMD-SHELL", testString]
+            : GetStringList(healthMap, "test");
 
         return new ComposeHealthcheck(
             disabled, test,

@@ -338,6 +338,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Runs a command inside a running container of a service and returns its exit code and output.</summary>
     public async Task<ExecResult> ExecAsync(ComposeProjectContext context, string serviceName, ComposeExecOptions options, CancellationToken cancellationToken = default)
     {
+        ValidateStrictProjectBeforeDocker(context);
         // Resolve the target running container (replica index honored).
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var container = await _containers.FindRunningContainerAsync(client, context.ProjectName, serviceName, options.Index, cancellationToken);
@@ -371,6 +372,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Streams a running container's combined output to the console until the stream ends.</summary>
     public async Task AttachAsync(ComposeProjectContext context, string serviceName, ComposeAttachOptions? options = null, CancellationToken cancellationToken = default)
     {
+        ValidateStrictProjectBeforeDocker(context);
         // Resolve the target running container, then open its multiplexed output stream.
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var container = await _containers.FindRunningContainerAsync(client, context.ProjectName, serviceName, options?.Index, cancellationToken);
@@ -407,6 +409,7 @@ public sealed class ComposeService : IComposeService
         if (source.IsContainer == destination.IsContainer)
             throw new ArgumentException("Exactly one copy path must use the 'service:/container/path' form.", nameof(options));
 
+        ValidateStrictProjectBeforeDocker(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
 
         // Container → host: stream the container archive out and extract it to the host path.
@@ -606,6 +609,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Resolves the host address and port published for a container port of a running service.</summary>
     public async Task<(string Host, int Port)> PortAsync(ComposeProjectContext context, string serviceName, int containerPort, ComposePortOptions? options = null, CancellationToken cancellationToken = default)
     {
+        ValidateStrictProjectBeforeDocker(context);
         // Resolve the running container, then inspect its published port bindings.
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var container = await _containers.FindRunningContainerAsync(client, context.ProjectName, serviceName, options?.Index, cancellationToken);
@@ -792,6 +796,7 @@ public sealed class ComposeService : IComposeService
         ArgumentException.ThrowIfNullOrWhiteSpace(options.Service);
         ArgumentException.ThrowIfNullOrWhiteSpace(options.OutputPath);
 
+        ValidateStrictProjectBeforeDocker(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var container = await _containers.FindContainerForArchiveAsync(
             client, context.ProjectName, options.Service, options.Index, cancellationToken);
@@ -823,6 +828,7 @@ public sealed class ComposeService : IComposeService
         var reference = options.Reference ?? $"{context.ProjectName}-{options.Service}:latest";
         var parameters = ImageCommitParametersFactory.Create(reference, options);
 
+        ValidateStrictProjectBeforeDocker(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var container = await _containers.FindContainerForArchiveAsync(
             client, context.ProjectName, options.Service, options.Index, cancellationToken);
@@ -901,6 +907,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>Lists the project-labeled volumes on the daemon.</summary>
     public async Task<IReadOnlyList<VolumesSummary>> VolumesAsync(ComposeProjectContext context, ComposeVolumesOptions? options = null, CancellationToken cancellationToken = default)
     {
+        ValidateStrictProjectBeforeDocker(context);
         // List only volumes owned by this project's label, then map to summaries.
         using var client = _clientFactory.CreateClient(context.SocketPath);
         var volumes = await client.Volumes.ListAsync(new VolumesListParameters
@@ -1045,6 +1052,12 @@ public sealed class ComposeService : IComposeService
         }
 
         return project;
+    }
+
+    private void ValidateStrictProjectBeforeDocker(ComposeProjectContext context)
+    {
+        if (context.ValidationMode == ComposeValidationMode.Strict)
+            _ = LoadProjectInternal(context);
     }
 
     private static IReadOnlyList<ComposeDiagnostic> ToApiDiagnostics(ComposeProject project)

@@ -130,6 +130,104 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Fact]
+    public void Load_NormalizesScalarHealthcheckAndDiagnosesScalarCommands()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    command: echo ready\n    entrypoint: /bin/sh\n    healthcheck:\n      test: echo healthy\n");
+
+        var project = new ComposeFileLoader().Load(files.DirectoryPath, Path.GetFileName(files.PrimaryPath));
+
+        Assert.Equal(["CMD-SHELL", "echo healthy"], Assert.Single(project.Services).Healthcheck!.Test);
+        Assert.Equal(
+            ["services.api.command", "services.api.entrypoint"],
+            project.Diagnostics.Select(diagnostic => diagnostic.PropertyPath));
+    }
+
+    [Fact]
+    public void Load_MultipleServiceNetworksAreDiagnosedButSingleNetworkIsQuiet()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  list:\n    image: app\n    networks: [front, back]\n  mapping:\n    image: app\n    networks:\n      front: null\n      back: null\n  single:\n    image: app\n    networks: [front]\n");
+
+        var project = (ComposeProject)files.Load();
+
+        Assert.Equal(
+            ["services.list.networks", "services.mapping.networks"],
+            project.Diagnostics.Select(diagnostic => diagnostic.PropertyPath));
+    }
+
+    [Fact]
+    public void Load_BuildPrivilegedIsDiagnosedAsNotApplied()
+    {
+        using var files = new ComposeFiles("services:\n  api:\n    build:\n      context: .\n      privileged: true\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+
+        Assert.Equal("services.api.build.privileged", diagnostic.PropertyPath);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+        Assert.Contains("retained but not applied", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoadMerged_UnknownDottedServiceFieldUsesOverlayProvenance()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n",
+            "services:\n  api:\n    access.token: hidden\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.LoadMerged()).Diagnostics);
+
+        Assert.Equal(Path.GetFullPath(files.OverlayPath!), diagnostic.SourceFile);
+        Assert.Equal("services.api[\"access.token\"]", diagnostic.PropertyPath);
+        Assert.Equal("api", diagnostic.ServiceName);
+    }
+
+    [Fact]
+    public void Load_ResourceDefinitionsWithOnlyDefaultValuesAreQuiet()
+    {
+        using var files = new ComposeFiles(
+            "volumes:\n  data:\n    external: false\nnetworks:\n  back:\n    external: false\nservices:\n  api:\n    image: app\n");
+
+        var project = (ComposeProject)files.Load();
+
+        Assert.Empty(project.Diagnostics);
+    }
+
+    [Fact]
+    public async Task DirectDockerOperations_StrictModeRejectsDiagnosticsBeforeDockerAccess()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    logging:\n      driver: json-file\n");
+        var service = new ComposeService();
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "strict-validation",
+            WorkingDirectory = files.DirectoryPath,
+            ComposeFileName = Path.GetFileName(files.PrimaryPath),
+            SocketPath = "npipe://./pipe/compose-sharp-validation-test-missing",
+            ValidationMode = ComposeValidationMode.Strict
+        };
+        var copyPath = Path.Combine(files.DirectoryPath, "copy");
+        var exportPath = Path.Combine(files.DirectoryPath, "export.tar");
+        Func<Task>[] operations =
+        [
+            () => service.ExecAsync(context, "api", new ComposeExecOptions { Command = ["true"] }),
+            () => service.AttachAsync(context, "api"),
+            () => service.CopyAsync(context, new ComposeCopyOptions { Source = "api:/tmp/file", Destination = copyPath }),
+            () => service.PortAsync(context, "api", 80),
+            () => service.ExportAsync(context, new ComposeExportOptions { Service = "api", OutputPath = exportPath }),
+            () => service.CommitAsync(context, new ComposeCommitOptions { Service = "api" }),
+            () => service.VolumesAsync(context)
+        ];
+
+        foreach (var operation in operations)
+        {
+            var exception = await Assert.ThrowsAsync<ComposeValidationException>(operation);
+            Assert.Equal("services.api.logging", exception.PropertyPath);
+        }
+    }
+
+    [Fact]
     public void Load_SecretDefinitionsNeverExposeSecretMaterialInDiagnostics()
     {
         using var files = new ComposeFiles(

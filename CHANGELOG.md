@@ -23,6 +23,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Scalar health checks are normalized before Docker creation, diagnostics identify unapplied build options and network attachments, and strict validation covers direct Engine operations.
 - Service-level `on-failure:N` restart policies preserve the Docker retry limit and reject malformed suffixes with contextual validation errors.
 
 - `WaitAsync` collects container exit codes without concurrent dictionary writes and chooses its aggregate code deterministically by ordinal container ID.
