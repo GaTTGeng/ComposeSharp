@@ -169,6 +169,42 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Fact]
+    public void Load_MultipleBuildPlatformsAreDiagnosed()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    build:\n      context: .\n      platforms: [linux/amd64, linux/arm64]\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+
+        Assert.Equal("services.api.build.platforms", diagnostic.PropertyPath);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+    }
+
+    [Fact]
+    public void Load_DuplicateContainerPortMappingsAreDiagnosed()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    ports: [\"8080:80\", \"8081:80\"]\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+
+        Assert.Equal("services.api.ports[1]", diagnostic.PropertyPath);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+    }
+
+    [Fact]
+    public void Load_ServicePlatformIsAppliedAsBuildFallback()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  built:\n    build: .\n    platform: linux/amd64\n  image_only:\n    image: app\n    platform: linux/arm64\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+
+        Assert.Equal("services.image_only.platform", diagnostic.PropertyPath);
+        Assert.Equal("unsupported-field", diagnostic.Code);
+    }
+
+    [Fact]
     public void LoadMerged_UnknownDottedServiceFieldUsesOverlayProvenance()
     {
         using var files = new ComposeFiles(
@@ -191,6 +227,19 @@ public sealed class ComposeLoaderValidationTests
         var project = (ComposeProject)files.Load();
 
         Assert.Empty(project.Diagnostics);
+    }
+
+    [Fact]
+    public void LoadMerged_ResourceDiagnosticEscapesNameAndUsesOverlayProvenance()
+    {
+        using var files = new ComposeFiles(
+            "networks:\n  front: {}\nservices:\n  api:\n    image: app\n",
+            "networks:\n  front.prod:\n    driver: bridge\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.LoadMerged()).Diagnostics);
+
+        Assert.Equal(Path.GetFullPath(files.OverlayPath!), diagnostic.SourceFile);
+        Assert.Equal("networks[\"front.prod\"]", diagnostic.PropertyPath);
     }
 
     [Fact]

@@ -217,7 +217,7 @@ public sealed class ComposeFileLoader
 
     private static readonly HashSet<string> UnsupportedServiceFields = new(StringComparer.Ordinal)
     {
-        "secrets", "configs", "logging", "stop_signal", "stop_grace_period", "sysctls", "platform",
+        "secrets", "configs", "logging", "stop_signal", "stop_grace_period", "sysctls",
         "pull_policy", "dns", "dns_search", "links", "cpu_quota", "oom_kill_disable", "oom_score_adj",
         "annotations", "extends", "develop"
     };
@@ -270,6 +270,12 @@ public sealed class ComposeFileLoader
                     AddDiagnostic(diagnostics, serviceContext, path, serviceName,
                         "unsupported-field", "This service field is retained or parsed but is not applied to Docker resources.");
                 }
+
+                if (key == "platform" && IsMeaningful(fieldValue) && IsServicePlatformUnapplied(service))
+                {
+                    AddDiagnostic(diagnostics, serviceContext, path, serviceName,
+                        "unsupported-field", "The service platform is not applied to image pulls or container creation.");
+                }
             }
 
             AddPartialDiagnostics(service, serviceName, displayPath, serviceContext, diagnostics);
@@ -299,11 +305,20 @@ public sealed class ComposeFileLoader
 
         if (TryGetValue(service, "ports", out var ports) && ports is List<object?> portList)
         {
+            var containerPorts = new HashSet<string>(StringComparer.Ordinal);
             for (var i = 0; i < portList.Count; i++)
             {
-                if (portList[i] is string port && port.Count(character => character == ':') >= 2)
+                if (portList[i] is not string port)
+                    continue;
+
+                if (port.Count(character => character == ':') >= 2)
                     AddDiagnostic(diagnostics, context, $"{servicePath}.ports[{i}]", serviceName,
                         "partially-supported-field", "Host IP port bindings are not preserved by the current port model.");
+
+                var containerPort = ParsePort(port).ContainerPort;
+                if (!containerPorts.Add(containerPort))
+                    AddDiagnostic(diagnostics, context, $"{servicePath}.ports[{i}]", serviceName,
+                        "partially-supported-field", "Multiple host mappings for the same container port are not applied.");
             }
         }
 
@@ -337,6 +352,10 @@ public sealed class ComposeFileLoader
 
         if (TryGetValue(service, "build", out buildValue) && buildValue is Dictionary<object, object?> buildOptions)
         {
+            if (TryGetValue(buildOptions, "platforms", out var platforms) && platforms is List<object?> platformList && platformList.Count > 1)
+                AddDiagnostic(diagnostics, context, $"{servicePath}.build.platforms", serviceName,
+                    "partially-supported-field", "Docker Engine build requests support one platform at a time.");
+
             foreach (var field in new[] { "secrets", "ssh", "additional_contexts", "privileged" })
             {
                 if (TryGetValue(buildOptions, field, out var value) && IsMeaningful(value))
@@ -410,9 +429,18 @@ public sealed class ComposeFileLoader
         foreach (var (name, definition) in resources)
         {
             if (IsMeaningfulResourceDefinition(definition))
-                AddDiagnostic(diagnostics, context, $"{section}.{name}", null,
+                AddDiagnostic(diagnostics, context, AppendPathSegment(section, name.ToString()!), null,
                     "partially-supported-field", "Only the resource name is retained; resource options are not applied.");
         }
+    }
+
+    private static bool IsServicePlatformUnapplied(Dictionary<object, object?> service)
+    {
+        if (!TryGetValue(service, "build", out var build) || !IsMeaningful(build))
+            return true;
+
+        return build is Dictionary<object, object?> buildOptions &&
+               TryGetValue(buildOptions, "platforms", out var platforms) && IsMeaningful(platforms);
     }
 
     private static bool IsMeaningfulResourceDefinition(object? definition)
