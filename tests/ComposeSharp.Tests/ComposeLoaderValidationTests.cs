@@ -169,6 +169,36 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Fact]
+    public void Load_BuildExtensionFieldsAreIgnoredByDiagnostics()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    build:\n      context: .\n      x-cache-key: local\n");
+
+        Assert.Empty(((ComposeProject)files.Load()).Diagnostics);
+    }
+
+    [Fact]
+    public void Load_StringBooleanDefaultsAreQuiet()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    build:\n      context: .\n      privileged: \"false\"\n    oom_kill_disable: \"false\"\n");
+
+        Assert.Empty(((ComposeProject)files.Load()).Diagnostics);
+    }
+
+    [Fact]
+    public void Load_LongFormEnvironmentFileIsDiagnosed()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    env_file:\n      - path: ./app.env\n        required: true\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+
+        Assert.Equal("services.api.env_file[0]", diagnostic.PropertyPath);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+    }
+
+    [Fact]
     public void Load_MultipleBuildPlatformsAreDiagnosed()
     {
         using var files = new ComposeFiles(

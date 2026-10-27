@@ -345,6 +345,16 @@ public sealed class ComposeFileLoader
             }
         }
 
+        if (TryGetValue(service, "env_file", out var envFiles) && envFiles is List<object?> envFileList)
+        {
+            for (var i = 0; i < envFileList.Count; i++)
+            {
+                if (envFileList[i] is Dictionary<object, object?>)
+                    AddDiagnostic(diagnostics, context, $"{servicePath}.env_file[{i}]", serviceName,
+                        "partially-supported-field", "Long-form environment file options are not applied; use short syntax.");
+            }
+        }
+
         if (TryGetValue(service, "deploy", out var deployValue) && deployValue is Dictionary<object, object?> deploy)
         {
             foreach (var (field, value) in deploy)
@@ -370,7 +380,8 @@ public sealed class ComposeFileLoader
 
             foreach (var field in new[] { "secrets", "ssh", "additional_contexts", "privileged" })
             {
-                if (TryGetValue(buildOptions, field, out var value) && IsMeaningful(value))
+                if (TryGetValue(buildOptions, field, out var value) && IsMeaningful(value) &&
+                    !(field == "privileged" && IsFalse(value)))
                     AddDiagnostic(diagnostics, context, $"{servicePath}.build.{field}", serviceName,
                         field == "privileged" ? "partially-supported-field" : "unsupported-field",
                         field == "privileged"
@@ -381,7 +392,8 @@ public sealed class ComposeFileLoader
             foreach (var (fieldNode, value) in buildOptions)
             {
                 var field = fieldNode.ToString() ?? string.Empty;
-                if (!KnownBuildFields.Contains(field) && IsMeaningful(value))
+                if (!KnownBuildFields.Contains(field) && !field.StartsWith("x-", StringComparison.Ordinal) &&
+                    IsMeaningful(value))
                     AddDiagnostic(diagnostics, context,
                         AppendPathSegment($"{servicePath}.build", field), serviceName,
                         "unsupported-field", "This build option is not retained by the loader or applied to Docker.");
@@ -512,6 +524,8 @@ public sealed class ComposeFileLoader
 
     private static bool IsDefaultUnsupportedFieldValue(string field, object? value)
     {
+        if (field is "privileged" or "oom_kill_disable")
+            return IsFalse(value);
         if (field is not ("cpu_quota" or "oom_score_adj"))
             return false;
 
