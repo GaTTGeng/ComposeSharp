@@ -37,6 +37,21 @@ public sealed record ComposeProjectContext
 
     /// <summary>When true, apply legacy Compose CLI compatibility behavior.</summary>
     public bool Compatibility { get; init; }
+
+    /// <summary>Controls how unsupported or partially supported Compose fields are handled.</summary>
+    /// <remarks>Report mode exposes value-free diagnostics; strict mode rejects non-default unsupported or partial fields before a Docker Engine operation.</remarks>
+    public ComposeValidationMode ValidationMode { get; init; } = ComposeValidationMode.Report;
+}
+
+/// <summary>Controls whether Compose fields without full engine support are reported or rejected.</summary>
+/// <remarks>Empty/default values and <c>x-*</c> extension fields do not trigger diagnostics.</remarks>
+public enum ComposeValidationMode
+{
+    /// <summary>Continue loading and expose value-free field diagnostics in the project summary.</summary>
+    Report,
+
+    /// <summary>Reject unsupported or partially supported fields before any Docker Engine operation.</summary>
+    Strict
 }
 
 /// <summary>

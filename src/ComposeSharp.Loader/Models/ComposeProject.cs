@@ -17,4 +17,21 @@ public sealed record ComposeProject(
     IReadOnlyList<string> Networks,
     IReadOnlyList<string> Secrets,
     IReadOnlyList<string> Configs,
-    IReadOnlyDictionary<string, string> Extensions);
+    IReadOnlyDictionary<string, string> Extensions)
+{
+    /// <summary>Unsupported or partially supported fields found in the loaded Compose document.</summary>
+    public IReadOnlyList<ComposeProjectDiagnostic> Diagnostics { get; init; } = [];
+}
+
+/// <summary>Describes a Compose field the loader or engine cannot fully apply.</summary>
+/// <param name="SourceFile">The Compose file that contributed the field.</param>
+/// <param name="PropertyPath">The YAML path of the field.</param>
+/// <param name="ServiceName">The service name for a service-level field, or null for project-level fields.</param>
+/// <param name="Code">Stable identifier for the diagnostic category.</param>
+/// <param name="Message">A value-free description of the unsupported or partial behavior.</param>
+public sealed record ComposeProjectDiagnostic(
+    string SourceFile,
+    string PropertyPath,
+    string? ServiceName,
+    string Code,
+    string Message);

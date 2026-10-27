@@ -8,6 +8,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `LoadProject` and `GenerateAsync` expose value-free diagnostics for unknown, unsupported, and partially applied Compose fields; strict validation rejects them before Docker Engine operations.
 - `UpAsync`, `CreateAsync`, and `StartAsync` include transitive service dependencies, reject cycles and missing services, and wait for effective Docker health checks or running state before starting dependents; an optional per-dependency timeout bounds readiness waits.
 - `GenerateAsync` returns a normalized YAML snapshot of selected loaded services alongside the project summary, with service selection and an output project-name override.
 - `TopAsync` returns real process listings for running project service containers through the Docker Engine process-list API.
@@ -22,6 +23,11 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Scalar health checks are normalized before Docker creation, diagnostics identify unapplied build options and network attachments, and strict validation covers direct Engine operations.
+- Validation diagnoses multiple build platforms and duplicate container-port mappings, preserves escaped resource-name provenance, and recognizes the service platform as a build fallback.
+- Validation diagnoses long-form service volumes and unretained build options, honors dependency conditions that match readiness behavior, ignores default zero resource values, and attributes merged-map diagnostics to overlay values.
+- Validation ignores build extension metadata and false boolean defaults, and diagnoses unsupported long-form `env_file` entries.
+- Validation ignores nested extension metadata and diagnoses `service_started` when an image may provide an inherited health check.
 - Service-level `on-failure:N` restart policies preserve the Docker retry limit and reject malformed suffixes with contextual validation errors.
 
 - `WaitAsync` collects container exit codes without concurrent dictionary writes and chooses its aggregate code deterministically by ordinal container ID.

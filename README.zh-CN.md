@@ -105,8 +105,8 @@ builder.Services.AddComposeSharp();
 - `PublishAsync` 会把每个被选中服务的镜像打成 `repository:serviceName`，并使用 `ComposeProjectContext.RegistryAuth` 推送；返回值为每个服务一条 `PublishResult`，分别记录 tag 与 push 结果，不会在第一个失败处中断。`ComposePublishOptions` 中的 `ResolveImageDigests`、`WithEnvironment`、`OcIVersion` 和 `InsecureRegistry` 尚未应用。
 - `LoadMerged` 按字段逐步合并后置文件：标量由后置值覆盖，映射递归合并，列表追加；服务资源、`command` 和 `entrypoint` 有明确的替换规则。它仍不是 Docker Compose 的完整合并算法；精确规则和不支持的 YAML 标签见[合并语义](docs/merge-semantics.md)。
 - `ComposeProjectContext.Profiles` 会在加载项目，以及面向服务的生命周期、检查、镜像、日志、事件和 watch 操作中统一选择服务：未配置 `profiles` 的服务始终会被选择；配置了 profile 的服务会在任一 profile 被激活时被选择。显式指定服务的操作即使未激活该服务的 profile，也可以选择它；选择结果为空时不会退化成操作项目中的全部容器。
-- 加载器可以保留引擎尚未应用的字段。在运行时依赖某个 Compose 属性之前，请查阅 [Compose 字段支持矩阵](docs/compose-field-matrix.md)。
-- `depends_on` 会将所选服务的传递依赖纳入启动范围，并按稳定顺序启动。未启用有效 Docker 健康检查的依赖必须处于运行状态；启用了健康检查（包括从镜像继承）的依赖必须通过健康检查。依赖变为不健康或停止时会返回诊断错误；调用方可以设置 `DependencyWaitTimeoutSeconds` 或取消操作。缺失服务和依赖环也会返回诊断错误；长格式条件仍不支持。
+- 加载器可能会保留引擎尚未完全应用的字段。`LoadProject` 和 `GenerateAsync` 会通过 `Diagnostics` 返回稳定且不包含字段值的诊断，其中包含来源文件、属性路径、适用时的服务名，以及 `unsupported-field` 或 `partially-supported-field` 类型。默认的 `ComposeValidationMode.Report` 会按已记录的行为继续；`ComposeValidationMode.Strict` 会在任何 Docker Engine 操作前拒绝这些字段。非空的未知项目、服务和 build 字段也会报告。长格式服务卷和 `env_file` 条目、未应用的依赖条件和忽略的 build 选项会产生诊断；默认资源零值和布尔 `false` 默认值保持静默。空值/默认值和 `x-*` 扩展不会产生诊断。诊断不会包含字段值，因为其中可能有凭据或机密。依赖某个 Compose 属性的运行时行为前，请查看 [Compose 字段支持矩阵](docs/compose-field-matrix.md)中的行为说明和诊断覆盖。
+- `depends_on` 会将所选服务的传递依赖纳入启动范围，并按稳定顺序启动。未启用有效 Docker 健康检查的依赖必须处于运行状态；启用了健康检查（包括从镜像继承）的依赖必须通过健康检查。依赖变为不健康或停止时会返回诊断错误；调用方可以设置 `DependencyWaitTimeoutSeconds` 或取消操作。缺失服务和依赖环也会返回诊断错误；长格式条件不会被保留。依赖显式启用健康检查时，`service_healthy` 与当前就绪行为一致；只有 Compose 服务显式禁用健康检查时，`service_started` 才不会产生诊断。未显式禁用时，镜像可能提供继承的健康检查，因此会报告诊断。
 
 默认端点在 Windows 是 `npipe://./pipe/docker_engine`，Unix 是 `unix:///var/run/docker.sock`；也可以通过 `SocketPath` 显式指定。
 
