@@ -359,7 +359,9 @@ public sealed class ComposeFileLoader
         {
             foreach (var (field, value) in deploy)
             {
-                if (!Equals(field.ToString(), "replicas") && IsMeaningful(value))
+                var deployField = field.ToString() ?? string.Empty;
+                if (deployField != "replicas" && !deployField.StartsWith("x-", StringComparison.Ordinal) &&
+                    IsMeaningful(value))
                     AddDiagnostic(diagnostics, context, $"{servicePath}.deploy.{field}", serviceName,
                         "partially-supported-field", "Only deploy.replicas affects service operations.");
             }
@@ -443,7 +445,7 @@ public sealed class ComposeFileLoader
 
             foreach (var (networkName, options) in networkMap)
             {
-                if (IsMeaningful(options))
+                if (IsMeaningfulWithoutExtensions(options))
                     AddDiagnostic(diagnostics, context, $"{servicePath}.networks.{networkName}", serviceName,
                         "partially-supported-field", "Per-network options and multiple network attachments are not applied.");
             }
@@ -564,10 +566,15 @@ public sealed class ComposeFileLoader
                              !(TryGetValue(healthcheck, "disable", out var disabled) && IsTrue(disabled)) &&
                              TryGetValue(healthcheck, "test", out var test) && IsMeaningful(test) &&
                              !IsDisabledHealthcheckTest(test);
+        var healthcheckDisabled = TryGetValue(dependencyService, "healthcheck", out healthcheckValue) &&
+                                  healthcheckValue is Dictionary<object, object?> explicitHealthcheck &&
+                                  ((TryGetValue(explicitHealthcheck, "disable", out var disableValue) && IsTrue(disableValue)) ||
+                                   (TryGetValue(explicitHealthcheck, "test", out var explicitTest) &&
+                                    IsDisabledHealthcheckTest(explicitTest)));
         return options.Count == 1 && (condition switch
         {
             "service_healthy" => hasHealthcheck,
-            "service_started" => !hasHealthcheck,
+            "service_started" => healthcheckDisabled,
             _ => false
         });
     }
@@ -592,8 +599,19 @@ public sealed class ComposeFileLoader
             return IsMeaningful(definition);
 
         return options.Any(option =>
+            !IsExtensionField(option.Key) &&
             !(Equals(option.Key.ToString(), "external") && IsFalse(option.Value)) && IsMeaningful(option.Value));
     }
+
+    private static bool IsMeaningfulWithoutExtensions(object? value) => value switch
+    {
+        Dictionary<object, object?> map => map.Any(option =>
+            !IsExtensionField(option.Key) && IsMeaningful(option.Value)),
+        _ => IsMeaningful(value)
+    };
+
+    private static bool IsExtensionField(object key) =>
+        (key.ToString() ?? string.Empty).StartsWith("x-", StringComparison.Ordinal);
 
     private static bool IsFalse(object? value) => value switch
     {
@@ -613,7 +631,7 @@ public sealed class ComposeFileLoader
 
         foreach (var (name, definition) in resources)
         {
-            if (IsMeaningful(definition))
+            if (IsMeaningfulResourceDefinition(definition))
                 AddDiagnostic(diagnostics, context, AppendPathSegment(section, name.ToString()!), null,
                     "unsupported-field", "Project resources are named in the loaded model but are not provisioned or mounted.");
         }

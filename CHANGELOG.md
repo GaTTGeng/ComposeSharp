@@ -27,6 +27,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Validation diagnoses multiple build platforms and duplicate container-port mappings, preserves escaped resource-name provenance, and recognizes the service platform as a build fallback.
 - Validation diagnoses long-form service volumes and unretained build options, honors dependency conditions that match readiness behavior, ignores default zero resource values, and attributes merged-map diagnostics to overlay values.
 - Validation ignores build extension metadata and false boolean defaults, and diagnoses unsupported long-form `env_file` entries.
+- Validation ignores nested extension metadata and diagnoses `service_started` when an image may provide an inherited health check.
 - Service-level `on-failure:N` restart policies preserve the Docker retry limit and reject malformed suffixes with contextual validation errors.
 
 - `WaitAsync` collects container exit codes without concurrent dictionary writes and chooses its aggregate code deterministically by ordinal container ID.

@@ -178,6 +178,15 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Fact]
+    public void Load_NestedExtensionFieldsAreIgnoredByDiagnostics()
+    {
+        using var files = new ComposeFiles(
+            "volumes:\n  data:\n    x-volume-note: local\nnetworks:\n  front:\n    x-network-note: local\nsecrets:\n  credential:\n    x-secret-note: local\nconfigs:\n  settings:\n    x-config-note: local\nservices:\n  api:\n    image: app\n    deploy:\n      x-rollout-note: local\n    networks:\n      front:\n        x-attachment-note: local\n");
+
+        Assert.Empty(((ComposeProject)files.Load()).Diagnostics);
+    }
+
+    [Fact]
     public void Load_StringBooleanDefaultsAreQuiet()
     {
         using var files = new ComposeFiles(
@@ -263,17 +272,17 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Fact]
-    public void Load_DependencyConditionsOnlyDiagnosesConditionsThatDifferFromReadiness()
+    public void Load_DependencyConditionsAccountForInheritedHealthchecks()
     {
         using var files = new ComposeFiles(
-            "services:\n  api:\n    image: app\n    depends_on:\n      healthy:\n        condition: service_healthy\n      started:\n        condition: service_started\n      completed:\n        condition: service_completed_successfully\n  healthy:\n    image: db\n    healthcheck:\n      test: [CMD, true]\n  started:\n    image: cache\n");
+            "services:\n  api:\n    image: app\n    depends_on:\n      healthy:\n        condition: service_healthy\n      started:\n        condition: service_started\n      disabled:\n        condition: service_started\n      completed:\n        condition: service_completed_successfully\n  healthy:\n    image: db\n    healthcheck:\n      test: [CMD, true]\n  started:\n    image: cache\n  disabled:\n    image: cache\n    healthcheck:\n      disable: true\n");
 
         var diagnostics = ((ComposeProject)files.Load()).Diagnostics;
 
-        var diagnostic = Assert.Single(diagnostics);
-
-        Assert.Equal("services.api.depends_on.completed", diagnostic.PropertyPath);
-        Assert.Equal("partially-supported-field", diagnostic.Code);
+        Assert.Equal(
+            ["services.api.depends_on.started", "services.api.depends_on.completed"],
+            diagnostics.Select(diagnostic => diagnostic.PropertyPath));
+        Assert.All(diagnostics, diagnostic => Assert.Equal("partially-supported-field", diagnostic.Code));
     }
 
     [Fact]
