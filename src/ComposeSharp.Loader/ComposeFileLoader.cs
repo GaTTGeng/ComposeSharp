@@ -435,6 +435,11 @@ public sealed class ComposeFileLoader
                 if (volumeList[i] is Dictionary<object, object?>)
                     AddDiagnostic(diagnostics, context, $"{servicePath}.volumes[{i}]", serviceName,
                         "partially-supported-field", "Long-form service volumes are not applied correctly; use short syntax.");
+                else if (volumeList[i] is string volume && volume.Length > 2 &&
+                         char.IsAsciiLetter(volume[0]) && volume[1] == ':' && volume[2] is '\\' or '/' &&
+                         volume.IndexOf(':', 2) >= 0)
+                    AddDiagnostic(diagnostics, context, $"{servicePath}.volumes[{i}]", serviceName,
+                        "partially-supported-field", "Windows drive-letter volume sources are not applied correctly.");
             }
         }
         if (networks is Dictionary<object, object?> networkMap)
@@ -588,7 +593,6 @@ public sealed class ComposeFileLoader
 
     private static bool IsDisabledHealthcheckTest(object? value) => value switch
     {
-        string test => string.Equals(test, "NONE", StringComparison.Ordinal),
         List<object?> tests => string.Equals(tests.FirstOrDefault()?.ToString(), "NONE", StringComparison.Ordinal),
         _ => false
     };

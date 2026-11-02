@@ -23,6 +23,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Validation diagnoses Windows drive-letter volume sources and treats scalar `healthcheck.test: NONE` as an enabled shell check when evaluating dependency conditions.
 - Scalar health checks are normalized before Docker creation, diagnostics identify unapplied build options and network attachments, and strict validation covers direct Engine operations.
 - Validation diagnoses multiple build platforms and duplicate container-port mappings, preserves escaped resource-name provenance, and recognizes the service platform as a build fallback.
 - Validation diagnoses long-form service volumes and unretained build options, honors dependency conditions that match readiness behavior, ignores default zero resource values, and attributes merged-map diagnostics to overlay values.

@@ -251,12 +251,43 @@ public sealed class ComposeLoaderValidationTests
 
         var diagnostics = ((ComposeProject)files.Load()).Diagnostics;
 
-        Assert.Contains(diagnostics, diagnostic =>
-            diagnostic.PropertyPath == "services.api.volumes[0]" &&
-            diagnostic.Code == "partially-supported-field");
-        Assert.Contains(diagnostics, diagnostic =>
-            diagnostic.PropertyPath == "services.api.networks" &&
-            diagnostic.Code == "partially-supported-field");
+        Assert.Contains(diagnostics, diagnostic => diagnostic is
+            { PropertyPath: "services.api.volumes[0]", Code: "partially-supported-field" });
+        Assert.Contains(diagnostics, diagnostic => diagnostic is
+            { PropertyPath: "services.api.networks", Code: "partially-supported-field" });
+    }
+
+    [Theory]
+    [InlineData(@"C:\data:/data")]
+    [InlineData(@"d:\data:/data:ro")]
+    [InlineData("C:/data:/data")]
+    [InlineData("d:/data:/data:rw")]
+    public void Load_WindowsDriveVolumeSourcesAreDiagnosed(string volume)
+    {
+        using var files = new ComposeFiles(
+            $"services:\n  api:\n    image: app\n    volumes:\n      - '{volume}'\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+
+        Assert.Equal(files.PrimaryPath, diagnostic.SourceFile);
+        Assert.Equal("services.api.volumes[0]", diagnostic.PropertyPath);
+        Assert.Equal("api", diagnostic.ServiceName);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+        Assert.DoesNotContain(volume, diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("/host/data:/data:ro")]
+    [InlineData("./data:/data")]
+    [InlineData("data:/data")]
+    [InlineData("c:/data")]
+    [InlineData("/data")]
+    public void Load_PosixAndNamedVolumeSourcesRemainQuiet(string volume)
+    {
+        using var files = new ComposeFiles(
+            $"services:\n  api:\n    image: app\n    volumes:\n      - '{volume}'\n");
+
+        Assert.Empty(((ComposeProject)files.Load()).Diagnostics);
     }
 
     [Fact]
@@ -283,6 +314,39 @@ public sealed class ComposeLoaderValidationTests
             ["services.api.depends_on.started", "services.api.depends_on.completed"],
             diagnostics.Select(diagnostic => diagnostic.PropertyPath));
         Assert.All(diagnostics, diagnostic => Assert.Equal("partially-supported-field", diagnostic.Code));
+    }
+
+    [Theory]
+    [InlineData("test: NONE", "service_started", true)]
+    [InlineData("test: NONE", "service_healthy", false)]
+    [InlineData("test: [NONE]", "service_started", false)]
+    [InlineData("test: [NONE]", "service_healthy", true)]
+    [InlineData("disable: true\n      test: NONE", "service_started", false)]
+    [InlineData("disable: true\n      test: NONE", "service_healthy", true)]
+    public void Load_DependencyConditionsDistinguishScalarNoneFromDisabledHealthchecks(
+        string healthcheck, string condition, bool expectDiagnostic)
+    {
+        using var files = new ComposeFiles(
+            $"services:\n  api:\n    image: app\n    depends_on:\n      db:\n        condition: {condition}\n  db:\n    image: database\n    healthcheck:\n      {healthcheck}\n");
+
+        var project = (ComposeProject)files.Load();
+        var dependency = Assert.Single(project.Services, service => service.Name == "db");
+        string[] expectedTest = healthcheck.Contains("[NONE]", StringComparison.Ordinal)
+            ? ["NONE"]
+            : ["CMD-SHELL", "NONE"];
+        Assert.Equal(expectedTest, dependency.Healthcheck!.Test);
+        if (expectDiagnostic)
+        {
+            var diagnostic = Assert.Single(project.Diagnostics);
+            Assert.Equal(files.PrimaryPath, diagnostic.SourceFile);
+            Assert.Equal("services.api.depends_on.db", diagnostic.PropertyPath);
+            Assert.Equal("api", diagnostic.ServiceName);
+            Assert.Equal("partially-supported-field", diagnostic.Code);
+        }
+        else
+        {
+            Assert.Empty(project.Diagnostics);
+        }
     }
 
     [Fact]
@@ -428,11 +492,15 @@ public sealed class ComposeLoaderValidationTests
         Assert.Equal("unsupported-field", diagnostic.Code);
     }
 
-    [Fact]
-    public async Task Up_StrictModeRejectsUnsupportedFieldsBeforeDockerAccess()
+    [Theory]
+    [InlineData("access_token: hidden-service-value", "services.api.access_token")]
+    [InlineData(@"volumes: ['C:\data:/data']", "services.api.volumes[0]")]
+    [InlineData("volumes: ['d:/data:/data:ro']", "services.api.volumes[0]")]
+    [InlineData("depends_on:\n      db:\n        condition: service_started\n  db:\n    image: database\n    healthcheck:\n      test: NONE", "services.api.depends_on.db")]
+    public async Task Up_StrictModeRejectsUnsupportedFieldsBeforeDockerAccess(string properties, string expectedPath)
     {
         using var files = new ComposeFiles(
-            "services:\n  api:\n    image: app\n    access_token: hidden-service-value\n");
+            $"services:\n  api:\n    image: app\n    {properties}\n");
         var service = new ComposeService();
         var context = new ComposeProjectContext
         {
@@ -445,7 +513,7 @@ public sealed class ComposeLoaderValidationTests
 
         var exception = await Assert.ThrowsAsync<ComposeValidationException>(() => service.UpAsync(context));
 
-        Assert.Equal("services.api.access_token", exception.PropertyPath);
+        Assert.Equal(expectedPath, exception.PropertyPath);
         Assert.DoesNotContain("hidden-service-value", exception.Message, StringComparison.Ordinal);
     }
 
