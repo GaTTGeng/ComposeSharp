@@ -156,6 +156,56 @@ public sealed class ComposeLoaderValidationTests
             project.Diagnostics.Select(diagnostic => diagnostic.PropertyPath));
     }
 
+    [Theory]
+    [InlineData("networks:\n  front: {}\n", "", true)]
+    [InlineData("networks:\n  front: {}\n", "networks: []", true)]
+    [InlineData("networks:\n  front: {}\n", "networks: {}", true)]
+    [InlineData("networks:\n  front: {}\n", "networks: null", true)]
+    [InlineData("networks:\n  front: {}\n", "network_mode: null", true)]
+    [InlineData("networks:\n  front: {}\n  default: {}\n", "", true)]
+    [InlineData("", "", false)]
+    [InlineData("networks: {}\n", "", false)]
+    [InlineData("networks:\n  default: {}\n  front: {}\n", "", false)]
+    [InlineData("networks:\n  Default: {}\n", "", false)]
+    [InlineData("networks:\n  front: {}\n", "networks: [front]", false)]
+    [InlineData("networks:\n  front: {}\n", "networks: {front: null}", false)]
+    [InlineData("networks:\n  front: {}\n", "network_mode: host", false)]
+    [InlineData("networks:\n  front: {}\n", "network_mode: none", false)]
+    [InlineData("networks:\n  front: {}\n", "network_mode: ''", false)]
+    public async Task Load_ImplicitNetworkFallbackMatchesEngineSelection(
+        string projectNetworks, string serviceNetwork, bool expectDiagnostic)
+    {
+        using var files = new ComposeFiles(
+            $"{projectNetworks}services:\n  api:\n    image: app\n    {serviceNetwork}\n");
+        var service = new ComposeService();
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "implicit-network-validation",
+            WorkingDirectory = files.DirectoryPath,
+            ComposeFileName = Path.GetFileName(files.PrimaryPath),
+            SocketPath = "npipe://./pipe/compose-sharp-validation-test-missing",
+            ValidationMode = ComposeValidationMode.Strict
+        };
+        var diagnostics = ((ComposeProject)files.Load()).Diagnostics;
+
+        if (expectDiagnostic)
+        {
+            var diagnostic = Assert.Single(diagnostics);
+            Assert.Equal(files.PrimaryPath, diagnostic.SourceFile);
+            Assert.Equal("services.api.networks", diagnostic.PropertyPath);
+            Assert.Equal("api", diagnostic.ServiceName);
+            Assert.Equal("partially-supported-field", diagnostic.Code);
+            Assert.DoesNotContain("front", diagnostic.Message, StringComparison.Ordinal);
+            var exception = await Assert.ThrowsAsync<ComposeValidationException>(() => service.UpAsync(context));
+            Assert.Equal(diagnostic.PropertyPath, exception.PropertyPath);
+        }
+        else
+        {
+            Assert.Empty(diagnostics);
+            Assert.Empty(service.LoadProject(context).Diagnostics);
+        }
+    }
+
     [Fact]
     public void Load_BuildPrivilegedIsDiagnosedAsNotApplied()
     {
@@ -402,7 +452,7 @@ public sealed class ComposeLoaderValidationTests
     public void Load_ResourceDefinitionsWithOnlyDefaultValuesAreQuiet()
     {
         using var files = new ComposeFiles(
-            "volumes:\n  data:\n    external: false\nnetworks:\n  back:\n    external: false\nservices:\n  api:\n    image: app\n");
+            "volumes:\n  data:\n    external: false\nnetworks:\n  back:\n    external: false\nservices:\n  api:\n    image: app\n    networks: [back]\n");
 
         var project = (ComposeProject)files.Load();
 
@@ -422,8 +472,9 @@ public sealed class ComposeLoaderValidationTests
     public void Load_ResourceDriverDefaultsAreScopedToNetworks(
         string section, string definition, string? expectedCode)
     {
+        var networkAttachment = section == "networks" ? "    networks: [front]\n" : string.Empty;
         using var files = new ComposeFiles(
-            $"{section}:\n  front:\n    {definition}\nservices:\n  api:\n    image: app\n");
+            $"{section}:\n  front:\n    {definition}\nservices:\n  api:\n    image: app\n{networkAttachment}");
         var service = new ComposeService();
         var context = new ComposeProjectContext
         {
@@ -455,7 +506,7 @@ public sealed class ComposeLoaderValidationTests
     public void LoadMerged_ResourceDiagnosticEscapesNameAndUsesOverlayProvenance()
     {
         using var files = new ComposeFiles(
-            "networks:\n  front: {}\nservices:\n  api:\n    image: app\n",
+            "networks:\n  front: {}\nservices:\n  api:\n    image: app\n    networks: [front]\n",
             "networks:\n  front.prod:\n    driver: overlay\n");
 
         var diagnostic = Assert.Single(((ComposeProject)files.LoadMerged()).Diagnostics);

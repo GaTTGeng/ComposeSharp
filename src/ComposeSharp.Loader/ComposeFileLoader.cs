@@ -252,6 +252,7 @@ public sealed class ComposeFileLoader
         }
 
         var services = (Dictionary<object, object?>)root["services"]!;
+        var projectNetworks = ParseNameList(root, "networks");
         foreach (var (nameNode, value) in services)
         {
             var serviceName = nameNode.ToString() ?? string.Empty;
@@ -288,7 +289,7 @@ public sealed class ComposeFileLoader
                 }
             }
 
-            AddPartialDiagnostics(service, services, serviceName, displayPath, serviceContext, diagnostics);
+            AddPartialDiagnostics(service, services, projectNetworks, serviceName, displayPath, serviceContext, diagnostics);
         }
 
         AddProjectResourceDiagnostics(root, "volumes", context, diagnostics);
@@ -302,6 +303,7 @@ public sealed class ComposeFileLoader
     private static void AddPartialDiagnostics(
         Dictionary<object, object?> service,
         Dictionary<object, object?> services,
+        IReadOnlyList<string> projectNetworks,
         string serviceName,
         string servicePath,
         ValidationContext context,
@@ -421,6 +423,14 @@ public sealed class ComposeFileLoader
         if (TryGetValue(service, "extra_hosts", out var extraHosts) && extraHosts is Dictionary<object, object?> hostMap && hostMap.Count > 0)
             AddDiagnostic(diagnostics, context, $"{servicePath}.extra_hosts", serviceName,
                 "partially-supported-field", "Mapping syntax loses host addresses and is not supported.");
+
+        if (projectNetworks.Count > 0 &&
+            !string.Equals(projectNetworks[0], "default", StringComparison.OrdinalIgnoreCase) &&
+            GetStringList(service, "networks").Count == 0 && GetString(service, "network_mode") is null)
+        {
+            AddDiagnostic(diagnostics, context, $"{servicePath}.networks", serviceName,
+                "partially-supported-field", "Services without an explicit network attach to the first project network instead of the implicit default network.");
+        }
 
         if (TryGetValue(service, "networks", out var networks) && networks is List<object?> networkList && networkList.Count > 1)
         {
