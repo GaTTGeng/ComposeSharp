@@ -604,6 +604,58 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Theory]
+    [InlineData("networks", "{}", "{internal: true}", ".internal", "partially-supported-field")]
+    [InlineData("networks", "{driver: bridge}", "{internal: true}", ".internal", "partially-supported-field")]
+    [InlineData("networks", "{driver_opts: {}}", "{driver_opts: {'access.token': private-option-value}}", ".driver_opts[\"access.token\"]", "partially-supported-field")]
+    [InlineData("volumes", "{driver_opts: {}}", "{driver_opts: {'access.token': private-option-value}}", ".driver_opts[\"access.token\"]", "partially-supported-field")]
+    [InlineData("secrets", "{}", "{file: private-option-value}", ".file", "unsupported-field")]
+    [InlineData("configs", "{}", "{content: private-option-value}", ".content", "unsupported-field")]
+    public void LoadMerged_ResourceOptionDiagnosticUsesMeaningfulOverlayProvenance(
+        string section, string baseDefinition, string overlayDefinition, string expectedSuffix, string expectedCode)
+    {
+        var networkAttachment = section == "networks" ? "    networks: ['front.prod']\n" : string.Empty;
+        using var files = new ComposeFiles(
+            $"{section}:\n  'front.prod': {baseDefinition}\nservices:\n  api:\n    image: app\n{networkAttachment}",
+            $"{section}:\n  'front.prod': {overlayDefinition}\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.LoadMerged()).Diagnostics);
+
+        Assert.Equal($"{section}[\"front.prod\"]{expectedSuffix}", diagnostic.PropertyPath);
+        Assert.Equal(Path.GetFullPath(files.OverlayPath!), diagnostic.SourceFile);
+        Assert.Null(diagnostic.ServiceName);
+        Assert.Equal(expectedCode, diagnostic.Code);
+        Assert.DoesNotContain("private-option-value", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("networks", "{internal: true}", "{driver: bridge, external: false, x-note: private-option-value}")]
+    [InlineData("volumes", "{driver_opts: {type: local}}", "{external: false, x-note: private-option-value}")]
+    public void LoadMerged_DefaultOverlayOptionsDoNotChangeResourceDiagnosticSource(
+        string section, string baseDefinition, string overlayDefinition)
+    {
+        var networkAttachment = section == "networks" ? "    networks: [front]\n" : string.Empty;
+        using var files = new ComposeFiles(
+            $"{section}:\n  front: {baseDefinition}\nservices:\n  api:\n    image: app\n{networkAttachment}",
+            $"{section}:\n  front: {overlayDefinition}\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.LoadMerged()).Diagnostics);
+
+        Assert.Equal($"{section}.front", diagnostic.PropertyPath);
+        Assert.Equal(files.PrimaryPath, diagnostic.SourceFile);
+        Assert.DoesNotContain("private-option-value", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoadMerged_DefaultOnlyResourceOptionsRemainQuiet()
+    {
+        using var files = new ComposeFiles(
+            "networks:\n  front: {driver: bridge}\nservices:\n  api:\n    image: app\n    networks: [front]\n",
+            "networks:\n  front: {external: false, x-note: private-option-value}\n");
+
+        Assert.Empty(((ComposeProject)files.LoadMerged()).Diagnostics);
+    }
+
+    [Theory]
     [InlineData("front.prod", "services.api.networks[\"front.prod\"]")]
     [InlineData("front[prod]", "services.api.networks[\"front[prod]\"]")]
     [InlineData("back", "services.api.networks.back")]

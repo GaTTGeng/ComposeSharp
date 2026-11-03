@@ -510,8 +510,9 @@ public sealed class ComposeFileLoader
 
         foreach (var (name, definition) in resources)
         {
-            if (IsMeaningfulResourceDefinition(section, definition))
-                AddDiagnostic(diagnostics, context, AppendPathSegment(section, name.ToString()!), null,
+            var path = GetResourceDiagnosticPath(section, AppendPathSegment(section, name.ToString()!), definition, context);
+            if (path is not null)
+                AddDiagnostic(diagnostics, context, path, null,
                     "partially-supported-field", "Only the resource name is retained; resource options are not applied.");
         }
     }
@@ -629,16 +630,33 @@ public sealed class ComposeFileLoader
         _ => false
     };
 
-    private static bool IsMeaningfulResourceDefinition(string section, object? definition)
+    /// <summary>
+    /// Selects a resource diagnostic path from unapplied options, retaining the resource path
+    /// when those options share its source. Default values and extensions cannot change attribution.
+    /// </summary>
+    private static string? GetResourceDiagnosticPath(
+        string section, string path, object? definition, ValidationContext context)
     {
         if (definition is not Dictionary<object, object?> options)
-            return IsMeaningful(definition);
+            return IsMeaningful(definition) ? path : null;
 
-        return options.Any(option =>
-            !IsExtensionField(option.Key) &&
-            !(Equals(option.Key.ToString(), "external") && IsFalse(option.Value)) &&
-            !(section == "networks" && Equals(option.Key.ToString(), "driver") && Equals(option.Value, "bridge")) &&
-            IsMeaningful(option.Value));
+        var source = context.SourceFor(path);
+        var hasUnappliedOption = false;
+        foreach (var (key, value) in options)
+        {
+            if (IsExtensionField(key) ||
+                (Equals(key.ToString(), "external") && IsFalse(value)) ||
+                (section == "networks" && Equals(key.ToString(), "driver") && Equals(value, "bridge")) ||
+                !IsMeaningful(value))
+                continue;
+
+            hasUnappliedOption = true;
+            var optionPath = GetUnsupportedFieldDiagnosticPath(context, AppendPathSegment(path, key.ToString()!), value);
+            if (context.SourceFor(optionPath) != source)
+                return optionPath;
+        }
+
+        return hasUnappliedOption ? path : null;
     }
 
     private static bool IsMeaningfulWithoutExtensions(object? value) => value switch
@@ -669,8 +687,9 @@ public sealed class ComposeFileLoader
 
         foreach (var (name, definition) in resources)
         {
-            if (IsMeaningfulResourceDefinition(section, definition))
-                AddDiagnostic(diagnostics, context, AppendPathSegment(section, name.ToString()!), null,
+            var path = GetResourceDiagnosticPath(section, AppendPathSegment(section, name.ToString()!), definition, context);
+            if (path is not null)
+                AddDiagnostic(diagnostics, context, path, null,
                     "unsupported-field", "Project resources are named in the loaded model but are not provisioned or mounted.");
         }
     }
