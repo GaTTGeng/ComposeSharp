@@ -23,6 +23,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Validation diagnoses unresolved environment passthrough entries in list and mapping syntax, and strict mode rejects them before Docker access.
 - Validation reports implicit service-network fallback to custom project networks and rejects it in strict mode before Docker access.
 - Service-network option diagnostics escape network names and identify the contributing overlay file correctly.
 - Explicit network `driver: bridge` declarations no longer produce false partial-support diagnostics or fail strict validation; unapplied resource options remain diagnosed.

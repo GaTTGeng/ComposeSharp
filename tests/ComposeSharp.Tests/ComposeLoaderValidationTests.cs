@@ -245,6 +245,94 @@ public sealed class ComposeLoaderValidationTests
         Assert.Empty(((ComposeProject)files.Load()).Diagnostics);
     }
 
+    [Theory]
+    [InlineData(false, "private-process-value")]
+    [InlineData(true, "private-process-value")]
+    [InlineData(false, null)]
+    [InlineData(true, null)]
+    public async Task Load_EnvironmentPassthroughIsDiagnosedBeforeDockerAccess(bool mapping, string? processValue)
+    {
+        var name = $"PASSTHROUGH_{Guid.NewGuid():N}";
+        Environment.SetEnvironmentVariable(name, processValue);
+        try
+        {
+            var environment = mapping ? $"{{{name}: null}}" : $"[{name}]";
+            using var files = new ComposeFiles(
+                $"services:\n  api:\n    image: app\n    environment: {environment}\n");
+            var project = (ComposeProject)files.Load();
+            var diagnostic = Assert.Single(project.Diagnostics);
+            Assert.Equal(files.PrimaryPath, diagnostic.SourceFile);
+            Assert.Equal(mapping ? $"services.api.environment.{name}" : "services.api.environment[0]", diagnostic.PropertyPath);
+            Assert.Equal("api", diagnostic.ServiceName);
+            Assert.Equal("partially-supported-field", diagnostic.Code);
+            Assert.DoesNotContain("private-process-value", diagnostic.Message, StringComparison.Ordinal);
+            Assert.Equal([mapping ? $"{name}=" : name], Assert.Single(project.Services).Environment);
+            Assert.Equal(processValue, Environment.GetEnvironmentVariable(name));
+
+            var service = new ComposeService();
+            var context = new ComposeProjectContext
+            {
+                ProjectName = "environment-passthrough-validation",
+                WorkingDirectory = files.DirectoryPath,
+                ComposeFileName = Path.GetFileName(files.PrimaryPath),
+                SocketPath = "npipe://./pipe/compose-sharp-validation-test-missing",
+                ValidationMode = ComposeValidationMode.Strict
+            };
+            var exception = await Assert.ThrowsAsync<ComposeValidationException>(() => service.UpAsync(context));
+            Assert.Equal(diagnostic.PropertyPath, exception.PropertyPath);
+            Assert.DoesNotContain("private-process-value", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(name, null);
+        }
+    }
+
+    [Theory]
+    [InlineData("[API_TOKEN=]")]
+    [InlineData("[API_TOKEN=private=explicit]")]
+    [InlineData("{API_TOKEN: ''}")]
+    [InlineData("{API_TOKEN: explicit}")]
+    [InlineData("{ENABLED: false}")]
+    [InlineData("{COUNT: 0}")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("null")]
+    public void Load_ExplicitEnvironmentAssignmentsRemainQuiet(string environment)
+    {
+        using var files = new ComposeFiles(
+            $"services:\n  api:\n    image: app\n    environment: {environment}\n");
+        var service = new ComposeService();
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "explicit-environment-validation",
+            WorkingDirectory = files.DirectoryPath,
+            ComposeFileName = Path.GetFileName(files.PrimaryPath),
+            ValidationMode = ComposeValidationMode.Strict
+        };
+
+        Assert.Empty(((ComposeProject)files.Load()).Diagnostics);
+        Assert.Empty(service.LoadProject(context).Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("[EXPLICIT=value]", "[API_TOKEN]", "services.api.environment[1]")]
+    [InlineData("{EXPLICIT: value}", "{'access.token': null}", "services.api.environment[\"access.token\"]")]
+    public void LoadMerged_EnvironmentPassthroughDiagnosticUsesOverlayProvenance(
+        string baseEnvironment, string overlayEnvironment, string expectedPath)
+    {
+        using var files = new ComposeFiles(
+            $"services:\n  api:\n    image: app\n    environment: {baseEnvironment}\n",
+            $"services:\n  api:\n    environment: {overlayEnvironment}\n");
+
+        var diagnostic = Assert.Single(((ComposeProject)files.LoadMerged()).Diagnostics);
+
+        Assert.Equal(expectedPath, diagnostic.PropertyPath);
+        Assert.Equal(Path.GetFullPath(files.OverlayPath!), diagnostic.SourceFile);
+        Assert.Equal("api", diagnostic.ServiceName);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+    }
+
     [Fact]
     public void Load_LongFormEnvironmentFileIsDiagnosed()
     {

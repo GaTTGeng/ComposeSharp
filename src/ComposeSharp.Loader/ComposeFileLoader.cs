@@ -347,6 +347,28 @@ public sealed class ComposeFileLoader
             }
         }
 
+        if (TryGetValue(service, "environment", out var environment))
+        {
+            if (environment is List<object?> environmentList)
+            {
+                for (var i = 0; i < environmentList.Count; i++)
+                {
+                    if (environmentList[i] is string entry && !string.IsNullOrWhiteSpace(entry) && !entry.Contains('='))
+                        AddDiagnostic(diagnostics, context, $"{servicePath}.environment[{i}]", serviceName,
+                            "partially-supported-field", "Environment passthrough is not resolved from the calling process; use an explicit value.");
+                }
+            }
+            else if (environment is Dictionary<object, object?> environmentMap)
+            {
+                foreach (var (name, value) in environmentMap)
+                {
+                    if (value is null)
+                        AddDiagnostic(diagnostics, context, AppendPathSegment($"{servicePath}.environment", name.ToString()!), serviceName,
+                            "partially-supported-field", "Environment passthrough is not resolved from the calling process; use an explicit value.");
+                }
+            }
+        }
+
         if (TryGetValue(service, "env_file", out var envFiles) && envFiles is List<object?> envFileList)
         {
             for (var i = 0; i < envFileList.Count; i++)
@@ -1858,8 +1880,12 @@ public sealed class ComposeFileLoader
     }
 
     /// <summary>
-    /// Flattens the inline <c>environment</c> block (list or mapping form) to <c>KEY=VALUE</c> strings.
+    /// Flattens the inline <c>environment</c> block, preserving list entries and converting mapping entries to <c>KEY=VALUE</c> strings.
     /// </summary>
+    /// <remarks>
+    /// Bare list names remain unresolved and null mapping values become empty assignments.
+    /// These passthrough forms produce partial-support diagnostics rather than inheriting process values.
+    /// </remarks>
     private static List<string> ReadEnvironment(Dictionary<object, object?> map)
     {
         if (!map.TryGetValue("environment", out var value) || value is null) return [];
