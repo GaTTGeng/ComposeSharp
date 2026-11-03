@@ -69,7 +69,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | Compose file directory | `WorkingDirectory` | Applied | Resolves Compose-relative paths and bind mounts. |
 | `services` | `Services` | Applied | Provides service definitions used by project operations. |
 | `volumes` | `Volumes` | Partial | Project-scoped volumes are created with a generated name and project label. Driver, labels, options, and external volumes are not represented; external volume names are rewritten to project-scoped names. |
-| `networks` | `Networks` | Partial | Project-scoped bridge networks are created with generated names and project labels. Driver, IPAM, labels, external networks, and options are not represented. |
+| `networks` | `Networks` | Partial | Project-scoped bridge networks are created with generated names and project labels. An explicit `driver: bridge` matches this behavior and produces no diagnostic. Other drivers, IPAM, labels, external networks, and options are not represented and produce diagnostics when non-default. |
 | `secrets`, `configs` | `Secrets`, `Configs` | Unsupported | Names are loaded and reported by `LoadProject`, but are not provisioned or mounted. |
 | `x-*` extensions | `Extensions` | Parsed only | String-valued extensions are retained for inspection and have no engine behavior. |
 

@@ -409,12 +409,54 @@ public sealed class ComposeLoaderValidationTests
         Assert.Empty(project.Diagnostics);
     }
 
+    [Theory]
+    [InlineData("networks", "driver: bridge", null)]
+    [InlineData("networks", "driver: bridge\n    external: false\n    x-note: local", null)]
+    [InlineData("networks", "driver: overlay", "partially-supported-field")]
+    [InlineData("networks", "driver: bridge\n    external: true", "partially-supported-field")]
+    [InlineData("networks", "driver: bridge\n    driver_opts:\n      custom: value", "partially-supported-field")]
+    [InlineData("networks", "driver: bridge\n    internal: true", "partially-supported-field")]
+    [InlineData("volumes", "driver: bridge", "partially-supported-field")]
+    [InlineData("secrets", "driver: bridge", "unsupported-field")]
+    [InlineData("configs", "driver: bridge", "unsupported-field")]
+    public void Load_ResourceDriverDefaultsAreScopedToNetworks(
+        string section, string definition, string? expectedCode)
+    {
+        using var files = new ComposeFiles(
+            $"{section}:\n  front:\n    {definition}\nservices:\n  api:\n    image: app\n");
+        var service = new ComposeService();
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "resource-default-validation",
+            WorkingDirectory = files.DirectoryPath,
+            ComposeFileName = Path.GetFileName(files.PrimaryPath),
+            ValidationMode = ComposeValidationMode.Strict
+        };
+        var diagnostics = ((ComposeProject)files.Load()).Diagnostics;
+
+        if (expectedCode is null)
+        {
+            Assert.Empty(diagnostics);
+            Assert.Empty(service.LoadProject(context).Diagnostics);
+        }
+        else
+        {
+            var diagnostic = Assert.Single(diagnostics);
+            Assert.Equal(files.PrimaryPath, diagnostic.SourceFile);
+            Assert.Equal($"{section}.front", diagnostic.PropertyPath);
+            Assert.Null(diagnostic.ServiceName);
+            Assert.Equal(expectedCode, diagnostic.Code);
+            var exception = Assert.Throws<ComposeValidationException>(() => service.LoadProject(context));
+            Assert.Equal(diagnostic.PropertyPath, exception.PropertyPath);
+        }
+    }
+
     [Fact]
     public void LoadMerged_ResourceDiagnosticEscapesNameAndUsesOverlayProvenance()
     {
         using var files = new ComposeFiles(
             "networks:\n  front: {}\nservices:\n  api:\n    image: app\n",
-            "networks:\n  front.prod:\n    driver: bridge\n");
+            "networks:\n  front.prod:\n    driver: overlay\n");
 
         var diagnostic = Assert.Single(((ComposeProject)files.LoadMerged()).Diagnostics);
 

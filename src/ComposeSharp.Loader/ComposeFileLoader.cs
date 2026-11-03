@@ -478,7 +478,7 @@ public sealed class ComposeFileLoader
 
         foreach (var (name, definition) in resources)
         {
-            if (IsMeaningfulResourceDefinition(definition))
+            if (IsMeaningfulResourceDefinition(section, definition))
                 AddDiagnostic(diagnostics, context, AppendPathSegment(section, name.ToString()!), null,
                     "partially-supported-field", "Only the resource name is retained; resource options are not applied.");
         }
@@ -597,14 +597,16 @@ public sealed class ComposeFileLoader
         _ => false
     };
 
-    private static bool IsMeaningfulResourceDefinition(object? definition)
+    private static bool IsMeaningfulResourceDefinition(string section, object? definition)
     {
         if (definition is not Dictionary<object, object?> options)
             return IsMeaningful(definition);
 
         return options.Any(option =>
             !IsExtensionField(option.Key) &&
-            !(Equals(option.Key.ToString(), "external") && IsFalse(option.Value)) && IsMeaningful(option.Value));
+            !(Equals(option.Key.ToString(), "external") && IsFalse(option.Value)) &&
+            !(section == "networks" && Equals(option.Key.ToString(), "driver") && Equals(option.Value, "bridge")) &&
+            IsMeaningful(option.Value));
     }
 
     private static bool IsMeaningfulWithoutExtensions(object? value) => value switch
@@ -635,7 +637,7 @@ public sealed class ComposeFileLoader
 
         foreach (var (name, definition) in resources)
         {
-            if (IsMeaningfulResourceDefinition(definition))
+            if (IsMeaningfulResourceDefinition(section, definition))
                 AddDiagnostic(diagnostics, context, AppendPathSegment(section, name.ToString()!), null,
                     "unsupported-field", "Project resources are named in the loaded model but are not provisioned or mounted.");
         }
