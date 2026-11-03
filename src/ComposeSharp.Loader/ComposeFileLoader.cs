@@ -451,7 +451,7 @@ public sealed class ComposeFileLoader
             foreach (var (networkName, options) in networkMap)
             {
                 if (IsMeaningfulWithoutExtensions(options))
-                    AddDiagnostic(diagnostics, context, $"{servicePath}.networks.{networkName}", serviceName,
+                    AddDiagnostic(diagnostics, context, AppendPathSegment($"{servicePath}.networks", networkName.ToString()!), serviceName,
                         "partially-supported-field", "Per-network options and multiple network attachments are not applied.");
             }
         }

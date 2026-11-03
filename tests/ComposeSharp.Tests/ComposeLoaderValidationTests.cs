@@ -464,6 +464,29 @@ public sealed class ComposeLoaderValidationTests
         Assert.Equal("networks[\"front.prod\"]", diagnostic.PropertyPath);
     }
 
+    [Theory]
+    [InlineData("front.prod", "services.api.networks[\"front.prod\"]")]
+    [InlineData("front[prod]", "services.api.networks[\"front[prod]\"]")]
+    [InlineData("back", "services.api.networks.back")]
+    public void LoadMerged_ServiceNetworkDiagnosticEscapesNameAndUsesOverlayProvenance(
+        string networkName, string expectedPath)
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    networks:\n      front: {}\n",
+            $"services:\n  api:\n    networks:\n      '{networkName}':\n        aliases: [private-alias]\n");
+
+        var diagnostics = ((ComposeProject)files.LoadMerged()).Diagnostics;
+
+        Assert.Equal(
+            ["services.api.networks", expectedPath],
+            diagnostics.Select(diagnostic => diagnostic.PropertyPath));
+        var diagnostic = diagnostics[1];
+        Assert.Equal(Path.GetFullPath(files.OverlayPath!), diagnostic.SourceFile);
+        Assert.Equal("api", diagnostic.ServiceName);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+        Assert.DoesNotContain("private-alias", diagnostic.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task DirectDockerOperations_StrictModeRejectsDiagnosticsBeforeDockerAccess()
     {
