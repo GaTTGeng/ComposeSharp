@@ -171,7 +171,7 @@ public interface IComposeService
     Task<IReadOnlyList<VolumesSummary>> VolumesAsync(ComposeProjectContext context, ComposeVolumesOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Loads and returns the project's configuration without touching Docker resources.</summary>
-    /// <remarks>Multi-file loading currently replaces same-named services instead of applying the full Compose merge rules.</remarks>
+    /// <remarks>The result includes value-free diagnostics for unknown, unsupported, or partially applied non-default fields. Strict validation rejects them before any Docker operation. Multi-file loading currently replaces same-named services instead of applying the full Compose merge rules.</remarks>
     ComposeProjectConfig LoadProject(ComposeProjectContext context);
 
     /// <summary>

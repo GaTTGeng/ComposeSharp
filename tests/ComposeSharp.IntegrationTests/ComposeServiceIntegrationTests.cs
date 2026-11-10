@@ -68,7 +68,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -172,7 +172,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -220,7 +220,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -288,10 +288,10 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally
             {
-                try { await service.DownAsync(blockerContext); }
+                try { await DownAndAssertNoProjectNetworksAsync(service, blockerContext); }
                 finally
                 {
                     Directory.Delete(directory, recursive: true);
@@ -347,7 +347,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -409,7 +409,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -466,7 +466,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -529,7 +529,7 @@ public class ComposeServiceIntegrationTests
                 }
                 catch (DockerApiException) { }
             }
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -636,7 +636,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -754,7 +754,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally
             {
                 using var client = new DockerClientFactory().CreateClient();
@@ -877,7 +877,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(profileContext); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, profileContext); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -983,7 +983,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -1073,7 +1073,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(profileContext); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, profileContext); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -1129,7 +1129,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally
             {
                 using var client = new DockerClientFactory().CreateClient();
@@ -1199,7 +1199,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally
             {
                 using var client = new DockerClientFactory().CreateClient();
@@ -1273,7 +1273,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally
             {
                 using var client = new DockerClientFactory().CreateClient();
@@ -1327,7 +1327,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -1373,7 +1373,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -1440,7 +1440,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -1496,7 +1496,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -1566,7 +1566,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -1637,7 +1637,7 @@ public class ComposeServiceIntegrationTests
         }
         finally
         {
-            try { await service.DownAsync(context); }
+            try { await DownAndAssertNoProjectNetworksAsync(service, context with { Profiles = ["debug"] }); }
             finally { Directory.Delete(directory, recursive: true); }
         }
     }
@@ -1649,6 +1649,24 @@ public class ComposeServiceIntegrationTests
         await Task.WhenAny(subscribed.Task, collector);
         if (collector.IsCompleted)
             await collector;
+    }
+
+    private static async Task DownAndAssertNoProjectNetworksAsync(ComposeService service, ComposeProjectContext context)
+    {
+        await service.DownAsync(context);
+        using var client = new DockerClientFactory().CreateClient(context.SocketPath);
+        var networks = await client.Networks.ListNetworksAsync(new NetworksListParameters
+        {
+            Filters = new Dictionary<string, IDictionary<string, bool>>
+            {
+                ["label"] = new Dictionary<string, bool>
+                {
+                    [$"com.docker.compose.project={context.ProjectName}"] = true
+                }
+            }
+        });
+
+        Assert.Empty(networks);
     }
 
     // Collects build statuses and container log lines for assertions.
