@@ -117,6 +117,42 @@ public class ComposeServiceIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task CreateAsync_PreservesPortBindingHostAddress()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+        var projectName = $"port-binding-{Guid.NewGuid():N}";
+        var directory = Path.Combine(Path.GetTempPath(), projectName);
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"),
+            "services:\n  app:\n    image: busybox:1.36\n    ports: ['127.0.0.1:18080:80']\n");
+        var context = new ComposeProjectContext { ProjectName = projectName, WorkingDirectory = directory, ComposeFileName = "compose.yaml" };
+        var service = new ComposeService();
+        try
+        {
+            await service.CreateAsync(context);
+            using var client = new DockerClientFactory().CreateClient();
+            var containers = await client.Containers.ListContainersAsync(new ContainersListParameters
+            {
+                All = true,
+                Filters = new Dictionary<string, IDictionary<string, bool>>
+                {
+                    ["label"] = new Dictionary<string, bool> { [$"com.docker.compose.project={projectName}"] = true }
+                }
+            });
+            var container = await client.Containers.InspectContainerAsync(Assert.Single(containers).ID);
+            var binding = Assert.Single(container.HostConfig.PortBindings["80/tcp"]);
+            Assert.Equal("127.0.0.1", binding.HostIP);
+            Assert.Equal("18080", binding.HostPort);
+        }
+        finally
+        {
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
+
     // Probes `docker info` once per test class; a missing CLI or unreachable daemon disables the Docker cases.
     private static bool CheckDockerAvailable()
     {

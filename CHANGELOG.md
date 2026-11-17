@@ -23,6 +23,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Short port mappings preserve explicit host IP addresses in Docker bindings and generated configuration.
 - `LogsAsync` callbacks preserve stdout and stderr identity and per-stream line ordering.
 
 - Resource diagnostics identify the overlay option that introduced unapplied behavior, without attributing errors to default values or extension metadata.

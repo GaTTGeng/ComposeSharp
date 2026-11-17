@@ -2,6 +2,7 @@
 // ReSharper disable UseCollectionExpression
 using ComposeSharp.Api;
 using ComposeSharp.Engine.Internal;
+using ComposeSharp.Loader.Models;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using System.Net;
@@ -10,6 +11,20 @@ namespace ComposeSharp.Tests;
 
 public class ContainerLifecycleTests
 {
+    [Theory]
+    [InlineData("127.0.0.1")]
+    [InlineData("192.0.2.1")]
+    [InlineData("0.0.0.0")]
+    [InlineData(null)]
+    [InlineData("::1")]
+    public void BuildPortBindings_PreservesHostAddress(string? hostIp)
+    {
+        var bindings = ContainerLifecycle.BuildPortBindings([new ComposePort("8080", "80/tcp") { HostIp = hostIp }]);
+        var binding = Assert.Single(bindings!["80/tcp"]);
+        Assert.Equal(hostIp, binding.HostIP);
+        Assert.Equal("8080", binding.HostPort);
+    }
+
     [Theory]
     [InlineData("on-failure", RestartPolicyKind.OnFailure, 0)]
     [InlineData("on-failure:5", RestartPolicyKind.OnFailure, 5)]

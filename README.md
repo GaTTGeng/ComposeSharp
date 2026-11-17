@@ -87,6 +87,8 @@ Resolve `IComposeService` from the container. `ComposeProjectContext` stays expl
 
 ## What the loader understands
 
+Short port mappings preserve explicit IPv4 and bracketed IPv6 host addresses in Docker bindings.
+
 The loader is intentionally useful even when you do not start containers. It reads `.env` and per-service `env_file` files, expands variables in YAML, and returns strongly typed services. It recognizes common service configuration including images, build definitions, commands, entrypoints, environment, ports, volumes, networks, health checks, restart policy, profiles, labels, logging, Linux capabilities, resource hints, secrets, configs, and selected `deploy` fields.
 
 ### Variable interpolation
