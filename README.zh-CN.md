@@ -31,6 +31,8 @@ compose.yml / .env / env_file
       Docker 容器、网络、卷与项目标签
 ```
 
+短格式端口映射会在 Docker 绑定中保留显式 IPv4 和方括号包围的 IPv6 主机地址。
+
 Loader 会寻找 `docker-compose.yml`、`compose.yml`、`compose.yaml` 或 `docker-compose.yaml`，读取 `.env` 和服务的 `env_file`，再展开 YAML 中的变量。解析结果包含镜像、build、命令、环境、端口、卷、网络、健康检查、重启策略、profiles、labels、logging、capabilities、资源限制以及部分 `deploy` 字段。
 
 ### 变量插值

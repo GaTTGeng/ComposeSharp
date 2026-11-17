@@ -6,9 +6,13 @@ namespace ComposeSharp.Loader.Models;
 /// A short-syntax port mapping. Long port syntax is rejected at load time.
 /// <see cref="ContainerPort"/> keeps the <c>/protocol</c> suffix as written;
 /// <see cref="HostPort"/> is null for container-only entries, which expose the port
-/// without creating a host binding. Port ranges and host IPs beyond the short forms are not modeled.
+/// without creating a host binding. Port ranges are not modeled.
 /// </summary>
-public sealed record ComposePort(string? HostPort, string ContainerPort, string Protocol = "tcp");
+public sealed record ComposePort(string? HostPort, string ContainerPort, string Protocol = "tcp")
+{
+    /// <summary>The explicit host IP address, without IPv6 brackets, or null when unspecified.</summary>
+    public string? HostIp { get; init; }
+}
 
 /// <summary>
 /// A service healthcheck. Durations use the loader's restricted syntax

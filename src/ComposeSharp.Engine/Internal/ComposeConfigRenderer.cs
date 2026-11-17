@@ -51,7 +51,8 @@ internal static class ComposeConfigRenderer
         // well would read local files again and could change the snapshot on a later load.
         AddList(result, "environment", service.Environment);
         AddList(result, "ports", service.Ports.Select(port =>
-            port.HostPort is null ? port.ContainerPort : $"{port.HostPort}:{port.ContainerPort}").ToList());
+            port.HostPort is null ? port.ContainerPort :
+                $"{(port.HostIp is null ? "" : port.HostIp.Contains(':') ? $"[{port.HostIp}]:" : $"{port.HostIp}:")}{port.HostPort}:{port.ContainerPort}").ToList());
         AddList(result, "volumes", service.Volumes);
         Add(result, "restart", service.Restart);
         if (service.Healthcheck is { } healthcheck)

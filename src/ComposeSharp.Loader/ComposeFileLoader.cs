@@ -324,10 +324,6 @@ public sealed class ComposeFileLoader
                 if (portList[i] is not string port)
                     continue;
 
-                if (port.Count(character => character == ':') >= 2)
-                    AddDiagnostic(diagnostics, context, $"{servicePath}.ports[{i}]", serviceName,
-                        "partially-supported-field", "Host IP port bindings are not preserved by the current port model.");
-
                 var containerPort = ParsePort(port).ContainerPort;
                 if (!containerPorts.Add(containerPort))
                     AddDiagnostic(diagnostics, context, $"{servicePath}.ports[{i}]", serviceName,
@@ -1939,13 +1935,25 @@ public sealed class ComposeFileLoader
             text = text[..slash];
         }
 
-        // Three or more segments: an IP prefix is dropped and the last two are host:container.
-        var parts = text.Split(':', StringSplitOptions.RemoveEmptyEntries);
+        string? hostIp = null;
+        if (text.StartsWith("[", StringComparison.Ordinal))
+        {
+            var closingBracket = text.IndexOf(']');
+            hostIp = text[1..closingBracket];
+            text = text[(closingBracket + 2)..];
+        }
+        else if (text.Count(character => character == ':') == 2)
+        {
+            var separator = text.IndexOf(':');
+            hostIp = text[..separator];
+            text = text[(separator + 1)..];
+        }
+
+        var parts = text.Split(':');
         return parts.Length switch
         {
             1 => new ComposePort(null, $"{parts[0]}/{protocol}", protocol),
-            2 => new ComposePort(parts[0], $"{parts[1]}/{protocol}", protocol),
-            >= 3 => new ComposePort(parts[^2], $"{parts[^1]}/{protocol}", protocol),
+            2 => new ComposePort(parts[0], $"{parts[1]}/{protocol}", protocol) { HostIp = hostIp },
             _ => throw new NotSupportedException($"Invalid port mapping: {value}")
         };
     }
