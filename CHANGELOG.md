@@ -23,6 +23,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `LogsAsync` callbacks preserve stdout and stderr identity and per-stream line ordering.
+
 - Resource diagnostics identify the overlay option that introduced unapplied behavior, without attributing errors to default values or extension metadata.
 - Validation diagnoses unresolved environment passthrough entries in list and mapping syntax, and strict mode rejects them before Docker access.
 - Validation reports implicit service-network fallback to custom project networks and rejects it in strict mode before Docker access.

@@ -10,7 +10,7 @@ namespace ComposeSharp.Api;
 /// </summary>
 public interface ILogConsumer
 {
-    /// <summary>Called for each log line of a service.</summary>
+    /// <summary>Called for each log line of a service; <paramref name="isStdErr"/> identifies standard error output.</summary>
     void OnLog(string serviceName, string message, bool isStdErr);
 
     /// <summary>Called once when a service's log stream ends.</summary>

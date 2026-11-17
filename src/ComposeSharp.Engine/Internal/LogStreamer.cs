@@ -44,8 +44,8 @@ internal sealed class LogStreamer
             try
             {
                 var svcName = container.Labels != null && container.Labels.TryGetValue(ComposeConstants.ServiceLabel, out var svc) ? svc : container.ID[..12];
-                await foreach (var line in StreamLogLinesAsync(client, container.ID, options.Tail, ct))
-                    consumer.OnLog(svcName, line, false);
+                await foreach (var (line, isStdErr) in StreamLogLinesAsync(client, container.ID, options.Tail, ct))
+                    consumer.OnLog(svcName, line, isStdErr);
                 consumer.OnLogComplete(svcName);
             }
             catch (OperationCanceledException) { }
@@ -54,30 +54,40 @@ internal sealed class LogStreamer
         await Task.WhenAll(tasks);
     }
 
-    public async IAsyncEnumerable<string> StreamLogLinesAsync(DockerClient client, string containerId, string tail,
+    public async IAsyncEnumerable<(string Line, bool IsStdErr)> StreamLogLinesAsync(DockerClient client, string containerId, string tail,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        // Follow mode keeps the stream open until the container stops or cancellation fires.
         using var stream = await client.Containers.GetContainerLogsAsync(containerId, false,
             new ContainerLogsParameters { ShowStdout = true, ShowStderr = true, Follow = true, Tail = tail }, ct);
+        await foreach (var line in ReadLinesAsync(stream, ct))
+            yield return line;
+    }
 
-        // The log stream is a raw byte stream with no framing, so partial reads are buffered
-        // until a newline yields a complete line.
+    internal static async IAsyncEnumerable<(string Line, bool IsStdErr)> ReadLinesAsync(
+        MultiplexedStream stream, [EnumeratorCancellation] CancellationToken ct)
+    {
         var buffer = new byte[8192];
-        var pending = new StringBuilder();
+        var chars = new char[Encoding.UTF8.GetMaxCharCount(buffer.Length)];
+        var pending = new[] { new StringBuilder(), new StringBuilder() };
+        var decoders = new[] { Encoding.UTF8.GetDecoder(), Encoding.UTF8.GetDecoder() };
         while (true)
         {
             var result = await stream.ReadOutputAsync(buffer, 0, buffer.Length, ct);
-            if (result.EOF)
-            {
-                if (pending.Length > 0) yield return pending.ToString();
-                yield break;
-            }
+            if (result.EOF) break;
             if (result.Count <= 0) continue;
 
-            pending.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
-            while (TryTakeLine(pending, out var line))
-                yield return line;
+            var index = result.Target == MultiplexedStream.TargetStream.StandardError ? 1 : 0;
+            var count = decoders[index].GetChars(buffer, 0, result.Count, chars, 0, false);
+            pending[index].Append(chars, 0, count);
+            while (TryTakeLine(pending[index], out var line))
+                yield return (line, index == 1);
+        }
+
+        for (var i = 0; i < pending.Length; i++)
+        {
+            var count = decoders[i].GetChars(Array.Empty<byte>(), 0, 0, chars, 0, true);
+            pending[i].Append(chars, 0, count);
+            if (pending[i].Length > 0) yield return (pending[i].ToString(), i == 1);
         }
     }
 

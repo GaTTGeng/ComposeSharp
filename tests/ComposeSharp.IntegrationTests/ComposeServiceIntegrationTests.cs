@@ -31,6 +31,50 @@ public class ComposeServiceIntegrationTests
     private static readonly SemaphoreSlim ImageGate = new(1, 1);
     private static bool _busyBoxReady;
 
+    [Fact]
+    public async Task LogsAsync_PreservesOutputStreamIdentity()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+        var projectName = $"log-streams-{Guid.NewGuid():N}";
+        var directory = Path.Combine(Path.GetTempPath(), projectName);
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                command: ["sh", "-c", "echo out-one; echo err-one >&2; echo out-two; echo err-two >&2"]
+            """);
+        var context = new ComposeProjectContext { ProjectName = projectName, WorkingDirectory = directory, ComposeFileName = "compose.yaml" };
+        var service = new ComposeService();
+        using var client = new DockerClientFactory().CreateClient();
+        var container = await client.Containers.CreateContainerAsync(new CreateContainerParameters
+        {
+            Image = "busybox:1.36",
+            Cmd = ["sh", "-c", "echo out-one; echo err-one >&2; echo out-two; echo err-two >&2"],
+            Labels = new Dictionary<string, string>
+            {
+                ["com.docker.compose.project"] = projectName,
+                ["com.docker.compose.service"] = "app"
+            },
+            HostConfig = new HostConfig { NetworkMode = "none" }
+        });
+        try
+        {
+            await client.Containers.StartContainerAsync(container.ID, new ContainerStartParameters());
+            await client.Containers.WaitContainerAsync(container.ID);
+            var consumer = new TestLogConsumer();
+            await service.LogsAsync(context, new ComposeLogsOptions { Services = ["app"] }, consumer);
+            Assert.Equal<string>(["out-one", "out-two"], consumer.StreamLogs.Where(x => !x.IsStdErr).Select(x => x.Message));
+            Assert.Equal<string>(["err-one", "err-two"], consumer.StreamLogs.Where(x => x.IsStdErr).Select(x => x.Message));
+        }
+        finally
+        {
+            await client.Containers.RemoveContainerAsync(container.ID, new ContainerRemoveParameters { Force = true });
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData("on-failure", 0)]
     [InlineData("on-failure:5", 5)]
@@ -1674,8 +1718,13 @@ public class ComposeServiceIntegrationTests
     {
         public List<string> Logs { get; } = [];
         public List<string> Statuses { get; } = [];
+        public List<(string Message, bool IsStdErr)> StreamLogs { get; } = [];
 
-        public void OnLog(string serviceName, string message, bool isStdErr) => Logs.Add(message);
+        public void OnLog(string serviceName, string message, bool isStdErr)
+        {
+            Logs.Add(message);
+            StreamLogs.Add((message, isStdErr));
+        }
         public void OnLogComplete(string serviceName) { }
         public void OnStatus(string serviceName, string message) => Statuses.Add(message);
     }
