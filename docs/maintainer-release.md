@@ -28,6 +28,8 @@ The release workflow uses `NuGet/login@v1`, so it must retain the `id-token: wri
 
 ## Release a version
 
+Before tagging, review the [field support matrix](compose-field-matrix.md) against the release code and tests. Update affected statuses, limitations, test links, open issues, and daemon environment evidence; do not count an integration run that returned early without Docker as evidence. Check that the English and Chinese READMEs and the changelog match the release.
+
 Push a plain SemVer tag without a `v` prefix. The tag must point to a commit reachable from `master`.
 
 ```powershell
