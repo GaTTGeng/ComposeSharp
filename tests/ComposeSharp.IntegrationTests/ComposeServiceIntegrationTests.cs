@@ -167,8 +167,18 @@ public class ComposeServiceIntegrationTests
             };
             using var proc = System.Diagnostics.Process.Start(psi);
             if (proc is null) return false;
-            var osType = proc.StandardOutput.ReadToEnd().Trim();
-            return proc.WaitForExit(5000) && proc.ExitCode == 0 &&
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+            if (!proc.WaitForExit(5000))
+            {
+                try { proc.Kill(entireProcessTree: true); }
+                catch { }
+                return false;
+            }
+            if (!Task.WhenAll(stdoutTask, stderrTask).Wait(1000))
+                return false;
+            var osType = stdoutTask.Result.Trim();
+            return proc.ExitCode == 0 &&
                    string.Equals(osType, "linux", StringComparison.OrdinalIgnoreCase);
         }
         catch { return false; }
