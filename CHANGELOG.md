@@ -23,6 +23,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Unknown non-empty healthcheck fields produce diagnostics and are rejected in strict validation mode.
+
 - Short port mappings preserve explicit host IP addresses in Docker bindings and generated configuration.
 - `LogsAsync` callbacks preserve stdout and stderr identity and per-stream line ordering.
 
