@@ -88,8 +88,23 @@ public sealed class ComposeLoaderValidationTests
         var project = new ComposeFileLoader().Load(files.DirectoryPath, "compose.yaml");
 
         var port = Assert.Single(Assert.Single(project.Services).Ports);
+        Assert.Equal("::1", port.HostIp);
         Assert.Equal("8080", port.HostPort);
         Assert.Equal("80/tcp", port.ContainerPort);
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1:8080:80", "127.0.0.1")]
+    [InlineData("192.0.2.1:8080:80", "192.0.2.1")]
+    [InlineData("0.0.0.0:8080:80", "0.0.0.0")]
+    [InlineData("8080:80", null)]
+    [InlineData("[::1]:8080:80", "::1")]
+    public void Load_PortMapping_PreservesHostAddress(string mapping, string? hostIp)
+    {
+        using var files = new ComposeFiles($"services:\n  api:\n    image: app\n    ports: ['{mapping}']\n");
+        var project = new ComposeFileLoader().Load(files.DirectoryPath, "compose.yaml");
+        Assert.Equal(hostIp, Assert.Single(Assert.Single(project.Services).Ports).HostIp);
+        Assert.Empty(project.Diagnostics);
     }
 
     [Fact]
@@ -118,15 +133,15 @@ public sealed class ComposeLoaderValidationTests
     public void Load_PartialFields_ReturnsDiagnosticsAndLeavesSupportedDefaultsQuiet()
     {
         using var files = new ComposeFiles(
-            "services:\n  api:\n    image: app\n    privileged: false\n    ports:\n      - '127.0.0.1:8080:80'\n  db:\n    image: database\n");
+            "services:\n  api:\n    image: app\n    privileged: false\n    command: echo ready\n  db:\n    image: database\n");
 
         var project = (ComposeProject)files.Load();
 
         var diagnostic = Assert.Single(project.Diagnostics);
-        Assert.Equal("services.api.ports[0]", diagnostic.PropertyPath);
+        Assert.Equal("services.api.command", diagnostic.PropertyPath);
         Assert.Equal("api", diagnostic.ServiceName);
         Assert.Equal("partially-supported-field", diagnostic.Code);
-        Assert.DoesNotContain("127.0.0.1", diagnostic.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("echo ready", diagnostic.Message, StringComparison.Ordinal);
     }
 
     [Fact]

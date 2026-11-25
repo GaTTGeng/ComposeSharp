@@ -29,7 +29,7 @@ public sealed class GenerateConfigurationTests : IDisposable
                   - "TOKEN=$$CASH"
                   - "OVERRIDE=inline"
                 ports:
-                  - "5353:53/udp"
+                  - "[::1]:5353:53/udp"
                 restart: "on-failure:3"
                 labels:
                   "cost$$code": "charge"
@@ -70,6 +70,7 @@ public sealed class GenerateConfigurationTests : IDisposable
         var service = Assert.Single(reloaded.Services);
         Assert.Equal(["echo", "a: b # c"], service.Command);
         Assert.Equal(["FROM_FILE=present", "OVERRIDE=file", "TOKEN=$CASH", "OVERRIDE=inline"], service.Environment);
+        Assert.Equal("::1", Assert.Single(service.Ports).HostIp);
         Assert.Equal("5353", Assert.Single(service.Ports).HostPort);
         Assert.Equal("53/udp", Assert.Single(service.Ports).ContainerPort);
         Assert.Equal("on-failure:3", service.Restart);

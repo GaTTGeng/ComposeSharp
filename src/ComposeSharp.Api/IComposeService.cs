@@ -106,7 +106,8 @@ public interface IComposeService
     /// <summary>Resolves the host address and published port for a container port of a service.</summary>
     Task<(string Host, int Port)> PortAsync(ComposeProjectContext context, string serviceName, int containerPort, ComposePortOptions? options = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Streams container logs to an <see cref="ILogConsumer"/> (or discards them when none is supplied).</summary>
+    /// <summary>Streams project container logs to an <see cref="ILogConsumer"/>, or writes combined text to the console when none is supplied.</summary>
+    /// <remarks>Console output groups stdout before stderr and does not preserve their interleaving. Callback lines retain stream identity and per-stream order.</remarks>
     Task LogsAsync(ComposeProjectContext context, ComposeLogsOptions? options = null, ILogConsumer? consumer = null, CancellationToken cancellationToken = default);
 
     /// <summary>Streams Docker Engine events for the project's resources as compose events.</summary>

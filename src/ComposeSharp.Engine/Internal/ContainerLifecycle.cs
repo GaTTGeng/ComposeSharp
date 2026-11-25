@@ -466,7 +466,7 @@ internal sealed class ContainerLifecycle
         };
     }
 
-    private static Dictionary<string, IList<PortBinding>>? BuildPortBindings(IReadOnlyList<ComposePort> ports)
+    internal static Dictionary<string, IList<PortBinding>>? BuildPortBindings(IReadOnlyList<ComposePort> ports)
     {
         if (ports.Count == 0) return null;
         // Only ports with an explicit host mapping are bound; container-only ports stay exposed.
@@ -474,7 +474,7 @@ internal sealed class ContainerLifecycle
         foreach (var port in ports)
         {
             if (port.HostPort is null) continue;
-            result[port.ContainerPort] = [new PortBinding { HostPort = port.HostPort }];
+            result[port.ContainerPort] = [new PortBinding { HostPort = port.HostPort, HostIP = port.HostIp }];
         }
         return result.Count == 0 ? null : result;
     }

@@ -31,6 +31,8 @@ compose.yml / .env / env_file
       Docker 容器、网络、卷与项目标签
 ```
 
+短格式端口映射会在 Docker 绑定中保留显式 IPv4 和方括号包围的 IPv6 主机地址。
+
 Loader 会寻找 `docker-compose.yml`、`compose.yml`、`compose.yaml` 或 `docker-compose.yaml`，读取 `.env` 和服务的 `env_file`，再展开 YAML 中的变量。解析结果包含镜像、build、命令、环境、端口、卷、网络、健康检查、重启策略、profiles、labels、logging、capabilities、资源限制以及部分 `deploy` 字段。
 
 ### 变量插值
@@ -95,6 +97,7 @@ builder.Services.AddComposeSharp();
 请特别留意以下事实：
 
 - `BuildAsync` 会将本地 build context 打包为 tar 并发送给 Docker Engine API。它会应用 `.dockerignore` 或所选 Dockerfile 对应的 `.dockerignore`、保留符号链接与 Unix 文件权限；被忽略的目录树只有在否定规则可能重新包含其后代时才会遍历；它会安全暂存位于上下文外的 Dockerfile，并在创建归档时响应取消。归档会写入临时文件而非进程内存。未赋值的 build argument 会在进程环境存在该变量时继承其值。它支持 Dockerfile、tags、target、build args、labels、`cache_from`、network mode、extra hosts、共享内存与内存限制、单个平台、pull 和 no-cache；`ComposeBuildOptions.LogConsumer` 会接收 Docker 构建状态，构建流中的错误会使操作失败。BuildKit 专用的 `cache_to`、多平台、`privileged`、`builder` 与 progress mode 选择尚未应用。
+- `LogsAsync` 的回调区分标准输出和标准错误，并保留各流内的行顺序；未提供消费者时，控制台输出先显示标准输出，再显示标准错误，不保留两者的交错顺序。
 - `CopyAsync` 使用 Docker archive API，`ExportAsync` 通过 Docker Engine 流式导出服务容器文件系统 tar；两者都可以针对运行中、已停止或已创建的服务容器。复制时，容器侧路径使用 `service:/绝对路径`，本地侧使用文件系统路径；容器路径按目录处理。本地文件上传会写入所有匹配的服务容器；`ComposeCopyOptions.Index` 可指定一个副本，下载时默认只选择一个副本。`ComposeCopyOptions.All` 会包含通过 `RunAsync` 创建的一次性容器，`CopyResult.BytesCopied` 表示所有上传目标的文件内容字节总数。本地符号链接和下载归档中的符号链接会被拒绝；下载时保留 Unix 文件权限，并将硬链接展开为普通文件。
 - `CommitAsync` 使用 Docker Engine commit 接口，并返回记录到新镜像上的镜像引用。它会应用 author、message、Dockerfile 风格的 `Changes`、`Pause`，并支持用 `ComposeCommitOptions.Index` 选择副本。
 - `TopAsync` 使用 Docker Engine 进程列表 API，为每个运行中的服务容器返回一份进程清单；非运行中的容器会被省略。
