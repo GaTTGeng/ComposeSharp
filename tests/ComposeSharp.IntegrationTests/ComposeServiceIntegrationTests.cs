@@ -153,19 +153,33 @@ public class ComposeServiceIntegrationTests
         }
     }
 
-    // Probes `docker info` once per test class; a missing CLI or unreachable daemon disables the Docker cases.
+    // Probes `docker info` once per test class; these busybox-based cases require a reachable Linux-container daemon.
     private static bool CheckDockerAvailable()
     {
         try
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("docker", "info")
+            var psi = new System.Diagnostics.ProcessStartInfo("docker", "info --format {{.OSType}}")
             {
                 RedirectStandardOutput = true,
+                RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            var proc = System.Diagnostics.Process.Start(psi);
-            return proc?.WaitForExit(5000) == true && proc.ExitCode == 0;
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null) return false;
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+            if (!proc.WaitForExit(5000))
+            {
+                try { proc.Kill(entireProcessTree: true); }
+                catch { }
+                return false;
+            }
+            if (!Task.WhenAll(stdoutTask, stderrTask).Wait(1000))
+                return false;
+            var osType = stdoutTask.Result.Trim();
+            return proc.ExitCode == 0 &&
+                   string.Equals(osType, "linux", StringComparison.OrdinalIgnoreCase);
         }
         catch { return false; }
     }

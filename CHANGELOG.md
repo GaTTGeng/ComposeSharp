@@ -24,7 +24,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Unknown non-empty healthcheck fields produce diagnostics and are rejected in strict validation mode.
-
+- Project networks omit an explicit `bridge` driver so Docker Engine uses its default local driver (`bridge` on Linux daemons and `nat` on Windows container daemons).
 - Short port mappings preserve explicit host IP addresses in Docker bindings and generated configuration.
 - `LogsAsync` callbacks preserve stdout and stderr identity and per-stream line ordering.
 
