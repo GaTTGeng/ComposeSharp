@@ -65,7 +65,7 @@ Project loading reports value-free diagnostics for unknown, unsupported, and par
 - Reconciliation that can distinguish an unchanged service from one that needs recreation.
 - Clear handling for partial failure, cleanup, and orphaned project resources.
 - Docker integration coverage on both Windows named pipes and Linux Unix sockets.
-- A compatibility matrix that names verified Compose constructs and their tested Docker Engine behavior.
+- Keep the [compatibility matrix](compose-field-matrix.md) and its test evidence current; complete cross-platform daemon coverage tracked by issue #22.
 
 ### Not a goal
 
