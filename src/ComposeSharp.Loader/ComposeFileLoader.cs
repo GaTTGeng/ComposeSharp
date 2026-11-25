@@ -428,6 +428,15 @@ public sealed class ComposeFileLoader
             if (TryGetValue(healthcheck, "start_interval", out var startInterval) && IsMeaningful(startInterval))
                 AddDiagnostic(diagnostics, context, $"{servicePath}.healthcheck.start_interval", serviceName,
                     "unsupported-field", "Health check start_interval is not retained or applied.");
+
+            foreach (var (keyNode, value) in healthcheck)
+            {
+                var key = keyNode.ToString() ?? string.Empty;
+                if (key is not ("test" or "interval" or "timeout" or "start_period" or "start_interval" or "retries" or "disable") &&
+                    !key.StartsWith("x-", StringComparison.Ordinal) && IsMeaningful(value))
+                    AddDiagnostic(diagnostics, context, AppendPathSegment($"{servicePath}.healthcheck", key), serviceName,
+                        "unsupported-field", "This health check field is not retained or applied.");
+            }
         }
 
         foreach (var field in new[] { "network_mode", "ipc", "pid" })

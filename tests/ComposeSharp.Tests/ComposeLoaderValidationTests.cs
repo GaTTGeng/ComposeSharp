@@ -130,6 +130,30 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Fact]
+    public void Load_UnknownHealthcheckField_IsDiagnosedAndRejectedInStrictMode()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    healthcheck:\n      test: [CMD, true]\n      mystery: secret-value\n      x-note: ignored\n");
+
+        var project = (ComposeProject)files.Load();
+        var diagnostic = Assert.Single(project.Diagnostics);
+        Assert.Equal(files.PrimaryPath, diagnostic.SourceFile);
+        Assert.Equal("api", diagnostic.ServiceName);
+        Assert.Equal("services.api.healthcheck.mystery", diagnostic.PropertyPath);
+        Assert.Equal("unsupported-field", diagnostic.Code);
+        Assert.DoesNotContain("secret-value", diagnostic.Message, StringComparison.Ordinal);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "healthcheck-validation",
+            WorkingDirectory = files.DirectoryPath,
+            ComposeFileName = Path.GetFileName(files.PrimaryPath),
+            ValidationMode = ComposeValidationMode.Strict
+        };
+        Assert.Throws<ComposeValidationException>(() => new ComposeService().LoadProject(context));
+    }
+
+    [Fact]
     public void Load_PartialFields_ReturnsDiagnosticsAndLeavesSupportedDefaultsQuiet()
     {
         using var files = new ComposeFiles(
