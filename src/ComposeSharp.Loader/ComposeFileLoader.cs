@@ -311,9 +311,17 @@ public sealed class ComposeFileLoader
         ValidationContext context,
         List<ComposeProjectDiagnostic> diagnostics)
     {
+        if (TryGetValue(service, "init", out var init) && IsFalse(init))
+            AddDiagnostic(diagnostics, context, $"{servicePath}.init", serviceName,
+                "partially-supported-field", "Explicitly disabling init is not applied; the daemon default is used.");
+
         foreach (var field in new[] { "command", "entrypoint" })
         {
-            if (TryGetValue(service, field, out var command) && command is string commandText && commandText.Length > 0)
+            if (TryGetValue(service, field, out var command) &&
+                (command is string { Length: 0 } || command is List<object?> { Count: 0 }))
+                AddDiagnostic(diagnostics, context, $"{servicePath}.{field}", serviceName,
+                    "partially-supported-field", "An explicit empty command does not clear the image default.");
+            else if (command is string { Length: > 0 })
                 AddDiagnostic(diagnostics, context, $"{servicePath}.{field}", serviceName,
                     "partially-supported-field", "Scalar commands are passed as one argument instead of shell-split arguments.");
         }
@@ -379,6 +387,18 @@ public sealed class ComposeFileLoader
 
         if (TryGetValue(service, "deploy", out var deployValue) && deployValue is Dictionary<object, object?> deploy)
         {
+            if (GetInt(deploy, "replicas") > 1 &&
+                TryGetValue(service, "container_name", out var containerName) && IsMeaningful(containerName))
+            {
+                var namePath = $"{servicePath}.container_name";
+                var replicasPath = $"{servicePath}.deploy.replicas";
+                var path = context.SourceFor(namePath) == context.SourceFor(servicePath) &&
+                           context.SourceFor(replicasPath) != context.SourceFor(servicePath)
+                    ? replicasPath : namePath;
+                AddDiagnostic(diagnostics, context, path, serviceName,
+                    "partially-supported-field", "A custom container name is not used when the service has multiple replicas.");
+            }
+
             foreach (var (field, value) in deploy)
             {
                 var deployField = field.ToString() ?? string.Empty;
@@ -517,7 +537,7 @@ public sealed class ComposeFileLoader
 
         foreach (var (name, definition) in resources)
         {
-            var path = GetResourceDiagnosticPath(section, AppendPathSegment(section, name.ToString()!), definition, context);
+            var path = GetResourceDiagnosticPath(AppendPathSegment(section, name.ToString()!), definition, context);
             if (path is not null)
                 AddDiagnostic(diagnostics, context, path, null,
                     "partially-supported-field", "Only the resource name is retained; resource options are not applied.");
@@ -642,7 +662,7 @@ public sealed class ComposeFileLoader
     /// when those options share its source. Default values and extensions cannot change attribution.
     /// </summary>
     private static string? GetResourceDiagnosticPath(
-        string section, string path, object? definition, ValidationContext context)
+        string path, object? definition, ValidationContext context)
     {
         if (definition is not Dictionary<object, object?> options)
             return IsMeaningful(definition) ? path : null;
@@ -653,7 +673,6 @@ public sealed class ComposeFileLoader
         {
             if (IsExtensionField(key) ||
                 (Equals(key.ToString(), "external") && IsFalse(value)) ||
-                (section == "networks" && Equals(key.ToString(), "driver") && Equals(value, "bridge")) ||
                 !IsMeaningful(value))
                 continue;
 
@@ -694,7 +713,7 @@ public sealed class ComposeFileLoader
 
         foreach (var (name, definition) in resources)
         {
-            var path = GetResourceDiagnosticPath(section, AppendPathSegment(section, name.ToString()!), definition, context);
+            var path = GetResourceDiagnosticPath(AppendPathSegment(section, name.ToString()!), definition, context);
             if (path is not null)
                 AddDiagnostic(diagnostics, context, path, null,
                     "unsupported-field", "Project resources are named in the loaded model but are not provisioned or mounted.");
@@ -1128,7 +1147,7 @@ public sealed class ComposeFileLoader
                 throw Validation(context, itemPath, $"long port syntax is not supported; found {DescribeNode(item)}.");
             var text = item?.ToString() ?? string.Empty;
             if (!IsValidPort(text))
-                throw ConversionValidation(context, itemPath, text, "a supported short port mapping");
+                throw ConversionValidation(context, itemPath, "a supported short port mapping");
         }
     }
 
@@ -1242,7 +1261,7 @@ public sealed class ComposeFileLoader
                 continue;
             var path = $"{parentPath}.{key}";
             if (!IsScalar(value) || !TryParseDuration(value.ToString(), out _))
-                throw ConversionValidation(context, path, value, "a supported duration");
+                throw ConversionValidation(context, path, "a supported duration");
         }
     }
 
@@ -1256,7 +1275,7 @@ public sealed class ComposeFileLoader
         if (!TryGetValue(map, key, out var value) || value is null)
             return;
         if (!IsScalar(value) || !TryParseBytes(value.ToString(), out _))
-            throw ConversionValidation(context, path, value, "a supported byte value");
+            throw ConversionValidation(context, path, "a supported byte value");
     }
 
     // Boolean/integer/double validators share one shape: missing is fine, present must be a
@@ -1270,7 +1289,7 @@ public sealed class ComposeFileLoader
         if (!TryGetValue(map, key, out var value) || value is null)
             return;
         if (!IsScalar(value) || !bool.TryParse(value.ToString(), out _))
-            throw ConversionValidation(context, path, value, "a boolean value");
+            throw ConversionValidation(context, path, "a boolean value");
     }
 
     private static void ValidateInteger(
@@ -1282,7 +1301,7 @@ public sealed class ComposeFileLoader
         if (!TryGetValue(map, key, out var value) || value is null)
             return;
         if (!IsScalar(value) || !int.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
-            throw ConversionValidation(context, path, value, "an integer value");
+            throw ConversionValidation(context, path, "an integer value");
     }
 
     private static void ValidateDouble(
@@ -1294,7 +1313,7 @@ public sealed class ComposeFileLoader
         if (!TryGetValue(map, key, out var value) || value is null)
             return;
         if (!IsScalar(value) || !double.TryParse(value.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
-            throw ConversionValidation(context, path, value, "a numeric value");
+            throw ConversionValidation(context, path, "a numeric value");
     }
 
     /// <summary>
@@ -1305,20 +1324,18 @@ public sealed class ComposeFileLoader
         => new(context.SourceFor(path), path, message, context.ServiceName);
 
     /// <summary>
-    /// Builds a scalar-conversion failure. The inner <see cref="FormatException"/> preserves the
-    /// raw value and expected type for programmatic consumers while the outer message stays concise.
+    /// Builds a scalar-conversion failure without exposing a potentially interpolated secret.
     /// </summary>
     private static ComposeValidationException ConversionValidation(
         ValidationContext context,
         string path,
-        object? value,
         string expected)
     {
-        var conversionException = new FormatException($"Value '{value}' could not be converted to {expected}.");
+        var conversionException = new FormatException($"Value could not be converted to {expected}.");
         return new ComposeValidationException(
             context.SourceFor(path),
             path,
-            $"'{value}' is not {expected}.",
+            $"Value is not {expected}.",
             context.ServiceName,
             innerException: conversionException);
     }

@@ -37,7 +37,7 @@ internal sealed class ContainerLifecycle
             Entrypoint = service.Entrypoint.Count > 0 ? service.Entrypoint.ToList() : null,
             Env = service.Environment.ToList(),
             Labels = labels,
-            ExposedPorts = service.Ports.ToDictionary(x => x.ContainerPort, _ => default(EmptyStruct)),
+            ExposedPorts = service.Ports.Select(x => x.ContainerPort).Distinct().ToDictionary(x => x, _ => default(EmptyStruct)),
             HostConfig = hostConfig,
             Healthcheck = BuildHealthcheck(service.Healthcheck),
             Tty = service.Tty,
