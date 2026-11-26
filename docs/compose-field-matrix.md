@@ -48,7 +48,7 @@ ComposeSharp is an in-process SDK, not a Docker Compose CLI replacement. The loa
 | `devices` | `Devices` | Partial | Two-segment short mappings are passed in the host configuration. Permission-bearing mappings such as `/dev/sda:/dev/xvdc:rwm` are parsed incorrectly and are not supported. |
 | `sysctls` | `Sysctls` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `init` | `Init` | Applied | Enables Docker init when the value is `true`. |
-| `platform` | `Platform` | Partial | For build services, supplies the fallback platform to `BuildAsync` when no build-specific platform or operation override is set. It is not passed to image pulls or container creation; diagnostics are emitted when there is no build fallback to apply it. |
+| `platform` | `Platform` | Partial | For build services, supplies the fallback platform to `BuildAsync` when no build-specific platform or operation override is set. It is not passed to image pulls or container creation; A `partially-supported-field` diagnostic is emitted when it supplies the build fallback; otherwise an `unsupported-field` diagnostic is emitted. [Validation tests](../tests/ComposeSharp.Tests/ComposeLoaderValidationTests.cs) cover both cases and strict rejection. |
 | `pull_policy` | `PullPolicy` | Parsed only | Exposed by the loader but pull behavior is controlled by operation options. |
 | `dns`, `dns_search` | `Dns`, `DnsSearch` | Parsed only | Exposed by the loader but not passed to Docker. |
 | `pid`, `mac_address`, `cgroup_parent` | `Pid`, `MacAddress`, `CgroupParent` | Partial | Direct Docker PID modes, MAC address, and cgroup parent are passed to Docker. `pid: service:<name>` is not resolved to a service container. |

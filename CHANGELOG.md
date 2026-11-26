@@ -23,6 +23,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Service `platform` produces a partial-support diagnostic when used as a build fallback because image pulls and container creation do not apply it.
+
 - Unknown non-empty healthcheck fields produce diagnostics and are rejected in strict validation mode.
 - Project networks omit an explicit `bridge` driver so Docker Engine uses its default local driver (`bridge` on Linux daemons and `nat` on Windows container daemons).
 - Short port mappings preserve explicit host IP addresses in Docker bindings and generated configuration.
