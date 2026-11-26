@@ -17,17 +17,19 @@ internal sealed class NetworkManager
     {
         try
         {
-            await client.Networks.CreateNetworkAsync(new NetworksCreateParameters
-            {
-                Name = name,
-                Driver = "bridge",
-                CheckDuplicate = true,
-                Labels = new Dictionary<string, string> { [ComposeConstants.ProjectLabel] = projectName }
-            }, ct);
+            await client.Networks.CreateNetworkAsync(BuildNetworkCreateParameters(name, projectName), ct);
         }
         // An existing network is not an error: creation is idempotent by design.
         catch (DockerApiException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict) { }
     }
+
+    internal static NetworksCreateParameters BuildNetworkCreateParameters(string name, string projectName)
+        => new()
+        {
+            Name = name,
+            CheckDuplicate = true,
+            Labels = new Dictionary<string, string> { [ComposeConstants.ProjectLabel] = projectName }
+        };
 
     public async Task EnsureProjectInfrastructureAsync(DockerClient client, string projectName, ComposeProject project, CancellationToken ct)
     {

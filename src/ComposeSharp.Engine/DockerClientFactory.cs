@@ -14,7 +14,7 @@ internal sealed class DockerClientFactory
         return new DockerClientConfiguration(new Uri(endpoint)).CreateClient();
     }
 
-    private static string GetDockerSocketEndpoint(string? socketPath)
+    internal static string GetDockerSocketEndpoint(string? socketPath)
     {
         // No path given: fall back to the platform's standard daemon endpoint.
         if (string.IsNullOrWhiteSpace(socketPath))

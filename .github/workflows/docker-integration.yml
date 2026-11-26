@@ -1,0 +1,155 @@
+name: Docker Integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'src/ComposeSharp.Engine/**'
+      - 'src/ComposeSharp.Api/**'
+      - 'src/ComposeSharp.Loader/**'
+      - 'tests/ComposeSharp.IntegrationTests/**'
+      - 'scripts/CollectDockerDiagnostics.ps1'
+      - '.github/workflows/docker-integration.yml'
+  pull_request:
+    paths:
+      - 'src/ComposeSharp.Engine/**'
+      - 'src/ComposeSharp.Api/**'
+      - 'src/ComposeSharp.Loader/**'
+      - 'tests/ComposeSharp.IntegrationTests/**'
+      - 'scripts/CollectDockerDiagnostics.ps1'
+      - '.github/workflows/docker-integration.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CONFIGURATION: Release
+
+jobs:
+  docker-integration:
+    name: Docker integration (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            expected-endpoint: unix:///var/run/docker.sock
+            expected-daemon-os: linux
+          - name: windows
+            os: windows-2022
+            expected-endpoint: npipe://./pipe/docker_engine
+            expected-daemon-os: windows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Build.props', '**/Directory.Packages.props', 'NuGet.config') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Verify Docker daemon and default endpoint
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if (-not [string]::IsNullOrWhiteSpace($env:DOCKER_HOST)) {
+            throw "Expected DOCKER_HOST to be unset so default platform endpoint '${{ matrix.expected-endpoint }}' is validated, but DOCKER_HOST was '$($env:DOCKER_HOST)'."
+          }
+
+          if ($IsWindows) {
+            $dockerService = Get-Service -Name docker -ErrorAction SilentlyContinue
+            if ($null -ne $dockerService -and $dockerService.Status -ne 'Running') {
+              Start-Service -Name docker
+            }
+          }
+
+          $ready = $false
+          for ($attempt = 1; $attempt -le 15; $attempt++) {
+            $osType = (& docker info --format '{{.OSType}}' 2>$null)
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($osType)) {
+              $osType = $osType.Trim()
+              Write-Host "Docker daemon ready (OSType=$osType) on attempt $attempt."
+              if ($osType -ne '${{ matrix.expected-daemon-os }}') {
+                throw "Expected Docker daemon OSType '${{ matrix.expected-daemon-os }}' but found '$osType'."
+              }
+              $ready = $true
+              break
+            }
+            Start-Sleep -Seconds 2
+          }
+
+          if (-not $ready) {
+            throw "Docker daemon did not become reachable at default endpoint '${{ matrix.expected-endpoint }}'."
+          }
+
+          docker version
+
+      - name: Restore
+        run: dotnet restore tests/ComposeSharp.IntegrationTests/ComposeSharp.IntegrationTests.csproj
+
+      - name: Build
+        run: >
+          dotnet build tests/ComposeSharp.IntegrationTests/ComposeSharp.IntegrationTests.csproj
+          --framework net10.0
+          --configuration ${{ env.CONFIGURATION }}
+          --no-restore
+
+      - name: Run cross-platform Docker integration matrix
+        env:
+          COMPOSESHARP_REQUIRE_DOCKER: "true"
+          COMPOSESHARP_EXPECTED_DOCKER_ENDPOINT: ${{ matrix.expected-endpoint }}
+          COMPOSESHARP_EXPECTED_DOCKER_OS: ${{ matrix.expected-daemon-os }}
+        run: >
+          dotnet test tests/ComposeSharp.IntegrationTests/ComposeSharp.IntegrationTests.csproj
+          --framework net10.0
+          --configuration ${{ env.CONFIGURATION }}
+          --no-build
+          --no-restore
+          --filter "Category=CrossPlatformDocker"
+          --logger "trx;LogFileName=docker-integration-${{ matrix.name }}.trx"
+          --logger "console;verbosity=normal"
+          --results-directory TestResults
+
+      - name: Collect Docker diagnostics on failure
+        if: failure()
+        shell: pwsh
+        run: ./scripts/CollectDockerDiagnostics.ps1 -OutputDirectory artifacts/docker-diagnostics
+
+      - name: Upload Docker diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-diagnostics-${{ matrix.name }}
+          path: artifacts/docker-diagnostics
+          if-no-files-found: warn
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-integration-results-${{ matrix.name }}
+          path: TestResults/*.trx
+          if-no-files-found: ignore
