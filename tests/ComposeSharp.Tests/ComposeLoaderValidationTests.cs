@@ -408,16 +408,30 @@ public sealed class ComposeLoaderValidationTests
         Assert.Equal("partially-supported-field", diagnostic.Code);
     }
 
-    [Fact]
-    public void Load_ServicePlatformIsAppliedAsBuildFallback()
+    [Theory]
+    [InlineData("build: .", "partially-supported-field")]
+    [InlineData("build:\n      context: .\n      platforms: [linux/amd64]", "unsupported-field")]
+    [InlineData("image: app", "unsupported-field")]
+    public async Task Load_ServicePlatformIsDiagnosedBeforeDockerOperations(string definition, string code)
     {
-        using var files = new ComposeFiles(
-            "services:\n  built:\n    build: .\n    platform: linux/amd64\n  image_only:\n    image: app\n    platform: linux/arm64\n");
-
+        using var files = new ComposeFiles($"services:\n  api:\n    {definition}\n    platform: linux/arm64\n");
         var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
 
-        Assert.Equal("services.image_only.platform", diagnostic.PropertyPath);
-        Assert.Equal("unsupported-field", diagnostic.Code);
+        Assert.Equal(files.PrimaryPath, diagnostic.SourceFile);
+        Assert.Equal("services.api.platform", diagnostic.PropertyPath);
+        Assert.Equal("api", diagnostic.ServiceName);
+        Assert.Equal(code, diagnostic.Code);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "platform-validation",
+            WorkingDirectory = files.DirectoryPath,
+            ComposeFileName = Path.GetFileName(files.PrimaryPath),
+            SocketPath = "npipe://./pipe/compose-sharp-validation-test-missing",
+            ValidationMode = ComposeValidationMode.Strict
+        };
+        var exception = await Assert.ThrowsAsync<ComposeValidationException>(() => new ComposeService().UpAsync(context));
+        Assert.Equal(diagnostic.PropertyPath, exception.PropertyPath);
     }
 
     [Fact]

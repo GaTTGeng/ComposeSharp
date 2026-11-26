@@ -282,10 +282,12 @@ public sealed class ComposeFileLoader
                         "unsupported-field", "This service field is retained or parsed but is not applied to Docker resources.");
                 }
 
-                if (key == "platform" && IsMeaningful(fieldValue) && IsServicePlatformUnapplied(service))
+                if (key == "platform" && IsMeaningful(fieldValue))
                 {
+                    var unapplied = IsServicePlatformUnapplied(service);
                     AddDiagnostic(diagnostics, serviceContext, path, serviceName,
-                        "unsupported-field", "The service platform is not applied to image pulls or container creation.");
+                        unapplied ? "unsupported-field" : "partially-supported-field",
+                        "The service platform is not applied to image pulls or container creation.");
                 }
             }
 
