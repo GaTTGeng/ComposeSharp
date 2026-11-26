@@ -23,6 +23,10 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A custom container name with multiple configured replicas produces a diagnostic and is rejected in strict validation mode.
+- Explicit empty commands, disabled init, and explicit network drivers produce diagnostics when their requested behavior is not applied.
+- Scalar conversion errors no longer expose interpolated values in exception messages or inner exceptions.
+- Duplicate exposed ports no longer fail container creation in report mode; repeated host bindings retain the last mapping.
 - Service `platform` produces a partial-support diagnostic when used as a build fallback because image pulls and container creation do not apply it.
 
 - Unknown non-empty healthcheck fields produce diagnostics and are rejected in strict validation mode.

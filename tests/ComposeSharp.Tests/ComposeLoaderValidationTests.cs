@@ -129,6 +129,34 @@ public sealed class ComposeLoaderValidationTests
             diagnostic.Message.Contains("hidden", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("secrets: [credential]", "secrets")]
+    [InlineData("configs: [settings]", "configs")]
+    [InlineData("logging: {driver: local}", "logging")]
+    [InlineData("stop_signal: SIGTERM", "stop_signal")]
+    [InlineData("stop_grace_period: 5s", "stop_grace_period")]
+    [InlineData("sysctls: {net.ipv4.ip_forward: '1'}", "sysctls")]
+    [InlineData("pull_policy: always", "pull_policy")]
+    [InlineData("dns: [127.0.0.1]", "dns")]
+    [InlineData("dns_search: [example.test]", "dns_search")]
+    [InlineData("links: [db]", "links")]
+    [InlineData("cpu_quota: 1000", "cpu_quota")]
+    [InlineData("oom_kill_disable: true", "oom_kill_disable")]
+    [InlineData("oom_score_adj: 100", "oom_score_adj")]
+    [InlineData("annotations: {private: secret-value}", "annotations")]
+    [InlineData("extends: base", "extends")]
+    [InlineData("develop: {watch: [{path: .}]}", "develop")]
+    public void Load_ParsedOnlyServiceFieldsAreDiagnosed(string field, string name)
+    {
+        using var files = new ComposeFiles($"services:\n  api:\n    image: app\n    {field}\n");
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+        Assert.Equal(files.PrimaryPath, diagnostic.SourceFile);
+        Assert.Equal($"services.api.{name}", diagnostic.PropertyPath);
+        Assert.Equal("api", diagnostic.ServiceName);
+        Assert.Equal("unsupported-field", diagnostic.Code);
+        Assert.DoesNotContain("secret-value", diagnostic.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Load_UnknownHealthcheckField_IsDiagnosedAndRejectedInStrictMode()
     {
@@ -151,6 +179,18 @@ public sealed class ComposeLoaderValidationTests
             ValidationMode = ComposeValidationMode.Strict
         };
         Assert.Throws<ComposeValidationException>(() => new ComposeService().LoadProject(context));
+    }
+
+    [Theory]
+    [InlineData("unknown_flag: false", "services.api.unknown_flag")]
+    [InlineData("healthcheck: {unknown_flag: false}", "services.api.healthcheck.unknown_flag")]
+    [InlineData("build: {context: ., unknown_flag: false}", "services.api.build.unknown_flag")]
+    public void Load_UnknownFalseValueIsDiagnosed(string field, string path)
+    {
+        using var files = new ComposeFiles($"services:\n  api:\n    image: app\n    {field}\n");
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+        Assert.Equal(path, diagnostic.PropertyPath);
+        Assert.Equal("unsupported-field", diagnostic.Code);
     }
 
     [Fact]
@@ -180,6 +220,36 @@ public sealed class ComposeLoaderValidationTests
         Assert.Equal(
             ["services.api.command", "services.api.entrypoint"],
             project.Diagnostics.Select(diagnostic => diagnostic.PropertyPath));
+    }
+
+    [Theory]
+    [InlineData("command", "[]")]
+    [InlineData("command", "''")]
+    [InlineData("entrypoint", "[]")]
+    [InlineData("entrypoint", "''")]
+    public void Load_ExplicitEmptyCommandIsDiagnosed(string field, string value)
+    {
+        using var files = new ComposeFiles($"services:\n  api:\n    image: app\n    {field}: {value}\n");
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+        Assert.Equal($"services.api.{field}", diagnostic.PropertyPath);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "empty-command-validation",
+            WorkingDirectory = files.DirectoryPath,
+            ComposeFileName = Path.GetFileName(files.PrimaryPath),
+            ValidationMode = ComposeValidationMode.Strict
+        };
+        Assert.Throws<ComposeValidationException>(() => new ComposeService().LoadProject(context));
+    }
+
+    [Fact]
+    public void Load_ExplicitInitFalseIsDiagnosed()
+    {
+        using var files = new ComposeFiles("services:\n  api:\n    image: app\n    init: false\n");
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+        Assert.Equal("services.api.init", diagnostic.PropertyPath);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
     }
 
     [Fact]
@@ -435,6 +505,48 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Fact]
+    public async Task Load_ScaledContainerNameIsDiagnosed()
+    {
+        using var files = new ComposeFiles("services:\n  api:\n    image: app\n    container_name: custom\n    deploy:\n      replicas: 2\n");
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+        Assert.Equal(files.PrimaryPath, diagnostic.SourceFile);
+        Assert.Equal("services.api.container_name", diagnostic.PropertyPath);
+        Assert.Equal("api", diagnostic.ServiceName);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+
+        var context = new ComposeProjectContext
+        {
+            ProjectName = "name-validation",
+            WorkingDirectory = files.DirectoryPath,
+            ComposeFileName = Path.GetFileName(files.PrimaryPath),
+            SocketPath = "npipe://./pipe/compose-sharp-validation-test-missing",
+            ValidationMode = ComposeValidationMode.Strict
+        };
+        var exception = await Assert.ThrowsAsync<ComposeValidationException>(() => new ComposeService().UpAsync(context));
+        Assert.Equal(diagnostic.PropertyPath, exception.PropertyPath);
+    }
+
+    [Fact]
+    public void LoadMerged_ScaledContainerNameDiagnosticUsesOverlayReplicaSource()
+    {
+        using var files = new ComposeFiles(
+            "services:\n  api:\n    image: app\n    container_name: custom\n",
+            "services:\n  api:\n    deploy: {replicas: 2}\n");
+        var diagnostic = Assert.Single(((ComposeProject)files.LoadMerged()).Diagnostics);
+        Assert.Equal(Path.GetFullPath(files.OverlayPath!), diagnostic.SourceFile);
+        Assert.Equal("services.api.deploy.replicas", diagnostic.PropertyPath);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void Load_UnscaledContainerNameDoesNotProduceDiagnostic(int replicas)
+    {
+        using var files = new ComposeFiles($"services:\n  api:\n    image: app\n    container_name: custom\n    deploy:\n      replicas: {replicas}\n");
+        Assert.Empty(((ComposeProject)files.Load()).Diagnostics);
+    }
+
+    [Fact]
     public void Load_LongFormServiceVolumeIsDiagnosed()
     {
         using var files = new ComposeFiles(
@@ -600,9 +712,19 @@ public sealed class ComposeLoaderValidationTests
         Assert.Empty(project.Diagnostics);
     }
 
+    [Fact]
+    public void Load_ExplicitBridgeDriverIsDiagnosedBecauseDaemonDefaultsVary()
+    {
+        using var files = new ComposeFiles(
+            "networks:\n  front: {driver: bridge}\nservices:\n  api:\n    image: app\n    networks: [front]\n");
+        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
+        Assert.Equal("networks.front", diagnostic.PropertyPath);
+        Assert.Equal("partially-supported-field", diagnostic.Code);
+    }
+
     [Theory]
-    [InlineData("networks", "driver: bridge", null)]
-    [InlineData("networks", "driver: bridge\n    external: false\n    x-note: local", null)]
+    [InlineData("networks", "driver: bridge", "partially-supported-field")]
+    [InlineData("networks", "driver: bridge\n    external: false\n    x-note: local", "partially-supported-field")]
     [InlineData("networks", "driver: overlay", "partially-supported-field")]
     [InlineData("networks", "driver: bridge\n    external: true", "partially-supported-field")]
     [InlineData("networks", "driver: bridge\n    driver_opts:\n      custom: value", "partially-supported-field")]
@@ -681,7 +803,7 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Theory]
-    [InlineData("networks", "{internal: true}", "{driver: bridge, external: false, x-note: private-option-value}")]
+    [InlineData("networks", "{internal: true}", "{external: false, x-note: private-option-value}")]
     [InlineData("volumes", "{driver_opts: {type: local}}", "{external: false, x-note: private-option-value}")]
     public void LoadMerged_DefaultOverlayOptionsDoNotChangeResourceDiagnosticSource(
         string section, string baseDefinition, string overlayDefinition)
@@ -702,7 +824,7 @@ public sealed class ComposeLoaderValidationTests
     public void LoadMerged_DefaultOnlyResourceOptionsRemainQuiet()
     {
         using var files = new ComposeFiles(
-            "networks:\n  front: {driver: bridge}\nservices:\n  api:\n    image: app\n    networks: [front]\n",
+            "networks:\n  front: {}\nservices:\n  api:\n    image: app\n    networks: [front]\n",
             "networks:\n  front: {external: false, x-note: private-option-value}\n");
 
         Assert.Empty(((ComposeProject)files.LoadMerged()).Diagnostics);
@@ -864,6 +986,24 @@ public sealed class ComposeLoaderValidationTests
 
         AssertServiceDiagnostic(exception, files.PrimaryPath, "api", path, message);
         Assert.IsType<FormatException>(exception.InnerException);
+    }
+
+    [Fact]
+    public void Load_InvalidInterpolatedValueDoesNotExposeSecretInException()
+    {
+        var name = $"VALIDATION_SECRET_{Guid.NewGuid():N}";
+        Environment.SetEnvironmentVariable(name, "private-conversion-value");
+        try
+        {
+            using var files = new ComposeFiles($"services:\n  api:\n    image: app\n    healthcheck:\n      interval: ${{{name}}}\n");
+            var exception = Assert.Throws<ComposeValidationException>(() => files.Load());
+            Assert.Equal("services.api.healthcheck.interval", exception.PropertyPath);
+            Assert.DoesNotContain("private-conversion-value", exception.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(name, null);
+        }
     }
 
     [Theory]

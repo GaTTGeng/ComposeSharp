@@ -12,6 +12,7 @@
 // ReSharper disable UseAwaitUsing
 using ComposeSharp.Api;
 using ComposeSharp.Engine;
+using ComposeSharp.Loader;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using System.Formats.Tar;
@@ -30,6 +31,74 @@ public class ComposeServiceIntegrationTests
     private static readonly bool DockerAvailable = CheckDockerAvailable();
     private static readonly SemaphoreSlim ImageGate = new(1, 1);
     private static bool _busyBoxReady;
+
+    [Fact]
+    public async Task StrictValidation_DoesNotCreateProjectResources()
+    {
+        if (!DockerAvailable) return;
+        var projectName = $"strict-validation-{Guid.NewGuid():N}";
+        var directory = Path.Combine(Path.GetTempPath(), projectName);
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"), """
+            services:
+              app:
+                image: busybox:1.36
+                logging: {driver: local}
+                volumes: [data:/data]
+            volumes:
+              data: {}
+            """);
+        var context = new ComposeProjectContext
+        {
+            ProjectName = projectName,
+            WorkingDirectory = directory,
+            ComposeFileName = "compose.yaml",
+            ValidationMode = ComposeValidationMode.Strict
+        };
+        var service = new ComposeService();
+        using var client = new DockerClientFactory().CreateClient();
+        var filters = new Dictionary<string, IDictionary<string, bool>>
+        {
+            ["label"] = new Dictionary<string, bool> { [$"com.docker.compose.project={projectName}"] = true }
+        };
+        try
+        {
+            await Assert.ThrowsAsync<ComposeValidationException>(() => service.UpAsync(context));
+            Assert.Empty(await client.Containers.ListContainersAsync(new ContainersListParameters { All = true, Filters = filters }));
+            Assert.Empty(await client.Networks.ListNetworksAsync(new NetworksListParameters { Filters = filters }));
+            var volumes = await client.Volumes.ListAsync(new VolumesListParameters { Filters = filters });
+            Assert.Empty(volumes.Volumes ?? []);
+        }
+        finally
+        {
+            await service.DownAsync(context with { ValidationMode = ComposeValidationMode.Report }, new ComposeDownOptions { RemoveVolumes = true });
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CreateAsync_DuplicateExposedPortsRemainUsableInReportMode()
+    {
+        if (!DockerAvailable) return;
+        await EnsureBusyBoxAsync();
+        var projectName = $"duplicate-ports-{Guid.NewGuid():N}";
+        var directory = Path.Combine(Path.GetTempPath(), projectName);
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "compose.yaml"),
+            "services:\n  app:\n    image: busybox:1.36\n    ports: ['80', '80']\n");
+        var context = new ComposeProjectContext { ProjectName = projectName, WorkingDirectory = directory, ComposeFileName = "compose.yaml" };
+        var service = new ComposeService();
+        try
+        {
+            Assert.Single(service.LoadProject(context).Diagnostics);
+            await service.CreateAsync(context);
+        }
+        finally
+        {
+            try { await DownAndAssertNoProjectNetworksAsync(service, context); }
+            finally { Directory.Delete(directory, recursive: true); }
+        }
+    }
 
     [Fact]
     public async Task LogsAsync_PreservesOutputStreamIdentity()
