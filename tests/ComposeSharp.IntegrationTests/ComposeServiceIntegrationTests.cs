@@ -90,7 +90,7 @@ public class ComposeServiceIntegrationTests
         var service = new ComposeService();
         try
         {
-            Assert.Single(service.LoadProject(context).Diagnostics);
+            Assert.Empty(service.LoadProject(context).Diagnostics);
             await service.CreateAsync(context);
         }
         finally
@@ -241,6 +241,8 @@ public class ComposeServiceIntegrationTests
             if (!proc.WaitForExit(5000))
             {
                 try { proc.Kill(entireProcessTree: true); }
+                // The daemon probe is already timed out; cleanup must not mask that result.
+                // ReSharper disable once EmptyGeneralCatchClause
                 catch { }
                 return false;
             }

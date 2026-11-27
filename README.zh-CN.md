@@ -31,7 +31,7 @@ compose.yml / .env / env_file
       Docker 容器、网络、卷与项目标签
 ```
 
-短格式端口映射会在 Docker 绑定中保留显式 IPv4 和方括号包围的 IPv6 主机地址。
+短格式和长格式端口映射会保留显式 IPv4、IPv6 主机地址、TCP/UDP/SCTP 协议和多个主机绑定。目标端口范围会展开为独立绑定；单个目标端口的发布范围交由 Docker 从中分配端口。省略发布端口或将其设为零时由 Docker 动态分配。省略主机 IP 时使用 Docker 网络默认绑定地址，可能会在所有接口上暴露端口；需要仅绑定回环地址时请指定 `127.0.0.1` 或 `::1`。`PortAsync` 返回所选运行中容器和协议的第一个绑定。加载时会拒绝无效范围、同一服务内冲突的固定主机端口、同时使用 host 网络模式和端口，以及不支持的长格式选项。Windows Docker NAT 不支持单个目标端口的发布范围；连接 Windows daemon 时会在创建资源之前拒绝该配置。端口名称会保留在配置快照中；不支持 Swarm `mode`、`app_protocol` 等其他长格式选项。
 
 Loader 会寻找 `docker-compose.yml`、`compose.yml`、`compose.yaml` 或 `docker-compose.yaml`，读取 `.env` 和服务的 `env_file`，再展开 YAML 中的变量。解析结果包含镜像、build、命令、环境、端口、卷、网络、健康检查、重启策略、profiles、labels、logging、capabilities、资源限制以及部分 `deploy` 字段。
 
@@ -40,6 +40,8 @@ Loader 会寻找 `docker-compose.yml`、`compose.yml`、`compose.yaml` 或 `dock
 展开 YAML 时，ComposeSharp 优先使用进程环境变量，其次使用项目的 `.env`。服务的 `env_file` 只会写入该容器的环境，不作为插值来源。未设置的变量会展开为空；可使用 `-`/`:-` 指定默认值，或使用 `?`/`:?` 强制要求变量存在。`$$` 会生成字面量 `$`；必需变量缺失时，错误会同时指出变量名和 Compose 文件。
 
 `ComposeFileMerger.MergeWithEnv` 会在本次合并中优先使用显式 override，其次才是进程环境和 `.env`。它不会修改进程级环境变量，因此并发合并互相隔离，调用方也无需恢复环境状态。
+
+多文件加载会保留不同的端口绑定，并按规范化后的主机 IP、发布端口、目标端口和协议替换匹配项；具体规则和限制见[合并语义](docs/merge-semantics.md)。
 
 ### Loader 诊断
 
@@ -108,7 +110,7 @@ builder.Services.AddComposeSharp();
 - `PublishAsync` 会把每个被选中服务的镜像打成 `repository:serviceName`，并使用 `ComposeProjectContext.RegistryAuth` 推送；返回值为每个服务一条 `PublishResult`，分别记录 tag 与 push 结果，不会在第一个失败处中断。`ComposePublishOptions` 中的 `ResolveImageDigests`、`WithEnvironment`、`OcIVersion` 和 `InsecureRegistry` 尚未应用。
 - `LoadMerged` 按字段逐步合并后置文件：标量由后置值覆盖，映射递归合并，列表追加；服务资源、`command` 和 `entrypoint` 有明确的替换规则。它仍不是 Docker Compose 的完整合并算法；精确规则和不支持的 YAML 标签见[合并语义](docs/merge-semantics.md)。
 - `ComposeProjectContext.Profiles` 会在加载项目，以及面向服务的生命周期、检查、镜像、日志、事件和 watch 操作中统一选择服务：未配置 `profiles` 的服务始终会被选择；配置了 profile 的服务会在任一 profile 被激活时被选择。显式指定服务的操作即使未激活该服务的 profile，也可以选择它；选择结果为空时不会退化成操作项目中的全部容器。
-- 加载器可能会保留引擎尚未完全应用的字段。`LoadProject` 和 `GenerateAsync` 会通过 `Diagnostics` 返回稳定且不包含字段值的诊断，其中包含来源文件、属性路径、适用时的服务名，以及 `unsupported-field` 或 `partially-supported-field` 类型。默认的 `ComposeValidationMode.Report` 会按已记录的行为继续；`ComposeValidationMode.Strict` 会在任何 Docker Engine 操作前拒绝这些字段。非空的未知项目、服务、build 和 healthcheck 字段也会报告。当自定义 `container_name` 与大于 1 的 `deploy.replicas` 同时配置时会产生诊断，因为扩容后的容器使用自动生成的名称。加载时无法获知操作选项中的副本数覆盖值。服务的 `platform` 即使用作 build 的后备平台也会产生诊断，因为镜像拉取和容器创建不会应用它。长格式服务卷、Windows 盘符卷源路径、长格式 `env_file` 条目、未应用的依赖条件和忽略的 build 选项会产生诊断；默认资源零值和布尔 `false` 默认值保持静默；`init: false` 除外，它会产生诊断，因为实际使用 daemon 默认值。环境列表中的裸变量名和环境映射中的空值条目会产生诊断，因为尚未实现从调用进程透传环境变量；显式空字符串赋值保持静默。除非显式禁用，否则标量 `healthcheck.test: NONE` 是启用的 shell 检查；列表格式 `[NONE]` 会禁用检查。依赖条件诊断会区分这两种情况。其他空值/默认值和 `x-*` 扩展不会产生诊断。顶层网络显式声明驱动时会产生诊断，因为引擎使用的 daemon 默认驱动因平台而异。显式空 `command` 和 `entrypoint` 也会产生诊断，因为它们不会清除镜像默认值。报告模式接受重复暴露的端口；同一容器端口的多个显式主机绑定仅保留最后一个。标量转换异常及其内部异常不会包含字段值或插值后的值。服务未显式指定网络或网络模式，而引擎会将其连接到自定义项目网络而非隐式默认网络时，也会产生部分支持诊断。诊断不会包含字段值，因为其中可能有凭据或机密。依赖某个 Compose 属性的运行时行为前，请查看 [Compose 字段支持矩阵](docs/compose-field-matrix.md)中的行为说明和诊断覆盖。
+- 加载器可能会保留引擎尚未完全应用的字段。`LoadProject` 和 `GenerateAsync` 会通过 `Diagnostics` 返回稳定且不包含字段值的诊断，其中包含来源文件、属性路径、适用时的服务名，以及 `unsupported-field` 或 `partially-supported-field` 类型。默认的 `ComposeValidationMode.Report` 会按已记录的行为继续；`ComposeValidationMode.Strict` 会在任何 Docker Engine 操作前拒绝这些字段。非空的未知项目、服务、build 和 healthcheck 字段也会报告。当自定义 `container_name` 与大于 1 的 `deploy.replicas` 同时配置时会产生诊断，因为扩容后的容器使用自动生成的名称。加载时无法获知操作选项中的副本数覆盖值。服务的 `platform` 即使用作 build 的后备平台也会产生诊断，因为镜像拉取和容器创建不会应用它。长格式服务卷、Windows 盘符卷源路径、长格式 `env_file` 条目、未应用的依赖条件和忽略的 build 选项会产生诊断；默认资源零值和布尔 `false` 默认值保持静默；`init: false` 除外，它会产生诊断，因为实际使用 daemon 默认值。环境列表中的裸变量名和环境映射中的空值条目会产生诊断，因为尚未实现从调用进程透传环境变量；显式空字符串赋值保持静默。除非显式禁用，否则标量 `healthcheck.test: NONE` 是启用的 shell 检查；列表格式 `[NONE]` 会禁用检查。依赖条件诊断会区分这两种情况。其他空值/默认值和 `x-*` 扩展不会产生诊断。顶层网络显式声明驱动时会产生诊断，因为引擎使用的 daemon 默认驱动因平台而异。显式空 `command` 和 `entrypoint` 也会产生诊断，因为它们不会清除镜像默认值。标量转换异常及其内部异常不会包含字段值或插值后的值。服务未显式指定网络或网络模式，而引擎会将其连接到自定义项目网络而非隐式默认网络时，也会产生部分支持诊断。诊断不会包含字段值，因为其中可能有凭据或机密。依赖某个 Compose 属性的运行时行为前，请查看 [Compose 字段支持矩阵](docs/compose-field-matrix.md)中的行为说明和诊断覆盖。
 - `depends_on` 会将所选服务的传递依赖纳入启动范围，并按稳定顺序启动。未启用有效 Docker 健康检查的依赖必须处于运行状态；启用了健康检查（包括从镜像继承）的依赖必须通过健康检查。依赖变为不健康或停止时会返回诊断错误；调用方可以设置 `DependencyWaitTimeoutSeconds` 或取消操作。缺失服务和依赖环也会返回诊断错误；长格式条件不会被保留。依赖显式启用健康检查时，`service_healthy` 与当前就绪行为一致；只有 Compose 服务显式禁用健康检查时，`service_started` 才不会产生诊断。未显式禁用时，镜像可能提供继承的健康检查，因此会报告诊断。
 
 默认端点在 Windows 是 `npipe://./pipe/docker_engine`，Unix 是 `unix:///var/run/docker.sock`；也可以通过 `SocketPath` 显式指定。

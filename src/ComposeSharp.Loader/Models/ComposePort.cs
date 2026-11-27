@@ -3,15 +3,19 @@
 namespace ComposeSharp.Loader.Models;
 
 /// <summary>
-/// A short-syntax port mapping. Long port syntax is rejected at load time.
-/// <see cref="ContainerPort"/> keeps the <c>/protocol</c> suffix as written;
-/// <see cref="HostPort"/> is null for container-only entries, which expose the port
-/// without creating a host binding. Port ranges are not modeled.
+/// A published port mapping. Target ranges are expanded by the loader; a host port
+/// range on a single target is allocated by Docker. A null host port requests a
+/// dynamically assigned port. An unspecified host IP uses the daemon default.
 /// </summary>
 public sealed record ComposePort(string? HostPort, string ContainerPort, string Protocol = "tcp")
 {
     /// <summary>The explicit host IP address, without IPv6 brackets, or null when unspecified.</summary>
     public string? HostIp { get; init; }
+
+    /// <summary>The optional descriptive name from long syntax.</summary>
+    // Rider inspection rationale: Public model initializers are available to downstream callers.
+    // ReSharper disable once UnusedAutoPropertyAccessor.Global
+    public string? Name { get; init; }
 }
 
 /// <summary>

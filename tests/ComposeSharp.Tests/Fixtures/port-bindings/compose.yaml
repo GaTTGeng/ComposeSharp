@@ -1,0 +1,16 @@
+services:
+  app:
+    image: example
+    ports:
+      - '127.0.0.1:8000-8001:80-81/tcp'
+      - '[::1]:5353:53/udp'
+      - '82'
+      - '127.0.0.1:0:84/tcp'
+      - target: 83
+        published: '9000-9010'
+        host_ip: 127.0.0.1
+        protocol: udp
+        name: telemetry
+      - target: 80
+        published: '8080'
+        host_ip: 127.0.0.1

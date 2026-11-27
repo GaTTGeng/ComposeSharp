@@ -469,12 +469,14 @@ internal sealed class ContainerLifecycle
     internal static Dictionary<string, IList<PortBinding>>? BuildPortBindings(IReadOnlyList<ComposePort> ports)
     {
         if (ports.Count == 0) return null;
-        // Only ports with an explicit host mapping are bound; container-only ports stay exposed.
         var result = new Dictionary<string, IList<PortBinding>>();
         foreach (var port in ports)
         {
-            if (port.HostPort is null) continue;
-            result[port.ContainerPort] = [new PortBinding { HostPort = port.HostPort, HostIP = port.HostIp }];
+            if (!result.TryGetValue(port.ContainerPort, out var bindings))
+                result[port.ContainerPort] = bindings = new List<PortBinding>();
+            if (bindings.Any(binding => binding.HostPort == (port.HostPort ?? string.Empty) && binding.HostIP == port.HostIp))
+                continue;
+            bindings.Add(new PortBinding { HostPort = port.HostPort ?? string.Empty, HostIP = port.HostIp });
         }
         return result.Count == 0 ? null : result;
     }

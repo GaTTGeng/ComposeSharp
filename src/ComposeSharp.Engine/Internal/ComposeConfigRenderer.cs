@@ -50,9 +50,19 @@ internal static class ComposeConfigRenderer
         // The loader has already folded env_file values into Environment. Emitting env_file as
         // well would read local files again and could change the snapshot on a later load.
         AddList(result, "environment", service.Environment);
-        AddList(result, "ports", service.Ports.Select(port =>
-            port.HostPort is null ? port.ContainerPort :
-                $"{(port.HostIp is null ? "" : port.HostIp.Contains(':') ? $"[{port.HostIp}]:" : $"{port.HostIp}:")}{port.HostPort}:{port.ContainerPort}").ToList());
+        if (service.Ports.Count > 0)
+            result["ports"] = service.Ports.Select(port =>
+            {
+                var mapping = new Dictionary<string, object?>
+                {
+                    ["target"] = port.ContainerPort.Split('/')[0],
+                    ["protocol"] = port.Protocol
+                };
+                Add(mapping, "published", port.HostPort);
+                Add(mapping, "host_ip", port.HostIp);
+                Add(mapping, "name", port.Name);
+                return mapping;
+            }).ToArray();
         AddList(result, "volumes", service.Volumes);
         Add(result, "restart", service.Restart);
         if (service.Healthcheck is { } healthcheck)
@@ -270,6 +280,7 @@ internal static class ComposeConfigRenderer
             pair => pair.Key.Replace("$", "$$", StringComparison.Ordinal),
             pair => EscapeInterpolation(pair.Value), StringComparer.Ordinal),
         IEnumerable<string> strings => strings.Select(item => item.Replace("$", "$$", StringComparison.Ordinal)).ToArray(),
+        IEnumerable<Dictionary<string, object?>> maps => maps.Select(EscapeInterpolation).ToArray(),
         _ => value
     };
 }

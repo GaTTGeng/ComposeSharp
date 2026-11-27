@@ -57,6 +57,8 @@ Dependency-aware startup now includes selected services' transitive dependencies
 
 The field audit reports value-free diagnostics for unknown, unsupported, and partially applied Compose fields, including explicit empty command overrides and daemon-dependent defaults. Callers can inspect them through `LoadProject` or `GenerateAsync`, or select strict validation to reject the configuration before Docker Engine operations. See the [field matrix](compose-field-matrix.md) for diagnostic coverage and each field's actual behavior.
 
+Port declarations support short and selected long syntax, ranges, dynamic publication and multiple bindings. Unsupported port options are rejected before Docker operations; the field matrix documents the binding defaults and remaining limits.
+
 `ListAsync` derives each stack's status from all project-labeled container states. It reports `running`, `exited`, `partial`, or `unknown`; by default, Docker's non-`All` container listing determines which projects are included, while `All` includes projects with only stopped containers.
 
 ### Exit criteria

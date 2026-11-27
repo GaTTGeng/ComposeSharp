@@ -11,6 +11,7 @@ This is an incremental Compose merge implementation, not full Compose Specificat
 | Standard lists | Base entries are retained and overlay entries are appended. Matching scalar entries are retained once. |
 | `environment` and `labels` list form | Entries are matched by the text before `=`; the later entry replaces a matching earlier entry. |
 | `volumes`, `secrets`, and `configs` service lists | Entries with the same container target replace the earlier entry; entries with new targets are appended. |
+| `ports` service lists | Target ranges are expanded before merging. Entries with the same normalized host IP, published port, target and protocol replace the earlier entry, including equivalent short and long forms; distinct entries are appended. Matching entries replace as a whole rather than merging their attributes. Diagnostic indices refer to the expanded merged list. |
 | `command`, `entrypoint`, and `healthcheck.test` | The later list replaces the earlier list. |
 
 Top-level `volumes`, `networks`, `secrets`, and `configs` are mappings, so resource names are accumulated and matching definitions merge recursively.

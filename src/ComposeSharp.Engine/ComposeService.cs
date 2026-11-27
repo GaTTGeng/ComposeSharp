@@ -75,6 +75,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>
     /// Creates project networks/volumes, then reconciles each selected service to its desired replica count.
     /// </summary>
+    /// <remarks>A published range for one target port is rejected before resource creation on Windows daemons.</remarks>
     public async Task UpAsync(ComposeProjectContext context, ComposeUpOptions? options = null, CancellationToken cancellationToken = default)
     {
         // Load project -> open client.
@@ -85,6 +86,7 @@ public sealed class ComposeService : IComposeService
         var targetServices = GetOrderedServices(project, context.Profiles, options?.Services);
         var servicesByName = project.Services.ToDictionary(service => service.Name, StringComparer.OrdinalIgnoreCase);
         var dependencyTimeout = GetDependencyWaitTimeout(options?.DependencyWaitTimeoutSeconds);
+        await ValidatePublishedPortRangesAsync(client, project, targetServices.Select(service => service.Name), cancellationToken);
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
 
         foreach (var service in targetServices)
@@ -155,6 +157,7 @@ public sealed class ComposeService : IComposeService
     /// <summary>
     /// Creates and starts project containers without pulling images, after their dependencies are ready.
     /// </summary>
+    /// <remarks>A published range for one target port is rejected before resource creation on Windows daemons.</remarks>
     public async Task CreateAsync(ComposeProjectContext context, ComposeCreateOptions? options = null, CancellationToken cancellationToken = default)
     {
         // Load project -> open client.
@@ -164,6 +167,7 @@ public sealed class ComposeService : IComposeService
         var targetServices = GetOrderedServices(project, context.Profiles, options?.Services);
         var servicesByName = project.Services.ToDictionary(service => service.Name, StringComparer.OrdinalIgnoreCase);
         var dependencyTimeout = GetDependencyWaitTimeout(options?.DependencyWaitTimeoutSeconds);
+        await ValidatePublishedPortRangesAsync(client, project, targetServices.Select(service => service.Name), cancellationToken);
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
         foreach (var service in targetServices)
         {
@@ -291,6 +295,7 @@ public sealed class ComposeService : IComposeService
     /// The container is labeled one-off with container number 0 so service reconciliation ignores it.
     /// Unless detached, the container's output is written to the console and the container is then
     /// removed unless <c>Remove</c> is explicitly false.
+    /// A published range for one target port is rejected before resource creation on Windows daemons.
     /// </remarks>
     public async Task<string> RunAsync(ComposeProjectContext context, string serviceName, ComposeRunOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -301,6 +306,7 @@ public sealed class ComposeService : IComposeService
 
         // One-off containers still need the project networks/volumes in place.
         using var client = _clientFactory.CreateClient(context.SocketPath);
+        await ValidatePublishedPortRangesAsync(client, project, [service.Name], cancellationToken);
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
 
         // Unique default name plus replica index 0 and the one-off label keep reconciliation from adopting this container.
@@ -714,11 +720,13 @@ public sealed class ComposeService : IComposeService
     }
 
     /// <summary>Adjusts the replica count of the given services and reports desired versus running containers.</summary>
+    /// <remarks>A published range for one target port is rejected before resource creation on Windows daemons.</remarks>
     public async Task<IReadOnlyList<ServiceStatus>> ScaleAsync(ComposeProjectContext context, ComposeScaleOptions options, CancellationToken cancellationToken = default)
     {
         // Load project -> open client -> ensure infrastructure so new replicas can attach.
         var project = LoadProjectInternal(context);
         using var client = _clientFactory.CreateClient(context.SocketPath);
+        await ValidatePublishedPortRangesAsync(client, project, options.Services.Keys, cancellationToken);
         await _networks.EnsureProjectInfrastructureAsync(client, context.ProjectName, project, cancellationToken);
 
         // For each requested service, reconcile toward the new replica count and report desired vs running.
@@ -1058,6 +1066,19 @@ public sealed class ComposeService : IComposeService
     {
         if (context.ValidationMode == ComposeValidationMode.Strict)
             _ = LoadProjectInternal(context);
+    }
+
+    private static async Task ValidatePublishedPortRangesAsync(
+        DockerClient client, ComposeProject project, IEnumerable<string> services, CancellationToken cancellationToken)
+    {
+        var selected = services.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var diagnostic = project.PublishedPortRanges.FirstOrDefault(item =>
+            item.ServiceName is not null && selected.Contains(item.ServiceName));
+        if (diagnostic is null) return;
+        var info = await client.System.GetSystemInfoAsync(cancellationToken);
+        if (string.Equals(info.OSType, "windows", StringComparison.OrdinalIgnoreCase))
+            throw new ComposeValidationException(diagnostic.SourceFile, diagnostic.PropertyPath,
+                $"{diagnostic.Code}: {diagnostic.Message}", diagnostic.ServiceName);
     }
 
     private static IReadOnlyList<ComposeDiagnostic> ToApiDiagnostics(ComposeProject project)

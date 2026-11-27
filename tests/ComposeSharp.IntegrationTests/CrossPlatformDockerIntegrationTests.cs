@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using ComposeSharp.Api;
 using ComposeSharp.Engine;
+using ComposeSharp.Loader;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 
@@ -162,6 +163,7 @@ public class CrossPlatformDockerIntegrationTests
         var portSpec = env.IsWindowsDaemon
             ? $"{hostPort}:8080/tcp"
             : $"127.0.0.1:{hostPort}:8080/tcp";
+        var rangePort = env.IsWindowsDaemon ? "" : "- target: 8081\n        published: '49152-49252'";
 
         var (context, directory) = CreateTempProject("xp-ports", $"""
             services:
@@ -170,6 +172,9 @@ public class CrossPlatformDockerIntegrationTests
                 command: {env.SleepCommandYaml}
                 ports:
                   - '{portSpec}'
+                  - target: 5353
+                    protocol: udp
+                  {rangePort}
             """);
         var service = new ComposeService();
 
@@ -190,10 +195,49 @@ public class CrossPlatformDockerIntegrationTests
             Assert.Equal(hostPort, reportedPort.Port);
             if (!env.IsWindowsDaemon)
                 Assert.Equal("127.0.0.1", reportedPort.Host);
+
+            var udpBinding = inspected.NetworkSettings.Ports["5353/udp"].First();
+            Assert.True(int.Parse(udpBinding.HostPort) > 0);
+            var reportedUdp = await service.PortAsync(context, "app", 5353, new ComposePortOptions { Protocol = "udp" });
+            Assert.Equal(int.Parse(udpBinding.HostPort), reportedUdp.Port);
+
+            if (!env.IsWindowsDaemon)
+            {
+                var rangedPort = await service.PortAsync(context, "app", 8081);
+                Assert.InRange(rangedPort.Port, 49152, 49252);
+            }
         }
         finally
         {
             await SafeCleanupAsync(service, context, directory, removeVolumes: true);
+        }
+    }
+
+    [Fact]
+    public async Task Ports_WindowsRangeIsRejectedBeforeCreatingResources()
+    {
+        var env = GetRequiredEnvironmentOrSkip();
+        if (env is null || !env.IsWindowsDaemon) return;
+
+        var (context, directory) = CreateTempProject("xp-port-range", $"""
+            services:
+              app:
+                image: {env.Image}
+                ports:
+                  - target: 80
+                    published: '49152-49252'
+            """);
+        try
+        {
+            var error = await Assert.ThrowsAsync<ComposeValidationException>(() => new ComposeService().UpAsync(context));
+            Assert.Equal(Path.Combine(directory, "compose.yaml"), error.SourceFile);
+            Assert.Equal("app", error.ServiceName);
+            Assert.Equal("services.app.ports[0]", error.PropertyPath);
+            await AssertNoProjectResourcesAsync(context.ProjectName, checkVolumes: true);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
         }
     }
 
@@ -531,6 +575,8 @@ public class CrossPlatformDockerIntegrationTests
 
     private sealed class CapturingLogConsumer : ILogConsumer
     {
+        // Rider inspection rationale: System.Threading.Lock is unavailable on the net8.0 and net9.0 targets.
+        // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
         private readonly object _sync = new();
         private readonly List<(string Message, bool IsStdErr)> _entries = [];
 
