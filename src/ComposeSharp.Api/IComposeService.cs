@@ -104,6 +104,7 @@ public interface IComposeService
     Task<IReadOnlyList<ImageSummary>> ImagesAsync(ComposeProjectContext context, ComposeImagesOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Resolves the host address and published port for a container port of a service.</summary>
+    /// <remarks>Returns the first binding for the selected protocol on the selected running container, including a port dynamically assigned by Docker.</remarks>
     Task<(string Host, int Port)> PortAsync(ComposeProjectContext context, string serviceName, int containerPort, ComposePortOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Streams project container logs to an <see cref="ILogConsumer"/>, or writes combined text to the console when none is supplied.</summary>

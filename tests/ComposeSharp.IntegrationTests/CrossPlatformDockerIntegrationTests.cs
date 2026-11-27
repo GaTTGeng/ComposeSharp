@@ -170,6 +170,10 @@ public class CrossPlatformDockerIntegrationTests
                 command: {env.SleepCommandYaml}
                 ports:
                   - '{portSpec}'
+                  - target: 5353
+                    protocol: udp
+                  - target: 8081
+                    published: '49152-49252'
             """);
         var service = new ComposeService();
 
@@ -190,6 +194,14 @@ public class CrossPlatformDockerIntegrationTests
             Assert.Equal(hostPort, reportedPort.Port);
             if (!env.IsWindowsDaemon)
                 Assert.Equal("127.0.0.1", reportedPort.Host);
+
+            var udpBinding = inspected.NetworkSettings.Ports["5353/udp"].First();
+            Assert.True(int.Parse(udpBinding.HostPort) > 0);
+            var reportedUdp = await service.PortAsync(context, "app", 5353, new ComposePortOptions { Protocol = "udp" });
+            Assert.Equal(int.Parse(udpBinding.HostPort), reportedUdp.Port);
+
+            var rangedPort = await service.PortAsync(context, "app", 8081);
+            Assert.InRange(rangedPort.Port, 49152, 49252);
         }
         finally
         {
@@ -531,6 +543,8 @@ public class CrossPlatformDockerIntegrationTests
 
     private sealed class CapturingLogConsumer : ILogConsumer
     {
+        // Rider inspection rationale: System.Threading.Lock is unavailable on the net8.0 and net9.0 targets.
+        // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
         private readonly object _sync = new();
         private readonly List<(string Message, bool IsStdErr)> _entries = [];
 

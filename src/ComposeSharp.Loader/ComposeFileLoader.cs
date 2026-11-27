@@ -3,7 +3,6 @@
 // Rider inspection rationale: The default value is intentional and keeps the current fallback semantics explicit.
 // ReSharper disable PreferConcreteValueOverDefault
 using System.Globalization;
-using System.Net;
 using System.Text.RegularExpressions;
 using ComposeSharp.Loader.Interpolation;
 using ComposeSharp.Loader.Models;
@@ -324,21 +323,6 @@ public sealed class ComposeFileLoader
             else if (command is string { Length: > 0 })
                 AddDiagnostic(diagnostics, context, $"{servicePath}.{field}", serviceName,
                     "partially-supported-field", "Scalar commands are passed as one argument instead of shell-split arguments.");
-        }
-
-        if (TryGetValue(service, "ports", out var ports) && ports is List<object?> portList)
-        {
-            var containerPorts = new HashSet<string>(StringComparer.Ordinal);
-            for (var i = 0; i < portList.Count; i++)
-            {
-                if (portList[i] is not string port)
-                    continue;
-
-                var containerPort = ParsePort(port).ContainerPort;
-                if (!containerPorts.Add(containerPort))
-                    AddDiagnostic(diagnostics, context, $"{servicePath}.ports[{i}]", serviceName,
-                        "partially-supported-field", "Multiple host mappings for the same container port are not applied.");
-            }
         }
 
         if (TryGetValue(service, "depends_on", out var dependencies) && dependencies is Dictionary<object, object?> dependencyMap)
@@ -1126,71 +1110,41 @@ public sealed class ComposeFileLoader
         ValidateBoolean(buildMap, "no_cache", $"{path}.build.no_cache", context);
     }
 
-    /// <summary>
-    /// Validates short-syntax port mappings. Long port syntax is a documented limitation and is
-    /// rejected here rather than silently misparsed.
-    /// </summary>
     private static void ValidatePorts(Dictionary<object, object?> service, string path, ValidationContext context)
     {
         if (!TryGetValue(service, "ports", out var value) || value is null)
             return;
         var portsPath = $"{path}.ports";
-        // Ports must be a list; each entry is one short-syntax mapping string.
         if (value is not List<object?> ports)
             throw Validation(context, portsPath, $"expected a YAML list, but found {DescribeNode(value)}.");
 
+        if (ports.Count > 0 && GetString(service, "network_mode") == "host")
+            throw Validation(context, portsPath, "port publishing cannot be combined with host network mode.");
+
+        var bindings = new Dictionary<(string Protocol, string HostPort), List<ComposePort>>();
         for (var index = 0; index < ports.Count; index++)
         {
-            var item = ports[index];
             var itemPath = $"{portsPath}[{index}]";
-            if (!IsScalar(item))
-                throw Validation(context, itemPath, $"long port syntax is not supported; found {DescribeNode(item)}.");
-            var text = item?.ToString() ?? string.Empty;
-            if (!IsValidPort(text))
-                throw ConversionValidation(context, itemPath, "a supported short port mapping");
+            try
+            {
+                var parsed = ComposePortParser.Parse(ports[index]);
+                foreach (var port in parsed)
+                {
+                    if (port.HostPort is null || port.HostPort.Contains('-')) continue;
+                    var key = (port.Protocol, port.HostPort);
+                    if (!bindings.TryGetValue(key, out var previous))
+                        bindings[key] = previous = [];
+                    if (ComposePortParser.Conflicts(previous, port))
+                        throw new PortParseException("", "host port conflicts with another binding in this service.");
+                    previous.Add(port);
+                }
+            }
+            catch (PortParseException exception)
+            {
+                throw Validation(context, itemPath + (ports[index] is Dictionary<object, object?> ? exception.Path : ""), exception.Message);
+            }
         }
     }
-
-    /// <summary>
-    /// Accepts the supported short port forms: <c>[container]</c>, <c>[host:]container</c>,
-    /// <c>[ip:]host:container</c>, optional <c>/protocol</c>, and bracketed IPv6 hosts.
-    /// </summary>
-    private static bool IsValidPort(string value)
-    {
-        // Strip quotes and the trailing /protocol first so colon counting only sees the address part.
-        var text = value.Trim('"', '\'');
-        var slash = text.LastIndexOf('/');
-        if (slash >= 0)
-        {
-            if (slash == text.Length - 1 || text[(slash + 1)..] is not ("tcp" or "udp" or "sctp"))
-                return false;
-            text = text[..slash];
-        }
-
-        // IPv6 hosts are bracketed so their inner colons do not split the mapping.
-        if (text.StartsWith("[", StringComparison.Ordinal))
-        {
-            var closingBracket = text.IndexOf(']');
-            if (closingBracket <= 1 || closingBracket == text.Length - 1 || text[closingBracket + 1] != ':')
-                return false;
-
-            var host = text[1..closingBracket];
-            var ports = text[(closingBracket + 2)..].Split(':');
-            return IPAddress.TryParse(host, out _) && ports.Length == 2 && ports.All(IsValidPortNumber);
-        }
-
-        // Colon count selects the form: container, host:container, or ip:host:container.
-        var parts = text.Split(':');
-        return parts.Length switch
-        {
-            1 or 2 => parts.All(IsValidPortNumber),
-            3 => IPAddress.TryParse(parts[0], out _) && parts.Skip(1).All(IsValidPortNumber),
-            _ => false
-        };
-    }
-
-    private static bool IsValidPortNumber(string value)
-        => int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var port) && port is >= 1 and <= 65535;
 
     private static void ValidateOptionalMapPath(
         Dictionary<object, object?> map,
@@ -1944,46 +1898,9 @@ public sealed class ComposeFileLoader
 
     private static List<ComposePort> ReadPorts(Dictionary<object, object?> map)
     {
-        return GetStringList(map, "ports").Select(ParsePort).ToList();
-    }
-
-    /// <summary>
-    /// Parses a short port mapping. Container port keeps its <c>/protocol</c> suffix;
-    /// a missing host part yields a null host port (container-only exposure).
-    /// </summary>
-    private static ComposePort ParsePort(string value)
-    {
-        // Peel the /protocol suffix first, then let colon count pick host/container positions.
-        var protocol = "tcp";
-        var text = value.Trim('"', '\'');
-        var slash = text.LastIndexOf('/');
-        if (slash >= 0)
-        {
-            protocol = text[(slash + 1)..];
-            text = text[..slash];
-        }
-
-        string? hostIp = null;
-        if (text.StartsWith("[", StringComparison.Ordinal))
-        {
-            var closingBracket = text.IndexOf(']');
-            hostIp = text[1..closingBracket];
-            text = text[(closingBracket + 2)..];
-        }
-        else if (text.Count(character => character == ':') == 2)
-        {
-            var separator = text.IndexOf(':');
-            hostIp = text[..separator];
-            text = text[(separator + 1)..];
-        }
-
-        var parts = text.Split(':');
-        return parts.Length switch
-        {
-            1 => new ComposePort(null, $"{parts[0]}/{protocol}", protocol),
-            2 => new ComposePort(parts[0], $"{parts[1]}/{protocol}", protocol) { HostIp = hostIp },
-            _ => throw new NotSupportedException($"Invalid port mapping: {value}")
-        };
+        return TryGetValue(map, "ports", out var value) && value is List<object?> ports
+            ? ports.SelectMany(ComposePortParser.Parse).ToList()
+            : [];
     }
 
     /// <summary>

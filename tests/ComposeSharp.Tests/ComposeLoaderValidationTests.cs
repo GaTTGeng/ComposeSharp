@@ -67,8 +67,8 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Theory]
-    [InlineData("not-a-port", "services.api.ports[0]", "not a supported short port")]
-    [InlineData("target: 80", "services.api.ports[0]", "long port syntax")]
+    [InlineData("not-a-port", "services.api.ports[0]", "expected a port")]
+    [InlineData("{target: 80, mode: ingress}", "services.api.ports[0].mode", "not supported")]
     public void Load_InvalidPort_ReportsFullContext(string portYaml, string path, string message)
     {
         using var files = new ComposeFiles($"services:\n  api:\n    image: app\n    ports:\n      - {portYaml}\n");
@@ -467,15 +467,14 @@ public sealed class ComposeLoaderValidationTests
     }
 
     [Fact]
-    public void Load_DuplicateContainerPortMappingsAreDiagnosed()
+    public void Load_MultipleContainerPortMappingsAreRetained()
     {
         using var files = new ComposeFiles(
             "services:\n  api:\n    image: app\n    ports: [\"8080:80\", \"8081:80\"]\n");
 
-        var diagnostic = Assert.Single(((ComposeProject)files.Load()).Diagnostics);
-
-        Assert.Equal("services.api.ports[1]", diagnostic.PropertyPath);
-        Assert.Equal("partially-supported-field", diagnostic.Code);
+        var project = (ComposeProject)files.Load();
+        Assert.Empty(project.Diagnostics);
+        Assert.Equal(["8080", "8081"], Assert.Single(project.Services).Ports.Select(port => port.HostPort));
     }
 
     [Theory]
@@ -1105,7 +1104,7 @@ public sealed class ComposeLoaderValidationTests
         var exception = Assert.Throws<ComposeValidationException>(() => files.LoadMerged());
 
         AssertServiceDiagnostic(
-            exception, files.PrimaryPath, "api", "services.api.ports[0]", "short port mapping");
+            exception, files.PrimaryPath, "api", "services.api.ports[0]", "expected a port");
     }
 
     // Appended overlay items report the overlay file and their index in the merged list.
@@ -1119,7 +1118,7 @@ public sealed class ComposeLoaderValidationTests
         var exception = Assert.Throws<ComposeValidationException>(() => files.LoadMerged());
 
         AssertServiceDiagnostic(
-            exception, files.OverlayPath!, "api", "services.api.ports[1]", "short port mapping");
+            exception, files.OverlayPath!, "api", "services.api.ports[1]", "expected a port");
     }
 
     [Theory]

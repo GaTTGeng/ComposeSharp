@@ -16,6 +16,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Port declarations support long syntax, ranges and multiple host bindings.
 - `ComposeFileMerger.MergeWithEnv` now applies explicit interpolation overrides per call without mutating process-wide environment variables, honors platform-specific key matching, and preserves runtime-specific empty-value behavior.
 - `ListAsync` derives project status from all labeled containers and follows Docker's default container listing for project inclusion unless `All` is enabled.
 - `WatchAsync` continuously monitors selected build contexts together, fans out shared-context changes, and reports missing contexts and watcher failures; unsupported pruning and container-based generation selections now fail explicitly.
@@ -26,7 +27,6 @@ This project follows [Semantic Versioning](https://semver.org/).
 - A custom container name with multiple configured replicas produces a diagnostic and is rejected in strict validation mode.
 - Explicit empty commands, disabled init, and explicit network drivers produce diagnostics when their requested behavior is not applied.
 - Scalar conversion errors no longer expose interpolated values in exception messages or inner exceptions.
-- Duplicate exposed ports no longer fail container creation in report mode; repeated host bindings retain the last mapping.
 - Service `platform` produces a partial-support diagnostic when used as a build fallback because image pulls and container creation do not apply it.
 
 - Unknown non-empty healthcheck fields produce diagnostics and are rejected in strict validation mode.
@@ -54,6 +54,10 @@ This project follows [Semantic Versioning](https://semver.org/).
 - `UpAsync` and `CreateAsync` preserve retained one-off containers while reconciling dependency services.
 - Dependency readiness waits while a container is paused or restarting, even when Docker reports it as running.
 - Canceling `WatchAsync` propagates cancellation without emitting a false rebuild notification.
+
+### Breaking changes
+
+- Port declarations without a published host port now request a dynamically assigned host port instead of exposing the container port without publishing it; Docker's default host address may listen on all interfaces.
 
 ## [3.0.0] - 2026-10-09
 
