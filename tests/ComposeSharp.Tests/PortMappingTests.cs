@@ -64,6 +64,16 @@ public sealed class PortMappingTests : IDisposable
     }
 
     [Fact]
+    public void BuildPortBindings_DeduplicatesIdenticalDynamicBindings()
+    {
+        File.WriteAllText(Path.Combine(_directory, "compose.yaml"),
+            "services:\n  app:\n    image: example\n    ports: ['80', '80']\n");
+        var ports = Assert.Single(new ComposeFileLoader().Load(_directory, "compose.yaml").Services).Ports;
+        var binding = Assert.Single(ContainerLifecycle.BuildPortBindings(ports)!["80/tcp"]);
+        Assert.Equal(string.Empty, binding.HostPort);
+    }
+
+    [Fact]
     public async Task Up_RejectsUnsupportedPortOptionsBeforeDockerAccess()
     {
         await File.WriteAllTextAsync(Path.Combine(_directory, "compose.yaml"),

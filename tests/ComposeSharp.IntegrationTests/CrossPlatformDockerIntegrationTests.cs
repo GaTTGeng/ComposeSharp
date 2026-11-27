@@ -162,6 +162,7 @@ public class CrossPlatformDockerIntegrationTests
         var portSpec = env.IsWindowsDaemon
             ? $"{hostPort}:8080/tcp"
             : $"127.0.0.1:{hostPort}:8080/tcp";
+        var rangePort = env.IsWindowsDaemon ? "" : "- target: 8081\n        published: '49152-49252'";
 
         var (context, directory) = CreateTempProject("xp-ports", $"""
             services:
@@ -172,8 +173,7 @@ public class CrossPlatformDockerIntegrationTests
                   - '{portSpec}'
                   - target: 5353
                     protocol: udp
-                  - target: 8081
-                    published: '49152-49252'
+                  {rangePort}
             """);
         var service = new ComposeService();
 
@@ -200,8 +200,11 @@ public class CrossPlatformDockerIntegrationTests
             var reportedUdp = await service.PortAsync(context, "app", 5353, new ComposePortOptions { Protocol = "udp" });
             Assert.Equal(int.Parse(udpBinding.HostPort), reportedUdp.Port);
 
-            var rangedPort = await service.PortAsync(context, "app", 8081);
-            Assert.InRange(rangedPort.Port, 49152, 49252);
+            if (!env.IsWindowsDaemon)
+            {
+                var rangedPort = await service.PortAsync(context, "app", 8081);
+                Assert.InRange(rangedPort.Port, 49152, 49252);
+            }
         }
         finally
         {

@@ -474,6 +474,8 @@ internal sealed class ContainerLifecycle
         {
             if (!result.TryGetValue(port.ContainerPort, out var bindings))
                 result[port.ContainerPort] = bindings = new List<PortBinding>();
+            if (bindings.Any(binding => binding.HostPort == (port.HostPort ?? string.Empty) && binding.HostIP == port.HostIp))
+                continue;
             bindings.Add(new PortBinding { HostPort = port.HostPort ?? string.Empty, HostIP = port.HostIp });
         }
         return result.Count == 0 ? null : result;
