@@ -68,8 +68,12 @@ internal static class ComposePortParser
 
         if (protocol is not ("tcp" or "udp" or "sctp"))
             throw new PortParseException(".protocol", "expected tcp, udp or sctp.");
-        if (hostIp is not null && !IPAddress.TryParse(hostIp, out _))
-            throw new PortParseException(".host_ip", "expected an IPv4 or IPv6 address.");
+        if (hostIp is not null)
+        {
+            if (!IPAddress.TryParse(hostIp, out var address))
+                throw new PortParseException(".host_ip", "expected an IPv4 or IPv6 address.");
+            hostIp = address.ToString();
+        }
         var (firstTarget, lastTarget) = ParseRange(target, ".target");
         var firstHost = 0;
         var lastHost = 0;
@@ -92,11 +96,17 @@ internal static class ComposePortParser
     internal static bool Conflicts(IEnumerable<ComposePort> previous, ComposePort port)
     {
         if (port.HostPort is null || port.HostPort.Contains('-')) return false;
-        return previous.Any(other => other.HostPort == port.HostPort && other.Protocol == port.Protocol &&
-            (other.HostIp is null || port.HostIp is null ||
-             IPAddress.Parse(other.HostIp).Equals(IPAddress.Parse(port.HostIp)) ||
-             IPAddress.Parse(other.HostIp).Equals(IPAddress.Any) || IPAddress.Parse(other.HostIp).Equals(IPAddress.IPv6Any) ||
-             IPAddress.Parse(port.HostIp).Equals(IPAddress.Any) || IPAddress.Parse(port.HostIp).Equals(IPAddress.IPv6Any)));
+        return previous.Any(other =>
+        {
+            if (other.HostPort != port.HostPort || other.Protocol != port.Protocol) return false;
+            if (other.HostIp == port.HostIp && other.ContainerPort == port.ContainerPort) return false;
+            if (other.HostIp is null || port.HostIp is null) return true;
+            var left = IPAddress.Parse(other.HostIp);
+            var right = IPAddress.Parse(port.HostIp);
+            return left.Equals(right) || left.AddressFamily == right.AddressFamily &&
+                (left.Equals(IPAddress.Any) || left.Equals(IPAddress.IPv6Any) ||
+                 right.Equals(IPAddress.Any) || right.Equals(IPAddress.IPv6Any));
+        });
     }
 
     private static (int First, int Last) ParseRange(string text, string path)

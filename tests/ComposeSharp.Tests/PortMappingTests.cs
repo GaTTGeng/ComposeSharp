@@ -55,6 +55,24 @@ public sealed class PortMappingTests : IDisposable
     }
 
     [Fact]
+    public void Load_DuplicateFixedBindingsAreCoalesced()
+    {
+        File.WriteAllText(Path.Combine(_directory, "compose.yaml"),
+            "services:\n  app:\n    image: example\n    ports: ['8080:80', '8080:80']\n");
+        var ports = Assert.Single(new ComposeFileLoader().Load(_directory, "compose.yaml").Services).Ports;
+        Assert.Single(ContainerLifecycle.BuildPortBindings(ports)!["80/tcp"]);
+    }
+
+    [Fact]
+    public void Load_Ipv4WildcardDoesNotConflictWithIpv6Loopback()
+    {
+        File.WriteAllText(Path.Combine(_directory, "compose.yaml"),
+            "services:\n  app:\n    image: example\n    ports: ['0.0.0.0:8080:80', '[::1]:8080:81']\n");
+        var ports = Assert.Single(new ComposeFileLoader().Load(_directory, "compose.yaml").Services).Ports;
+        Assert.Equal(2, ports.Count);
+    }
+
+    [Fact]
     public void Load_HostNetworkWithPublishedPorts_IsRejected()
     {
         File.WriteAllText(Path.Combine(_directory, "compose.yaml"),
@@ -117,6 +135,35 @@ public sealed class PortMappingTests : IDisposable
             new ComposeFileLoader().LoadMerged(_directory, ["compose.yaml", "override.yaml"]));
         Assert.Equal(overlay, error.SourceFile);
         Assert.Equal("services.app.ports[1].mode", error.PropertyPath);
+    }
+
+    [Fact]
+    public void LoadMerged_OverlayUpdatesOneBindingWithinRange()
+    {
+        File.WriteAllText(Path.Combine(_directory, "compose.yaml"),
+            "services:\n  app:\n    image: example\n    ports: ['8080-8081:80-81']\n");
+        File.WriteAllText(Path.Combine(_directory, "override.yaml"),
+            "services:\n  app:\n    ports: [{target: 80, published: '8080', name: web}]\n");
+
+        var project = new ComposeFileLoader().LoadMerged(_directory, ["compose.yaml", "override.yaml"]);
+        var ports = Assert.Single(project.Services).Ports;
+        Assert.Equal(["80/tcp", "81/tcp"], ports.Select(port => port.ContainerPort));
+        Assert.Equal("web", ports[0].Name);
+        Assert.Equal("8081", ports[1].HostPort);
+    }
+
+    [Fact]
+    public void LoadMerged_InvalidOverlayAfterRangeRetainsSource()
+    {
+        File.WriteAllText(Path.Combine(_directory, "compose.yaml"),
+            "services:\n  app:\n    image: example\n    ports: ['8080-8081:80-81']\n");
+        var overlay = Path.Combine(_directory, "override.yaml");
+        File.WriteAllText(overlay, "services:\n  app:\n    ports: [{target: 443, mode: ingress}]\n");
+
+        var error = Assert.Throws<ComposeValidationException>(() =>
+            new ComposeFileLoader().LoadMerged(_directory, ["compose.yaml", "override.yaml"]));
+        Assert.Equal(overlay, error.SourceFile);
+        Assert.Equal("services.app.ports[2].mode", error.PropertyPath);
     }
 
     [Fact]

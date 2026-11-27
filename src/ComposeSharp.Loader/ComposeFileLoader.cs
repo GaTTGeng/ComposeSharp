@@ -86,7 +86,7 @@ public sealed class ComposeFileLoader
             var composePath = ResolveComposePath(workingDirectory, file);
             // Each file is interpolated against the .env beside it before merging, so overlays
             // never see the base file's variables and vice versa.
-            var document = LoadDocument(composePath, environmentOverrides);
+            var document = LoadDocument(composePath, environmentOverrides, expandPortRanges: true);
             if (mergedRoot is null)
             {
                 mergedRoot = document.Root;
@@ -112,7 +112,8 @@ public sealed class ComposeFileLoader
     /// </summary>
     private static LoadedDocument LoadDocument(
         string composePath,
-        IReadOnlyDictionary<string, string>? environmentOverrides = null)
+        IReadOnlyDictionary<string, string>? environmentOverrides = null,
+        bool expandPortRanges = false)
     {
         // Stage: .env load -> variable interpolation -> merge-tag rejection -> YAML map + provenance.
         // The project .env (adjacent to the compose file) is an interpolation source only;
@@ -138,6 +139,8 @@ public sealed class ComposeFileLoader
             var root = deserializer.Deserialize<Dictionary<object, object?>>(expanded)
                        ?? throw new ComposeValidationException(composePath, "$", "the document is empty.");
 
+            if (expandPortRanges)
+                ExpandPortRangesForMerge(root);
             // Provenance is built from the deserialized tree, so every member and list index gets a path.
             return new LoadedDocument(root, BuildProvenance(root, composePath));
         }
@@ -151,6 +154,48 @@ public sealed class ComposeFileLoader
                 line: exception.Start.Line,
                 column: exception.Start.Column,
                 innerException: exception);
+        }
+    }
+
+    private static void ExpandPortRangesForMerge(Dictionary<object, object?> root)
+    {
+        if (!TryGetValue(root, "services", out var servicesValue) || servicesValue is not Dictionary<object, object?> services)
+            return;
+        foreach (var serviceValue in services.Values)
+        {
+            if (serviceValue is not Dictionary<object, object?> service ||
+                !TryGetValue(service, "ports", out var portsValue) || portsValue is not List<object?> ports)
+                continue;
+            var expanded = new List<object?>();
+            foreach (var item in ports)
+            {
+                try
+                {
+                    var parsed = ComposePortParser.Parse(item);
+                    if (parsed.Count <= 1)
+                    {
+                        expanded.Add(item);
+                        continue;
+                    }
+                    foreach (var port in parsed)
+                    {
+                        var entry = new Dictionary<object, object?>
+                        {
+                            ["target"] = port.ContainerPort.Split('/')[0],
+                            ["protocol"] = port.Protocol
+                        };
+                        if (port.HostPort is not null) entry["published"] = port.HostPort;
+                        if (port.HostIp is not null) entry["host_ip"] = port.HostIp;
+                        if (port.Name is not null) entry["name"] = port.Name;
+                        expanded.Add(entry);
+                    }
+                }
+                catch (PortParseException)
+                {
+                    expanded.Add(item);
+                }
+            }
+            service["ports"] = expanded;
         }
     }
 
