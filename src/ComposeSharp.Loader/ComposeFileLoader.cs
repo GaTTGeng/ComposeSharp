@@ -223,12 +223,25 @@ public sealed class ComposeFileLoader
         var extensions = ParseExtensions(root);
 
         var services = new List<ServiceDefinition>();
+        var publishedPortRanges = new List<ComposeProjectDiagnostic>();
         foreach (var (serviceNameObj, serviceValue) in servicesMap)
         {
             var serviceName = serviceNameObj.ToString()!;
             var map = (Dictionary<object, object?>)serviceValue!;
 
             services.Add(ParseService(serviceName, map, composePath));
+            if (TryGetValue(map, "ports", out var portsValue) && portsValue is List<object?> ports)
+            {
+                var servicePath = $"services.{serviceName}";
+                var serviceContext = validation.ForService(serviceName, servicePath, AppendPathSegment("services", serviceName));
+                for (var index = 0; index < ports.Count; index++)
+                {
+                    if (ComposePortParser.Parse(ports[index]).All(port => port.HostPort?.Contains('-') != true)) continue;
+                    var portPath = $"{servicePath}.ports[{index}]";
+                    publishedPortRanges.Add(new ComposeProjectDiagnostic(serviceContext.SourceFor(portPath), portPath,
+                        serviceName, "unsupported-field", "Windows Docker NAT does not support a published range for one target port."));
+                }
+            }
         }
 
         return new ComposeProject(
@@ -240,7 +253,8 @@ public sealed class ComposeFileLoader
             configs,
             extensions)
         {
-            Diagnostics = diagnostics
+            Diagnostics = diagnostics,
+            PublishedPortRanges = publishedPortRanges
         };
     }
 

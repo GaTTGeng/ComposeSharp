@@ -30,6 +30,7 @@ public interface IComposeService
     /// dependency services fail with diagnostics. Readiness waits end when ready, on failure or cancellation,
     /// or at the optional per-dependency timeout in the operation options.
     /// Explicit <c>Scale</c> counts take precedence over <c>deploy.replicas</c>.
+    /// A published range for one target port is rejected before resource creation on Windows daemons.
     /// </remarks>
     Task UpAsync(ComposeProjectContext context, ComposeUpOptions? options = null, CancellationToken cancellationToken = default);
 
@@ -37,6 +38,7 @@ public interface IComposeService
     Task DownAsync(ComposeProjectContext context, ComposeDownOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Creates containers (and required infrastructure) for the project's services in dependency order.</summary>
+    /// <remarks>A published range for one target port is rejected before resource creation on Windows daemons.</remarks>
     Task CreateAsync(ComposeProjectContext context, ComposeCreateOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Starts already-created containers of the project's services in dependency order.</summary>
@@ -58,7 +60,7 @@ public interface IComposeService
     Task KillAsync(ComposeProjectContext context, ComposeKillOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Runs a one-off container for a service and returns its container ID.</summary>
-    /// <remarks>The one-off container carries the project's ownership labels so it can be found and removed with the project.</remarks>
+    /// <remarks>The one-off container carries the project's ownership labels. A published range for one target port is rejected before resource creation on Windows daemons.</remarks>
     Task<string> RunAsync(ComposeProjectContext context, string serviceName, ComposeRunOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Removes containers of the project's services.</summary>
@@ -127,6 +129,7 @@ public interface IComposeService
     IAsyncEnumerable<ComposeEvent> EventsAsync(ComposeProjectContext context, ComposeEventsOptions? options = null, CancellationToken cancellationToken = default);
 
     /// <summary>Adjusts replica counts per service and reports the resulting service status.</summary>
+    /// <remarks>A published range for one target port is rejected before resource creation on Windows daemons.</remarks>
     Task<IReadOnlyList<ServiceStatus>> ScaleAsync(ComposeProjectContext context, ComposeScaleOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>Waits for the project's containers to exit and collects their exit codes.</summary>

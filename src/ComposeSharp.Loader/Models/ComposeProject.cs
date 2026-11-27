@@ -21,6 +21,8 @@ public sealed record ComposeProject(
 {
     /// <summary>Unsupported or partially supported fields found in the loaded Compose document.</summary>
     public IReadOnlyList<ComposeProjectDiagnostic> Diagnostics { get; init; } = [];
+
+    internal IReadOnlyList<ComposeProjectDiagnostic> PublishedPortRanges { get; init; } = [];
 }
 
 /// <summary>Describes a Compose field the loader or engine cannot fully apply.</summary>

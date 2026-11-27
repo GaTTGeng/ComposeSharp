@@ -31,7 +31,7 @@ compose.yml / .env / env_file
       Docker 容器、网络、卷与项目标签
 ```
 
-短格式和长格式端口映射会保留显式 IPv4、IPv6 主机地址、TCP/UDP/SCTP 协议和多个主机绑定。目标端口范围会展开为独立绑定；单个目标端口的发布范围交由 Docker 从中分配端口。省略发布端口或将其设为零时由 Docker 动态分配。省略主机 IP 时使用 Docker 网络默认绑定地址，可能会在所有接口上暴露端口；需要仅绑定回环地址时请指定 `127.0.0.1` 或 `::1`。`PortAsync` 返回所选运行中容器和协议的第一个绑定。加载时会拒绝无效范围、同一服务内冲突的固定主机端口、同时使用 host 网络模式和端口，以及不支持的长格式选项。Windows Docker NAT 不支持单个目标端口的发布范围，daemon 会拒绝该配置。端口名称会保留在配置快照中；不支持 Swarm `mode`、`app_protocol` 等其他长格式选项。
+短格式和长格式端口映射会保留显式 IPv4、IPv6 主机地址、TCP/UDP/SCTP 协议和多个主机绑定。目标端口范围会展开为独立绑定；单个目标端口的发布范围交由 Docker 从中分配端口。省略发布端口或将其设为零时由 Docker 动态分配。省略主机 IP 时使用 Docker 网络默认绑定地址，可能会在所有接口上暴露端口；需要仅绑定回环地址时请指定 `127.0.0.1` 或 `::1`。`PortAsync` 返回所选运行中容器和协议的第一个绑定。加载时会拒绝无效范围、同一服务内冲突的固定主机端口、同时使用 host 网络模式和端口，以及不支持的长格式选项。Windows Docker NAT 不支持单个目标端口的发布范围；连接 Windows daemon 时会在创建资源之前拒绝该配置。端口名称会保留在配置快照中；不支持 Swarm `mode`、`app_protocol` 等其他长格式选项。
 
 Loader 会寻找 `docker-compose.yml`、`compose.yml`、`compose.yaml` 或 `docker-compose.yaml`，读取 `.env` 和服务的 `env_file`，再展开 YAML 中的变量。解析结果包含镜像、build、命令、环境、端口、卷、网络、健康检查、重启策略、profiles、labels、logging、capabilities、资源限制以及部分 `deploy` 字段。
 

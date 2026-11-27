@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using ComposeSharp.Api;
 using ComposeSharp.Engine;
+using ComposeSharp.Loader;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 
@@ -209,6 +210,34 @@ public class CrossPlatformDockerIntegrationTests
         finally
         {
             await SafeCleanupAsync(service, context, directory, removeVolumes: true);
+        }
+    }
+
+    [Fact]
+    public async Task Ports_WindowsRangeIsRejectedBeforeCreatingResources()
+    {
+        var env = GetRequiredEnvironmentOrSkip();
+        if (env is null || !env.IsWindowsDaemon) return;
+
+        var (context, directory) = CreateTempProject("xp-port-range", $"""
+            services:
+              app:
+                image: {env.Image}
+                ports:
+                  - target: 80
+                    published: '49152-49252'
+            """);
+        try
+        {
+            var error = await Assert.ThrowsAsync<ComposeValidationException>(() => new ComposeService().UpAsync(context));
+            Assert.Equal(Path.Combine(directory, "compose.yaml"), error.SourceFile);
+            Assert.Equal("app", error.ServiceName);
+            Assert.Equal("services.app.ports[0]", error.PropertyPath);
+            await AssertNoProjectResourcesAsync(context.ProjectName, checkVolumes: true);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
         }
     }
 

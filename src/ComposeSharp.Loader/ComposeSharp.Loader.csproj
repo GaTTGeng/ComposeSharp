@@ -8,4 +8,8 @@
     <ProjectReference Include="..\ComposeSharp.Api\ComposeSharp.Api.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="ComposeSharp.Engine" />
+  </ItemGroup>
+
 </Project>

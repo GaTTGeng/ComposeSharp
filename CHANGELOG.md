@@ -25,6 +25,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Multi-file loading retains distinct long-form port mappings and matches equivalent short and long declarations.
+- Windows daemons reject unsupported published port ranges before project resources are created.
 - A custom container name with multiple configured replicas produces a diagnostic and is rejected in strict validation mode.
 - Explicit empty commands, disabled init, and explicit network drivers produce diagnostics when their requested behavior is not applied.
 - Scalar conversion errors no longer expose interpolated values in exception messages or inner exceptions.
