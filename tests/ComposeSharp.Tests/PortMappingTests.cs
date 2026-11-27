@@ -74,6 +74,52 @@ public sealed class PortMappingTests : IDisposable
     }
 
     [Fact]
+    public void LoadMerged_PreservesDistinctLongPortsAndReplacesEquivalentShortPort()
+    {
+        File.WriteAllText(Path.Combine(_directory, "compose.yaml"), """
+            services:
+              app:
+                image: example
+                ports:
+                  - target: 80
+                    published: '8080'
+                  - '127.0.0.1:5353:53/udp'
+            """);
+        File.WriteAllText(Path.Combine(_directory, "override.yaml"), """
+            services:
+              app:
+                ports:
+                  - target: 443
+                    published: '8443'
+                  - target: 53
+                    published: '5353'
+                    host_ip: 127.0.0.1
+                    protocol: udp
+                    name: dns
+            """);
+
+        var project = new ComposeFileLoader().LoadMerged(_directory, ["compose.yaml", "override.yaml"]);
+        var ports = Assert.Single(project.Services).Ports;
+        Assert.Equal(["80/tcp", "53/udp", "443/tcp"], ports.Select(port => port.ContainerPort));
+        Assert.Equal("dns", ports[1].Name);
+        Assert.Equal("8443", ports[2].HostPort);
+    }
+
+    [Fact]
+    public void LoadMerged_InvalidLongPortRetainsOverlaySource()
+    {
+        File.WriteAllText(Path.Combine(_directory, "compose.yaml"),
+            "services:\n  app:\n    image: example\n    ports: [{target: 80, published: '8080'}]\n");
+        var overlay = Path.Combine(_directory, "override.yaml");
+        File.WriteAllText(overlay, "services:\n  app:\n    ports: [{target: 443, mode: ingress}]\n");
+
+        var error = Assert.Throws<ComposeValidationException>(() =>
+            new ComposeFileLoader().LoadMerged(_directory, ["compose.yaml", "override.yaml"]));
+        Assert.Equal(overlay, error.SourceFile);
+        Assert.Equal("services.app.ports[1].mode", error.PropertyPath);
+    }
+
+    [Fact]
     public async Task Up_RejectsUnsupportedPortOptionsBeforeDockerAccess()
     {
         await File.WriteAllTextAsync(Path.Combine(_directory, "compose.yaml"),

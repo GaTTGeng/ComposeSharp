@@ -3,6 +3,7 @@
 // Rider inspection rationale: The default value is intentional and keeps the current fallback semantics explicit.
 // ReSharper disable PreferConcreteValueOverDefault
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using ComposeSharp.Loader.Interpolation;
 using ComposeSharp.Loader.Models;
@@ -39,7 +40,8 @@ public sealed class ComposeFileLoader
     /// The merge is an incremental subset of Compose merge semantics (see docs/merge-semantics.md),
     /// not the full Compose Specification: mappings merge recursively and same-named services are
     /// merged field by field rather than wholesale-replaced, but <c>command</c>, <c>entrypoint</c>,
-    /// and <c>healthcheck.test</c> replace rather than merge, and <c>!reset</c>/<c>!override</c>
+    /// and <c>healthcheck.test</c> replace rather than merge; matching port declarations replace
+    /// as whole entries, and <c>!reset</c>/<c>!override</c>
     /// tags are rejected. Paths and validation errors are reported against the file that
     /// contributed the offending value.
     /// </remarks>
@@ -1430,6 +1432,23 @@ public sealed class ComposeFileLoader
     {
         var text = item?.ToString() ?? string.Empty;
         var leaf = GetLeaf(path);
+        if (leaf == "ports")
+        {
+            try
+            {
+                var ports = ComposePortParser.Parse(item);
+                return JsonSerializer.Serialize(ports.Select(port =>
+                    new[] { port.HostIp, port.HostPort, port.ContainerPort }).ToArray());
+            }
+            catch (PortParseException)
+            {
+                // Keep malformed entries available to the provenance-aware validation pass.
+                return item is Dictionary<object, object?> invalid
+                    ? JsonSerializer.Serialize(invalid.OrderBy(entry => entry.Key.ToString(), StringComparer.Ordinal)
+                        .Select(entry => new[] { entry.Key.ToString(), entry.Value?.ToString() }).ToArray())
+                    : text;
+            }
+        }
         if ((leaf is "environment" or "labels" or "sysctls" or "args" or "extra_hosts" or "annotations") &&
             item is not Dictionary<object, object?>)
         {

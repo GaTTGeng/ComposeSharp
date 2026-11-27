@@ -41,6 +41,8 @@ Loader 会寻找 `docker-compose.yml`、`compose.yml`、`compose.yaml` 或 `dock
 
 `ComposeFileMerger.MergeWithEnv` 会在本次合并中优先使用显式 override，其次才是进程环境和 `.env`。它不会修改进程级环境变量，因此并发合并互相隔离，调用方也无需恢复环境状态。
 
+多文件加载会保留不同的端口绑定，并按规范化后的主机 IP、发布端口、目标端口和协议替换匹配项；具体规则和限制见[合并语义](docs/merge-semantics.md)。
+
 ### Loader 诊断
 
 输入无效时会抛出 `ComposeValidationException`。异常消息及其结构化属性会给出解析后的来源文件和稳定的 YAML 属性路径；服务级错误还会给出服务名。YAML 解析错误在可用时包含从 1 开始的行号、列号，并通过 `InnerException` 保留原始异常。例如：`Invalid Compose input in 'C:\app\compose.yaml' at 'services.api.environment', service 'api': expected a YAML list or mapping, but found scalar 'invalid'.` 使用 `LoadMerged` 时，由覆盖文件引入的无效节点会指向相应的覆盖文件。
